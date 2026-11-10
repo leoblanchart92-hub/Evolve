@@ -2,15 +2,18 @@
  * Evolve — Passerelle vers l'application de bureau.
  *
  * Dans l'exécutable Windows, le script de préchargement d'Electron expose un
- * petit objet `window.evolve` (quitter, plein écran). Dans un simple navigateur
- * (aperçu de développement), cet objet est absent et des solutions de repli
- * sont utilisées.
+ * petit objet `window.evolve` (quitter, plein écran, services). Dans un simple
+ * navigateur (aperçu de développement), cet objet est absent et des solutions
+ * de repli sont utilisées.
  */
 
 const host = globalThis.evolve ?? null;
 
 /** Vrai dans l'application de bureau (.exe), faux dans un navigateur. */
 export const isDesktopApp = Boolean(host);
+
+/** Accès aux services d'Evolve (voir services.js) ; `null` dans un navigateur. */
+export const hostServices = (host && host.services) || null;
 
 let fullscreen = false;
 const fullscreenListeners = new Set();

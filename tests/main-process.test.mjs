@@ -2,10 +2,10 @@
  * Processus principal de l'application de bureau (src/main/main.js) et script
  * de préchargement, exécutés avec un faux module « electron »
  * (tests/fixtures/fake-electron.cjs) : fenêtre, sécurité, raccourcis, canaux
- * de communication, instance unique, auto-test.
+ * de communication, instance unique, auto-test, services et réglages.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,6 +15,7 @@ import { fromRoot } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const { createFakeElectron, cancellable } = require('./fixtures/fake-electron.cjs');
+const { settingsDir, settingsFile } = require('../src/services/platform.js');
 
 const ELECTRON = require.resolve('electron');
 const MAIN = fromRoot('src', 'main', 'main.js');
@@ -45,11 +46,15 @@ function stubModule(file, exports) {
  * @param {Function} [options.runSelfTest] remplace l'auto-test réel
  * @param {Function} [options.reportStatus] remplace le compte rendu de démarrage réel
  * @param {object} [options.env]           variables d'environnement à définir
+ * @param {string} [options.tempDir]       dossier temporaire d'un lancement précédent, pour
+ *                                         simuler un redémarrage sur la même machine
  */
-async function launch({ argv = [], ready = true, runSelfTest, reportStatus, env = {}, ...electronOptions } = {}) {
-  const tempDir = mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
+async function launch({ argv = [], ready = true, runSelfTest, reportStatus, env = {}, tempDir = null, ...electronOptions } = {}) {
+  tempDir ??= mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
   const fake = createFakeElectron({ tempDir, ...electronOptions });
   fake.tempDir = tempDir;
+  /** Fichier des réglages par défaut : dans le faux profil de l'utilisateur. */
+  fake.settingsFile = settingsFile(settingsDir({ appData: fake.app.getPath('appData') }));
 
   stubModule(ELECTRON, fake.electron);
   if (runSelfTest) stubModule(SELFTEST, { runSelfTest });
@@ -85,6 +90,8 @@ async function launch({ argv = [], ready = true, runSelfTest, reportStatus, env 
       }
     }
     for (const win of fake.state.windows) win.close();
+    // Fermeture de l'application : plus aucun enregistrement de réglages en attente.
+    fake.app.emit('will-quit');
     for (const file of [MAIN, PRELOAD, ARGS]) delete require.cache[file];
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -183,12 +190,18 @@ test('aucune connexion réseau : seules les ressources locales sont chargées', 
   }
 });
 
-test('les données de travail vont dans le dossier temporaire, jamais dans le profil', async () => {
-  const { state, tempDir } = await launch();
+test('les données de travail vont dans le dossier temporaire ; sans réglage modifié, rien dans le profil', async () => {
+  const { app, state, tempDir, window } = await launch();
   assert.equal(state.paths.userData, path.join(tempDir, 'Evolve'));
   assert.ok(existsSync(state.paths.userData));
   assert.deepEqual(Object.keys(state.paths), ['userData']);
   assert.deepEqual(state.switches, [], 'aucune option particulière du moteur hors auto-test');
+
+  // Un lancement puis une fermeture sans rien changer : le profil reste intact.
+  window.close();
+  app.emit('window-all-closed');
+  app.emit('will-quit');
+  assert.deepEqual(readdirSync(tempDir), ['Evolve'], 'seul le dossier de travail temporaire existe');
 });
 
 test('--windowed : fenêtre 16:9 adaptée à l’écran', async () => {
@@ -307,12 +320,14 @@ test('F12 : outils de développement seulement sur demande (--devtools) ou en d�
 // Passerelle entre l'interface et l'application
 // ---------------------------------------------------------------------------------
 
-test('passerelle : seules cinq entrées sont exposées à la page', async () => {
+test('passerelle : seules six entrées sont exposées à la page', async () => {
   const fake = await launch();
   const api = loadPreload(fake, fake.window.webContents);
   assert.deepEqual(Object.keys(fake.state.exposed), ['evolve']);
-  assert.deepEqual(Object.keys(api).sort(), ['isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'quit', 'toggleFullscreen']);
+  assert.deepEqual(Object.keys(api).sort(), ['isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
   assert.equal(api.isDesktopApp, true);
+  // Les services ne sont joignables que par leur nom : appeler une méthode, écouter un événement.
+  assert.deepEqual(Object.keys(api.services).sort(), ['call', 'on']);
 });
 
 test('passerelle : plein écran et fermeture', async () => {
@@ -351,8 +366,15 @@ test('passerelle : les messages d’une autre page sont ignorés', async () => {
   stranger.send('evolve:quit');
   assert.equal(state.quitCalls, 0);
 
+  // Les services aussi : ni lecture, ni modification des réglages.
+  const refused = { ok: false, code: 'forbidden', message: 'Appel refusé.' };
+  assert.deepEqual(await stranger.invoke('evolve:service-call', 'settings', 'getAll', []), refused);
+  assert.deepEqual(await stranger.invoke('evolve:service-call', 'settings', 'set', ['quick.volume', 5]), refused);
+  const api = loadPreload(fake, window.webContents);
+  assert.deepEqual(await api.services.call('settings', 'get', 'quick.volume'), { ok: true, value: 64 });
+
   assert.deepEqual([...state.ipcListeners.keys()], ['evolve:quit']);
-  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:toggle-fullscreen']);
+  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:service-call', 'evolve:toggle-fullscreen']);
 });
 
 // ---------------------------------------------------------------------------------
@@ -415,7 +437,12 @@ test('auto-test : fenêtre non plein écran, rendu jamais suspendu, données sé
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], window);
   // Chemin relatif : résolu depuis le dossier du fichier .exe portable.
-  assert.deepEqual(calls[0][1], { outDir: path.join(tmpdir(), 'dossier-du-exe', 'resultats') });
+  const { describeServices, ...options } = calls[0][1];
+  assert.deepEqual(options, { outDir: path.join(tmpdir(), 'dossier-du-exe', 'resultats'), scenario: undefined });
+  // Les réglages de l'utilisateur ne sont ni lus ni modifiés par un auto-test : tout reste en mémoire.
+  const { settings } = describeServices();
+  assert.equal(settings.storage, 'memory');
+  assert.equal(settings.file, null);
   assert.deepEqual(state.exitCodes, [0]);
   assert.deepEqual(state.errorBoxes, [], 'jamais de boîte de dialogue pendant un auto-test');
 });
@@ -504,6 +531,11 @@ test('--status-file : compte rendu demandé en lancement normal, sans changer l�
   assert.equal(calls[0].options.file, absolute);
   assert.equal(calls[0].options.screen, fake.electron.screen);
   assert.equal(calls[0].options.userData, path.join(fake.tempDir, 'Evolve'));
+  // Le compte rendu cite l'emplacement des réglages : le dossier de l'utilisateur.
+  const { settings } = calls[0].options.describeServices();
+  assert.equal(settings.file, fake.settingsFile);
+  assert.equal(settings.storage, 'file');
+  assert.equal(settings.exists, false);
   // Le lancement reste strictement celui d'un double-clic.
   assert.equal(fake.window.options.fullscreen, true);
   assert.equal(fake.window.options.webPreferences.backgroundThrottling, true);
@@ -547,4 +579,218 @@ test('sans --status-file, ou pendant l’auto-test, aucun compte rendu de démar
 
   const selfTest = await launch({ argv: ['--self-test', '--status-file=etat.json'], runSelfTest: async () => 0 });
   assert.deepEqual(selfTest.state.exitCodes, [0]);
+});
+
+// ---------------------------------------------------------------------------------
+// Services et réglages
+// ---------------------------------------------------------------------------------
+
+/** Contenu du fichier des réglages, ou `null` s'il n'existe pas. */
+const readSettings = (file) => (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null);
+
+test('réglages : un changement fait dans la fenêtre est enregistré dans le profil et retrouvé au lancement suivant', async () => {
+  const first = await launch();
+  const api = loadPreload(first, first.window.webContents);
+  assert.equal(readSettings(first.settingsFile), null, 'rien avant le premier changement');
+
+  assert.deepEqual(await api.services.call('settings', 'set', 'quick.nightLight', true), { ok: true, value: true });
+  assert.deepEqual(await api.services.call('settings', 'set', 'quick.brightness', 5), { ok: true, value: 20 }, 'valeur ramenée dans les bornes');
+  // Fermeture normale de l'application.
+  first.window.close();
+  first.app.emit('window-all-closed');
+  first.app.emit('will-quit');
+
+  const saved = readSettings(first.settingsFile);
+  assert.deepEqual(saved.values, { 'quick.brightness': 20, 'quick.nightLight': true });
+  assert.equal(saved.schema, 1);
+  assert.equal(saved.app, '9.8.7', "version de l'application notée dans le fichier");
+  assert.deepEqual(readdirSync(path.dirname(first.settingsFile)), ['settings.json'], 'un seul fichier dans le dossier des réglages');
+
+  // Nouveau lancement — nouveau processus principal — sur la même machine.
+  const second = await launch({ tempDir: first.tempDir });
+  const again = loadPreload(second, second.window.webContents);
+  const all = await again.services.call('settings', 'getAll');
+  assert.equal(all.ok, true);
+  assert.equal(all.value['quick.nightLight'], true);
+  assert.equal(all.value['quick.brightness'], 20);
+  assert.equal(all.value['quick.volume'], 64, 'les autres réglages gardent leur valeur par défaut');
+  assert.deepEqual(await again.services.call('settings', 'state'), {
+    ok: true,
+    value: { storage: 'file', durable: true, problem: null, recovered: null },
+  });
+});
+
+test('réglages : enregistrés aussi à la fin de la session Windows et avant un arrêt immédiat', async () => {
+  // Arrêt de l'ordinateur ou fermeture de session : seule la fenêtre en est prévenue.
+  const session = await launch();
+  await loadPreload(session, session.window.webContents).services.call('settings', 'set', 'quick.muted', true);
+  session.window.emit('session-end');
+  assert.deepEqual(readSettings(session.settingsFile).values, { 'quick.muted': true });
+
+  // Erreur irrécupérable : message puis arrêt immédiat, sans événement de fermeture.
+  const crash = await launch();
+  await loadPreload(crash, crash.window.webContents).services.call('settings', 'set', 'quick.volume', 10);
+  crash.window.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  crash.window.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.deepEqual(crash.state.exitCodes, [1]);
+  assert.deepEqual(readSettings(crash.settingsFile).values, { 'quick.volume': 10 });
+});
+
+test('réglages : --settings-dir choisit le dossier ; un chemin relatif part du dossier du fichier .exe', async () => {
+  const exeDir = mkdtempSync(path.join(tmpdir(), 'evolve-dossier-du-exe-'));
+  cleanups.push(() => rmSync(exeDir, { recursive: true, force: true }));
+
+  const fake = await launch({ argv: ['--settings-dir=reglages'], env: { PORTABLE_EXECUTABLE_DIR: exeDir } });
+  await loadPreload(fake, fake.window.webContents).services.call('settings', 'set', 'desktop.widgetsVisible', false);
+  fake.app.emit('will-quit');
+
+  assert.deepEqual(readSettings(path.join(exeDir, 'reglages', 'settings.json')).values, { 'desktop.widgetsVisible': false });
+  assert.equal(existsSync(path.join(fake.tempDir, 'profil')), false, 'rien dans le profil de l’utilisateur');
+});
+
+test('réglages : un auto-test ne lit ni ne modifie ceux de l’utilisateur, sauf dossier demandé', async () => {
+  // L'utilisateur a déjà des réglages.
+  const user = await launch();
+  await loadPreload(user, user.window.webContents).services.call('settings', 'set', 'quick.volume', 10);
+  user.app.emit('will-quit');
+  const before = readFileSync(user.settingsFile, 'utf8');
+
+  // Auto-test sur la même machine : valeurs par défaut, tout reste en mémoire.
+  let finish;
+  const selfTest = await launch({
+    tempDir: user.tempDir,
+    argv: [`--self-test=${path.join(tmpdir(), 'evolve-inutilise')}`],
+    runSelfTest: () => new Promise((resolve) => (finish = resolve)),
+  });
+  const api = loadPreload(selfTest, selfTest.window.webContents);
+  assert.deepEqual(await api.services.call('settings', 'get', 'quick.volume'), { ok: true, value: 64 });
+  assert.deepEqual(await api.services.call('settings', 'set', 'quick.volume', 99), { ok: true, value: 99 });
+  assert.equal((await api.services.call('settings', 'state')).value.storage, 'memory');
+  finish(0);
+  await settle();
+  assert.deepEqual(selfTest.state.exitCodes, [0]);
+  assert.equal(readFileSync(user.settingsFile, 'utf8'), before, 'réglages de l’utilisateur intacts');
+
+  // Avec --settings-dir, l'auto-test enregistre dans le dossier demandé — avant
+  // de s'arrêter, bien que l'arrêt de l'auto-test n'émette aucun événement.
+  const dir = mkdtempSync(path.join(tmpdir(), 'evolve-reglages-'));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  let options;
+  const scenario = await launch({
+    argv: ['--self-test', `--settings-dir=${dir}`, '--self-test-scenario=settings-write'],
+    runSelfTest: (_win, received) => {
+      options = received;
+      return new Promise((resolve) => (finish = resolve));
+    },
+  });
+  assert.equal(options.scenario, 'settings-write');
+  assert.equal(options.describeServices().settings.file, path.join(dir, 'settings.json'));
+  await loadPreload(scenario, scenario.window.webContents).services.call('settings', 'set', 'quick.nightLight', true);
+  assert.equal(readSettings(path.join(dir, 'settings.json')), null, 'pas encore enregistré');
+  finish(0);
+  await settle();
+  assert.deepEqual(scenario.state.exitCodes, [0]);
+  assert.deepEqual(readSettings(path.join(dir, 'settings.json')).values, { 'quick.nightLight': true });
+});
+
+test('réglages : seule l’instance qui garde la main touche au fichier', async () => {
+  const first = await launch();
+  const dir = path.dirname(first.settingsFile);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(first.settingsFile, '{ "values": ');
+
+  // Second lancement alors qu'Evolve est déjà ouvert : il s'arrête sans rien lire ni déplacer.
+  const second = await launch({ tempDir: first.tempDir, lock: false });
+  assert.deepEqual(second.state.exitCodes, [0]);
+  assert.deepEqual(readdirSync(dir), ['settings.json']);
+
+  // Lancement suivant : le contenu inutilisable est mis de côté, jamais perdu,
+  // et la page peut savoir que les réglages ont été réinitialisés.
+  const third = await launch({ tempDir: first.tempDir });
+  const api = loadPreload(third, third.window.webContents);
+  assert.deepEqual(readdirSync(dir), ['settings.corrupt.json']);
+  assert.equal(readFileSync(path.join(dir, 'settings.corrupt.json'), 'utf8'), '{ "values": ');
+  assert.deepEqual((await api.services.call('settings', 'state')).value, { storage: 'file', durable: true, problem: null, recovered: 'corrupt' });
+  assert.equal((await api.services.call('settings', 'get', 'quick.volume')).value, 64);
+});
+
+test('services : la page ne peut appeler que les méthodes publiques, avec de simples données', async () => {
+  const fake = await launch();
+  const api = loadPreload(fake, fake.window.webContents);
+  const code = async (...args) => (await api.services.call(...args)).code;
+
+  assert.equal(await code('settings', 'flushSync'), 'unknown-method', 'méthode interne');
+  assert.equal(await code('settings', 'status'), 'unknown-method', 'méthode interne');
+  assert.equal(await code('settings', 'constructor'), 'unknown-method');
+  assert.equal(await code('settings', '__proto__'), 'unknown-method');
+  assert.equal(await code('fichiers', 'lire', 'C:\\Windows'), 'unknown-service');
+  assert.equal(await code('settings', 'set', 'quick.inconnu', true), 'unknown-key');
+  assert.equal(await code('settings', 'set', 'quick.volume', 'fort'), 'invalid-value');
+  assert.equal(await code('settings', 'set', 'quick.volume', { valeur: 10 }), 'invalid-value');
+  assert.equal(await code('settings', 'set', ...new Array(9).fill(1)), 'bad-arguments');
+  assert.equal(await code('settings', 'set', 'quick.volume', [[[[[[[[10]]]]]]]]), 'bad-arguments');
+
+  // Une demande impossible à transmettre (ici, une fonction) : réponse d'échec, jamais d'exception.
+  const untransmitted = await api.services.call('settings', 'set', 'quick.volume', () => 10);
+  assert.deepEqual(untransmitted, { ok: false, code: 'failed', message: "La demande n'a pas pu être transmise." });
+  assert.equal((await api.services.call({ toString: () => assert.fail('nom piégé') }, 'getAll')).code, 'failed');
+
+  // Rien de tout cela n'a modifié ni enregistré quoi que ce soit.
+  fake.app.emit('will-quit');
+  assert.equal(readSettings(fake.settingsFile), null);
+});
+
+test('services : la fenêtre est prévenue des événements, sauf de ses propres changements', async () => {
+  const fake = await launch();
+  const { window } = fake;
+  const api = loadPreload(fake, window.webContents);
+  const states = [];
+  const changes = [];
+  const unsubscribe = api.services.on('settings', 'state', (state) => states.push(state));
+  api.services.on('settings', 'changed', (change) => changes.push(change));
+  assert.equal(typeof api.services.on('settings', 'state', 'pas une fonction'), 'function');
+
+  // Le dossier des réglages ne peut pas être créé : un fichier porte déjà son nom.
+  const dir = path.dirname(fake.settingsFile);
+  mkdirSync(path.dirname(dir), { recursive: true });
+  writeFileSync(dir, 'occupé');
+
+  await api.services.call('settings', 'set', 'quick.volume', 10);
+  assert.deepEqual(changes, [], 'la fenêtre connaît déjà le changement qu’elle a demandé');
+  assert.deepEqual(states, []);
+
+  // L'enregistrement échoue : la fenêtre en est prévenue (une seule fois).
+  window.emit('session-end');
+  window.emit('session-end');
+  const failing = { storage: 'file', durable: false, problem: 'unwritable', recovered: null };
+  assert.deepEqual(states, [failing]);
+  assert.deepEqual(
+    window.webContents.sent.filter(([channel]) => channel === 'evolve:service-event'),
+    [['evolve:service-event', { service: 'settings', event: 'state', payload: failing }]],
+  );
+  assert.equal((await api.services.call('settings', 'get', 'quick.volume')).value, 10, 'la valeur reste en mémoire');
+
+  // Le dossier redevient accessible : l'enregistrement reprend, la fenêtre le sait.
+  rmSync(dir);
+  window.emit('session-end');
+  assert.deepEqual(states.at(-1), { storage: 'file', durable: true, problem: null, recovered: null });
+  assert.deepEqual(readSettings(fake.settingsFile).values, { 'quick.volume': 10 });
+
+  // Après désabonnement, l'abonné n'est plus appelé…
+  unsubscribe();
+  const count = states.length;
+  const sent = () => window.webContents.sent.filter(([channel]) => channel === 'evolve:service-event').length;
+  rmSync(dir, { recursive: true });
+  writeFileSync(dir, 'occupé');
+  await api.services.call('settings', 'set', 'quick.volume', 11);
+  window.emit('session-end');
+  assert.equal(sent(), 3, 'la fenêtre reçoit toujours l’événement');
+  assert.equal(states.length, count);
+
+  // … et après la fermeture de la fenêtre, plus rien ne lui est envoyé.
+  window.close();
+  rmSync(dir);
+  fake.app.emit('will-quit');
+  assert.equal(sent(), 3);
+  assert.deepEqual(readSettings(fake.settingsFile).values, { 'quick.volume': 11 }, 'enregistré à la fermeture');
 });

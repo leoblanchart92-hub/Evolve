@@ -20,10 +20,10 @@ const workDir = mkdtempSync(path.join(tmpdir(), 'evolve-check-exe-'));
 after(() => rmSync(workDir, { recursive: true, force: true }));
 
 /** Lance le script contre la fausse application dans le mode donné. */
-function run(mode, { timeout = 30, outDir = path.join(workDir, mode), env = {} } = {}) {
+function run(mode, { timeout = 30, outDir = path.join(workDir, mode), env = {}, appArgs = [] } = {}) {
   const result = spawnSync(
     process.execPath,
-    [SCRIPT, process.execPath, `--out=${outDir}`, `--timeout=${timeout}`, '--', FAKE_APP, mode],
+    [SCRIPT, process.execPath, `--out=${outDir}`, `--timeout=${timeout}`, '--', FAKE_APP, mode, ...appArgs],
     { encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '', GITHUB_ACTIONS: '', ...env }, timeout: 60_000 },
   );
   return { code: result.status, output: `${result.stdout}\n${result.stderr}`, outDir };
@@ -128,6 +128,48 @@ test('le résumé de compilation GitHub est renseigné', () => {
   assert.equal(run('fail', { env: { GITHUB_STEP_SUMMARY: summary } }).code, 1);
   assert.match(readFileSync(summary, 'utf8'), /❌ Auto-test de l'exécutable : échec/);
   assert.match(readFileSync(summary, 'utf8'), /\| contrôle deux \| ❌/);
+});
+
+test('un scénario particulier est nommé dans les titres ; le contrôle complet garde le titre habituel', () => {
+  const summary = path.join(workDir, 'summary-scenario.md');
+  const titles = (appArgs, mode = 'pass') => {
+    writeFileSync(summary, '');
+    const { output } = run(mode, { appArgs, env: { GITHUB_ACTIONS: 'true', GITHUB_STEP_SUMMARY: summary } });
+    return {
+      annotation: output.match(/^::(?:notice|error) title=([^:]+)::/m)?.[1],
+      heading: readFileSync(summary, 'utf8').match(/^### (.+)$/m)?.[1],
+      first: output.split('\n')[0],
+    };
+  };
+  // Chemin du programme lancé (ici, Node) : il peut contenir des espaces.
+  const name = '.*node.*';
+
+  let found = titles(['--self-test-scenario=settings-write']);
+  assert.match(found.annotation, /^Auto-test « réglages modifiés » — node(\.exe)?$/);
+  assert.equal(found.heading, "✅ Auto-test « réglages modifiés » de l'exécutable : réussi");
+  assert.match(found.first, new RegExp(`^Auto-test « réglages modifiés » de ${name}$`));
+
+  found = titles(['--self-test-scenario=settings-read'], 'fail');
+  assert.match(found.annotation, /^Auto-test « réglages retrouvés » — node(\.exe)?$/);
+  assert.equal(found.heading, "❌ Auto-test « réglages retrouvés » de l'exécutable : échec");
+
+  // Échec avant tout rapport : le titre désigne tout de même le lancement concerné.
+  found = titles(['--self-test-scenario=settings-read'], 'fatal');
+  assert.match(found.annotation, /^Auto-test « réglages retrouvés » — node(\.exe)?$/);
+  assert.equal(found.heading, "❌ Auto-test « réglages retrouvés » de l'exécutable : échec");
+
+  // Scénario inconnu de ce script : son nom est repris tel quel.
+  assert.match(titles(['--self-test-scenario=autre']).annotation, /^Auto-test « autre » — node(\.exe)?$/);
+  // Option répétée : la première compte, comme dans l'application.
+  assert.match(titles(['--self-test-scenario=settings-read', '--self-test-scenario=settings-write']).annotation, /« réglages retrouvés »/);
+
+  // Contrôle complet, nommé ou non : titre habituel.
+  for (const appArgs of [[], ['--self-test-scenario=full'], ['--self-test-scenario=']]) {
+    found = titles(appArgs);
+    assert.match(found.annotation, /^Auto-test — node(\.exe)?$/);
+    assert.equal(found.heading, "✅ Auto-test de l'exécutable : réussi");
+    assert.match(found.first, new RegExp(`^Auto-test de ${name}$`));
+  }
 });
 
 test('sur GitHub Actions, le résultat est publié en annotation', () => {

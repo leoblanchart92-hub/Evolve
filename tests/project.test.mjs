@@ -238,7 +238,7 @@ test('les textes affichés n’utilisent que des caractères présents dans les 
 
 test('les scripts de l’application de bureau existent', () => {
   assert.equal(pkg.main, 'src/main/main.js');
-  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js', 'status.js']) {
+  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js', 'selftest-settings.js', 'status.js']) {
     assert.ok(existsSync(fromRoot('src', 'main', file)), `src/main/${file}`);
   }
   const main = readText('src/main/main.js');
@@ -247,6 +247,62 @@ test('les scripts de l’application de bureau existent', () => {
   }
   assert.match(main, /path\.join\(__dirname, 'preload\.js'\)/);
   assert.match(main, /path\.join\(__dirname, '\.\.', 'renderer', 'index\.html'\)/);
+});
+
+/** Fichiers de l'application de bureau : processus principal et couche de services. */
+const desktopFiles = [...listFiles(fromRoot('src', 'main'), ['.js']), ...listFiles(fromRoot('src', 'services'), ['.js'])];
+
+/** Modules locaux requis par un fichier de l'application de bureau (chemins complets). */
+function requiredModules(file) {
+  const code = stripComments(readFileSync(file, 'utf8'));
+  const names = [...code.matchAll(/\brequire\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]);
+  assert.equal(names.length, [...code.matchAll(/\brequire\s*\(/g)].length, `${relative(file)} : forme de require non reconnue`);
+  const modules = [];
+  for (const name of names) {
+    if (name === 'electron' || name.startsWith('node:')) continue;
+    assert.match(name, /^\.{1,2}\//, `${relative(file)} : paquet externe « ${name} » — aucune dépendance n'est embarquée dans le .exe`);
+    const target = path.resolve(path.dirname(file), name);
+    const resolved = [target, `${target}.js`, path.join(target, 'index.js')].find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
+    assert.ok(resolved, `${relative(file)} : module introuvable « ${name} »`);
+    modules.push(resolved);
+  }
+  return modules;
+}
+
+test('chaque module requis par l’application de bureau existe et est embarqué dans le .exe', () => {
+  // Dossiers copiés dans l'exécutable : un module situé ailleurs manquerait au
+  // lancement du .exe, alors que tout fonctionne en développement.
+  const shipped = pkg.build.files.filter((pattern) => pattern.endsWith('/**/*')).map((pattern) => pattern.slice(0, -'/**/*'.length));
+  const required = new Set();
+  for (const file of desktopFiles) {
+    for (const module of requiredModules(file)) {
+      const name = relative(module);
+      assert.ok(shipped.some((dir) => name.startsWith(`${dir}/`)), `${relative(file)} : « ${name} » n'est pas embarqué dans l'exécutable`);
+      required.add(name);
+    }
+  }
+  // La couche de services est bien reliée à l'application.
+  for (const name of ['src/services/index.js', 'src/services/settings.js', 'src/services/platform.js']) assert.ok(required.has(name), name);
+});
+
+test('aucun module de l’application de bureau n’est orphelin', () => {
+  // Points d'entrée : le processus principal et le script de préchargement, que la fenêtre charge par son chemin.
+  const reached = new Set();
+  const visit = (file) => {
+    if (reached.has(file)) return;
+    reached.add(file);
+    for (const module of requiredModules(file)) visit(module);
+  };
+  visit(fromRoot('src', 'main', 'main.js'));
+  visit(fromRoot('src', 'main', 'preload.js'));
+  assert.deepEqual(desktopFiles.filter((file) => !reached.has(file)).map(relative), []);
+});
+
+test('le script de préchargement, exécuté dans un bac à sable, ne requiert que le module electron', () => {
+  // Dans une page isolée (sandbox), ce script ne peut charger aucun autre fichier.
+  assert.deepEqual(requiredModules(fromRoot('src', 'main', 'preload.js')), []);
+  const names = [...stripComments(readText('src/main/preload.js')).matchAll(/\brequire\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]);
+  assert.deepEqual(names, ['electron']);
 });
 
 test('la fenêtre de l’application est isolée du système', () => {
@@ -271,10 +327,24 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
 
   // Méthodes appelées par l'interface sur `window.evolve`.
   const used = new Set([...platform.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
-  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'quit', 'toggleFullscreen']);
+  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
   for (const name of used) assert.match(preload, new RegExp(`\\b${name}:`), `preload.js n'expose pas ${name}`);
   assert.match(preload, /exposeInMainWorld\('evolve'/);
   assert.match(platform, /globalThis\.evolve/);
+
+  // Services : l'interface n'appelle que « call » et « on », seules entrées exposées.
+  const client = stripComments(readText('src/renderer/js/core/services.js'));
+  const serviceUses = new Set([...client.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
+  assert.deepEqual([...serviceUses].sort(), ['call', 'on']);
+  const exposedServices = preload.match(/\bservices: \{([\s\S]*)\n {2}\},\n\}\);/)?.[1];
+  assert.ok(exposedServices, 'entrée « services » de preload.js non reconnue');
+  assert.deepEqual([...exposedServices.matchAll(/^ {4}([A-Za-z]+): /gm)].map((match) => match[1]), ['call', 'on']);
+
+  // Aucun autre module de l'interface ne touche à la passerelle.
+  for (const file of jsFiles) {
+    if (file.endsWith(path.join('core', 'platform.js'))) continue;
+    assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /(?:globalThis|window|self)\.evolve\b/, relative(file));
+  }
 
   // Canaux de communication : chaque canal émis est traité de l'autre côté.
   const channels = (code) => new Set([...code.matchAll(/'(evolve:[a-z-]+)'/g)].map((match) => match[1]));
@@ -283,8 +353,15 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
     'evolve:fullscreen-changed',
     'evolve:is-fullscreen',
     'evolve:quit',
+    'evolve:service-call',
+    'evolve:service-event',
     'evolve:toggle-fullscreen',
   ]);
+  // Aucun service n'ouvre son propre canal : tout passe par le point d'accès.
+  for (const file of desktopFiles) {
+    if (/[\\/]main[\\/](?:main|preload)\.js$/.test(file)) continue;
+    assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /'evolve:[a-z-]+'|\bipc(?:Main|Renderer)\b/, relative(file));
+  }
 });
 
 test('configuration de la compilation Windows', () => {
@@ -296,7 +373,7 @@ test('configuration de la compilation Windows', () => {
   assert.equal(build.portable.requestExecutionLevel, 'user');
   assert.equal(build.portable.artifactName, 'Evolve-${version}-portable.exe');
   assert.equal(build.publish, null, 'aucune publication automatique');
-  assert.deepEqual(build.files, ['package.json', 'THIRD-PARTY-NOTICES.md', 'src/main/**/*', 'src/renderer/**/*', 'assets/**/*']);
+  assert.deepEqual(build.files, ['package.json', 'THIRD-PARTY-NOTICES.md', 'src/main/**/*', 'src/services/**/*', 'src/renderer/**/*', 'assets/**/*']);
   for (const pattern of build.files) assert.ok(existsSync(fromRoot(pattern.replace(/\/\*\*\/\*$/, ''))), `fichier ou dossier absent : ${pattern}`);
   // Dossier de décompression fixe et reconnaissable dans %TEMP% (voir README).
   assert.equal(build.portable.unpackDirName, 'Evolve-portable');
@@ -395,6 +472,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
     'npm run check:manifest',
     'check-exe.mjs --out=self-test-output/executable',
     'check-launch.mjs --out=self-test-output/lancement',
+    'check-settings.mjs --out=self-test-output/reglages',
     'path: dist/Evolve-*-portable.exe',
   ].map((needle) => {
     const index = workflowCode.indexOf(needle);
@@ -410,7 +488,11 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const lenient = steps.filter((step) => step.includes('continue-on-error: true'));
   assert.equal(lenient.length, 1);
   assert.match(lenient[0], /^Régler l'écran/);
-  assert.ok(!/check-exe|check-launch|build:win|check:manifest|npm test/.test(lenient[0]));
+  assert.ok(!/check-exe|check-launch|check-settings|build:win|check:manifest|npm test/.test(lenient[0]));
+
+  // Les réglages sont éprouvés là où ils seront réellement rangés : %APPDATA%\Evolve.
+  const settingsStep = steps.find((step) => step.includes('check-settings.mjs'));
+  assert.match(settingsStep, /--settings-dir="\$APPDATA\/Evolve"/);
 
   // La publication du .exe n'a pas de condition : elle n'a lieu que si tout a réussi.
   const publish = steps.find((step) => step.includes('path: dist/Evolve-*-portable.exe'));

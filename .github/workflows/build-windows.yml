@@ -8,8 +8,10 @@
 #      réel et nouveau passage de l'auto-test ;
 #   5. lance ce fichier normalement, comme un double-clic : fenêtre en plein
 #      écran, écran comparé à l'image dessinée par l'application, fermeture
-#      normale, fichiers temporaires ;
-#   6. publie le .exe, téléchargeable depuis la page de l'exécution
+#      normale, fichiers temporaires, rien d'écrit dans le profil ;
+#   6. lance ce fichier deux fois de suite : des réglages modifiés au premier
+#      lancement doivent être sur le disque, puis retrouvés au second ;
+#   7. publie le .exe, téléchargeable depuis la page de l'exécution
 #      (rubrique « Artifacts »), ainsi que les rapports et les captures
 #      d'écran des vérifications.
 #
@@ -97,6 +99,14 @@ jobs:
       - name: Lancement normal de l'exécutable portable (plein écran)
         timeout-minutes: 8
         run: bash scripts/ci-run.sh lancement-normal node scripts/check-launch.mjs --out=self-test-output/lancement
+
+      # Deux lancements successifs sur le véritable dossier de l'utilisateur
+      # (%APPDATA%\Evolve, absent de cette machine) : le premier modifie des
+      # réglages depuis l'interface, le script lit le fichier laissé sur le
+      # disque, le second doit les afficher. Le fichier est ensuite retiré.
+      - name: Réglages conservés après un redémarrage de l'exécutable portable
+        timeout-minutes: 12
+        run: bash scripts/ci-run.sh reglages-redemarrage node scripts/check-settings.mjs --out=self-test-output/reglages --settings-dir="$APPDATA/Evolve"
 
       - name: Publier les rapports et les captures d'écran des vérifications
         if: always()

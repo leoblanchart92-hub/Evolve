@@ -22,8 +22,11 @@ import {
   launcherDirs,
   main,
   parseCaptureInfo,
+  samePath,
   SCREEN_MATCH,
   screenReport,
+  settingsLocation,
+  settingsUntouched,
   statusProblems,
 } from '../scripts/check-launch.mjs';
 import { fromRoot } from './helpers.mjs';
@@ -410,6 +413,109 @@ test('taille lisible', () => {
   assert.equal(formatSize(290.6 * 1024 * 1024), '291 Mo');
 });
 
+// --- Fichier des réglages ----------------------------------------------------------------
+
+/** Compte rendu d'une application qui annonce le fichier de réglages `file`. */
+const withSettings = (file, changes = {}) => ({
+  services: { settings: { state: 'available', storage: 'file', durable: true, problem: null, recovered: null, file, exists: false, lastError: null, ...changes } },
+});
+
+test('emplacement des réglages : celui du dossier de l’utilisateur, annoncé par l’application', () => {
+  const expected = path.join(workDir, 'Roaming', 'Evolve', 'settings.json');
+  assert.deepEqual(settingsLocation(withSettings(expected), { expected }), {
+    level: 'pass',
+    text: `réglages rangés dans le dossier de l'utilisateur : ${expected}`,
+    file: expected,
+  });
+
+  // Ailleurs (dossier local, dossier temporaire…) : échec.
+  const elsewhere = path.join(workDir, 'Local', 'Evolve', 'settings.json');
+  const wrong = settingsLocation(withSettings(elsewhere), { expected });
+  assert.equal(wrong.level, 'fail');
+  assert.equal(wrong.text, `emplacement des réglages inattendu : ${elsewhere} (attendu : ${expected})`);
+  assert.equal(wrong.file, elsewhere);
+
+  // Dossier demandé sur la ligne de commande, ou système sans emplacement de référence : simple information.
+  assert.deepEqual(settingsLocation(withSettings(elsewhere), { expected, custom: true }), {
+    level: 'note',
+    text: `réglages : ${elsewhere} (dossier demandé par --settings-dir)`,
+    file: elsewhere,
+  });
+  assert.deepEqual(settingsLocation(withSettings(elsewhere)), { level: 'note', text: `réglages : ${elsewhere}`, file: elsewhere });
+});
+
+test('emplacement des réglages : aucun fichier annoncé, ou enregistrement impossible — échec', () => {
+  const expected = path.join(workDir, 'Roaming', 'Evolve', 'settings.json');
+  const missing = [
+    {},
+    { services: null },
+    { services: {} },
+    { services: { settings: null } },
+    withSettings(null),
+    withSettings(''),
+    withSettings(42),
+    withSettings(expected, { storage: 'memory' }),
+    null,
+    undefined,
+  ];
+  for (const status of missing) {
+    const result = settingsLocation(status, { expected });
+    assert.equal(result.level, 'fail', JSON.stringify(status));
+    assert.match(result.text, /n'annonce aucun fichier pour les réglages/);
+    assert.equal(result.file, null);
+    // Demander un autre dossier ne dispense pas d'annoncer un fichier.
+    assert.equal(settingsLocation(status, { custom: true }).level, 'fail');
+  }
+
+  const unreadable = settingsLocation(withSettings(expected, { problem: 'unreadable', lastError: 'EACCES : accès refusé' }), { expected });
+  assert.equal(unreadable.level, 'fail');
+  assert.equal(unreadable.text, `les réglages ne peuvent pas être enregistrés dans ${expected} (unreadable : EACCES : accès refusé)`);
+  assert.equal(unreadable.file, expected, 'le fichier reste contrôlé après la fermeture');
+  assert.match(settingsLocation(withSettings(expected, { problem: 'unwritable' }), { custom: true }).text, /\(unwritable\)$/);
+});
+
+test('chemins comparés : même fichier malgré une écriture différente', () => {
+  const dir = path.join(workDir, 'Chemins', 'Roaming');
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'Evolve', 'settings.json');
+  assert.equal(samePath(file, file), true);
+  assert.equal(samePath(file, path.join(dir, 'Evolve', '..', 'Evolve', 'settings.json')), true);
+  assert.equal(samePath(file, `${path.join(dir, 'Evolve')}${path.sep}settings.json`), true);
+  assert.equal(samePath(file, path.join(dir, 'Evolve', 'settings.corrupt.json')), false);
+  assert.equal(samePath(file, path.join(dir, 'Autre', 'settings.json')), false);
+  // Windows ne distingue pas les majuscules ; les autres systèmes, si.
+  const shouted = path.join(dir, 'EVOLVE', 'SETTINGS.JSON');
+  assert.equal(samePath(file, shouted, { platform: 'win32' }), true);
+  assert.equal(samePath(file, shouted, { platform: 'linux' }), false);
+});
+
+test('fichier des réglages après un lancement sans réglage modifié : ni créé, ni réécrit, ni supprimé', () => {
+  const file = path.join(workDir, 'Roaming', 'Evolve', 'settings.json');
+  const content = Buffer.from('{ "schema": 1, "values": {} }');
+  assert.deepEqual(settingsUntouched(file, null, null), {
+    level: 'pass',
+    text: "aucun fichier de réglages écrit : aucun réglage n'a été modifié pendant ce lancement",
+  });
+  assert.deepEqual(settingsUntouched(file, content, Buffer.from(content)), {
+    level: 'pass',
+    text: `fichier des réglages existant laissé intact (29 octets) : ${file}`,
+  });
+  assert.deepEqual(settingsUntouched(file, null, content), {
+    level: 'fail',
+    text: `l'application a écrit le fichier des réglages alors qu'aucun réglage n'a été modifié : ${file}`,
+  });
+  assert.deepEqual(settingsUntouched(file, content, Buffer.from('{ "schema": 1, "values": { } }')), {
+    level: 'fail',
+    text: `l'application a réécrit le fichier des réglages alors qu'aucun réglage n'a été modifié : ${file}`,
+  });
+  assert.deepEqual(settingsUntouched(file, content, null), { level: 'fail', text: `l'application a supprimé le fichier des réglages : ${file}` });
+  // Contenu d'avant le lancement inconnu : rien ne peut être conclu.
+  assert.deepEqual(settingsUntouched(file, undefined, content), {
+    level: 'note',
+    text: `fichier des réglages déjà présent avant le lancement, non contrôlé : ${file}`,
+  });
+});
+
 // --- Déroulement complet, contre la fausse application --------------------------------
 // Sous Windows, la demande de fermeture passe par la fenêtre de l'application :
 // la fausse application, sans fenêtre, ne peut pas la recevoir. Le déroulement
@@ -665,6 +771,87 @@ test('profil de l’utilisateur : aucun dossier créé par l’application', pos
   const none = run('ok', { env: { APPDATA: '', LOCALAPPDATA: '' } });
   assert.equal(none.code, 0, none.output);
   assert.ok(!none.output.includes("profil de l'utilisateur"));
+});
+
+test('réglages : emplacement annoncé dans le dossier de l’utilisateur, rien d’écrit sans réglage modifié', posixOnly, () => {
+  const clean = run('ok');
+  assert.equal(clean.code, 0, clean.output);
+  assert.match(clean.output, /✔ réglages rangés dans le dossier de l'utilisateur : \S*Roaming\/Evolve\/settings\.json\n/);
+  assert.match(clean.output, /✔ aucun fichier de réglages écrit : aucun réglage n'a été modifié pendant ce lancement\n/);
+  assert.equal(existsSync(path.join(clean.profile.APPDATA, 'Evolve')), false);
+
+  // Aucun fichier annoncé (ancienne version, réglages en mémoire) : rien ne serait conservé.
+  for (const mode of ['no-services', 'settings-memory']) {
+    const { code, output } = run(mode);
+    assert.equal(code, 1, output);
+    assert.match(output, /✖ l'application n'annonce aucun fichier pour les réglages : ils ne seraient pas conservés\n/);
+    assert.match(output, /✔ fermeture normale/);
+    assert.ok(!output.includes('aucun fichier de réglages écrit'));
+  }
+
+  // Mauvais emplacement, ou dossier inaccessible.
+  const local = run('settings-local');
+  assert.equal(local.code, 1, local.output);
+  assert.match(local.output, /✖ emplacement des réglages inattendu : \S*Local\/Evolve\/settings\.json \(attendu : \S*Roaming\/Evolve\/settings\.json\)\n/);
+  const blocked = run('settings-unwritable');
+  assert.equal(blocked.code, 1, blocked.output);
+  assert.match(blocked.output, /✖ les réglages ne peuvent pas être enregistrés dans \S*settings\.json \(unreadable : EACCES : accès refusé\)\n/);
+});
+
+test('réglages : un fichier écrit alors que rien n’a été modifié fait échouer le lancement', posixOnly, () => {
+  for (const mode of ['writes-settings-at-start', 'writes-settings-on-close']) {
+    const { code, output, profile } = run(mode);
+    assert.equal(code, 1, output);
+    assert.match(output, /✖ l'application a écrit le fichier des réglages alors qu'aucun réglage n'a été modifié : \S*Roaming\/Evolve\/settings\.json\n/);
+    assert.match(output, /✖ l'application a créé un dossier dans le profil de l'utilisateur : \S*Roaming\/Evolve\n/);
+    assert.ok(existsSync(path.join(profile.APPDATA, 'Evolve', 'settings.json')));
+  }
+});
+
+test('réglages déjà présents (Evolve déjà utilisé sur ce PC) : laissés intacts, sinon échec', posixOnly, () => {
+  const mine = '{ "schema": 1, "values": { "quick.nightLight": true } }\n';
+  const prepare = (_temp, profile) => {
+    mkdirSync(path.join(profile.APPDATA, 'Evolve'), { recursive: true });
+    writeFileSync(path.join(profile.APPDATA, 'Evolve', 'settings.json'), mine);
+  };
+
+  const kept = run('ok', { prepare });
+  assert.equal(kept.code, 0, kept.output);
+  assert.match(kept.output, /✔ fichier des réglages existant laissé intact \(56 octets\) : \S*Roaming\/Evolve\/settings\.json\n/);
+  assert.match(kept.output, /· dossier déjà présent avant le lancement, non contrôlé : \S*Roaming\/Evolve\n/);
+  assert.equal(readFileSync(path.join(kept.profile.APPDATA, 'Evolve', 'settings.json'), 'utf8'), mine, 'la vérification ne modifie pas les réglages');
+
+  const rewritten = run('writes-settings-on-close', { prepare });
+  assert.equal(rewritten.code, 1, rewritten.output);
+  assert.match(rewritten.output, /✖ l'application a réécrit le fichier des réglages alors qu'aucun réglage n'a été modifié/);
+
+  const deleted = run('deletes-settings', { prepare });
+  assert.equal(deleted.code, 1, deleted.output);
+  assert.match(deleted.output, /✖ l'application a supprimé le fichier des réglages/);
+});
+
+test('réglages : dossier demandé (-- --settings-dir=…) ou système sans dossier de référence', posixOnly, () => {
+  const dir = path.join(workDir, 'reglages-demandes');
+  const custom = run('custom-settings-dir', { appArgs: [`--settings-dir=${dir}`] });
+  assert.equal(custom.code, 0, custom.output);
+  assert.match(custom.output, /· réglages : \S*reglages-demandes\/settings\.json \(dossier demandé par --settings-dir\)\n/);
+  assert.match(custom.output, /✔ aucun fichier de réglages écrit/);
+  assert.ok(!custom.output.includes('emplacement des réglages inattendu'));
+
+  // Là aussi, rien ne doit être écrit sans réglage modifié.
+  const written = run('custom-settings-dir', { appArgs: [`--settings-dir=${dir}`, '--write'] });
+  assert.equal(written.code, 1, written.output);
+  assert.match(written.output, /✖ l'application a écrit le fichier des réglages alors qu'aucun réglage n'a été modifié : \S*reglages-demandes\/settings\.json\n/);
+  // Fichier déjà présent dans un dossier que le script ne connaissait pas avant le lancement.
+  const unknown = run('custom-settings-dir', { appArgs: [`--settings-dir=${dir}`] });
+  assert.equal(unknown.code, 0, unknown.output);
+  assert.match(unknown.output, /· fichier des réglages déjà présent avant le lancement, non contrôlé : \S*reglages-demandes\/settings\.json\n/);
+
+  // Hors de Windows : l'emplacement est indiqué, sans être jugé.
+  const elsewhere = run('ok', { env: { APPDATA: '', LOCALAPPDATA: '' } });
+  assert.equal(elsewhere.code, 0, elsewhere.output);
+  assert.match(elsewhere.output, /· réglages : \S*configuration\/evolve\/settings\.json\n/);
+  assert.match(elsewhere.output, /✔ aucun fichier de réglages écrit/);
 });
 
 test('hors exécutable portable : aucun dossier temporaire à surveiller', posixOnly, () => {

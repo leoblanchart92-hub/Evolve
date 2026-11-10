@@ -13,9 +13,13 @@
  * Pour l'exécutable portable, il mesure aussi l'espace occupé dans le dossier
  * temporaire pendant le fonctionnement, signale ce qui n'aurait pas été
  * supprimé à la fermeture, et indique la taille des données que l'application
- * conserve. Enfin, il contrôle que l'application n'a créé aucun dossier à son
- * nom dans le profil de l'utilisateur (AppData), où les applications rangent
- * d'ordinaire leurs données.
+ * conserve.
+ *
+ * Enfin, il contrôle ce que ce lancement laisse dans le profil de
+ * l'utilisateur (AppData). Evolve n'y range qu'un fichier, celui des réglages
+ * (%APPDATA%\Evolve\settings.json), créé au premier réglage modifié. Ici,
+ * aucun réglage n'est modifié : l'application doit annoncer cet emplacement,
+ * mais ne rien y écrire — ni fichier, ni dossier.
  *
  * L'application signale son état grâce à l'option `--status-file`
  * (voir src/main/status.js). Le dossier des résultats contient ensuite :
@@ -37,7 +41,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -336,6 +340,85 @@ export function formatSize(bytes) {
   return bytes >= 1024 * 1024 ? `${Math.round(bytes / (1024 * 1024))} Mo` : `${Math.ceil(bytes / 1024)} Ko`;
 }
 
+// --- Fichier des réglages --------------------------------------------------------
+
+/**
+ * Écriture de référence d'un chemin : la partie qui existe est résolue par le
+ * système (noms abrégés et majuscules sous Windows, liens), le reste est gardé.
+ */
+function canonicalPath(file) {
+  let existing = path.resolve(file);
+  const rest = [];
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    rest.unshift(path.basename(existing));
+    existing = parent;
+  }
+  try {
+    existing = realpathSync.native(existing);
+  } catch {
+    /* chemin gardé tel quel */
+  }
+  return path.join(existing, ...rest);
+}
+
+/** Vrai si deux chemins désignent le même fichier (Windows ne distingue pas les majuscules). */
+export function samePath(first, second, { platform = process.platform } = {}) {
+  const [a, b] = [canonicalPath(first), canonicalPath(second)];
+  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** Contenu d'un fichier, ou `null` s'il n'existe pas (ou ne peut pas être lu). */
+function readOrNull(file) {
+  try {
+    return readFileSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Contrôle de l'emplacement des réglages annoncé par l'application.
+ * @param {object} status  compte rendu de l'application (src/main/status.js)
+ * @param {object} options
+ * @param {string|null} options.expected  fichier attendu (`null` : système sans emplacement de référence)
+ * @param {boolean} options.custom        vrai si un autre dossier a été demandé (--settings-dir)
+ * @returns {{ level: 'pass'|'fail'|'note', text: string, file: string|null }}
+ */
+export function settingsLocation(status, { expected = null, custom = false } = {}) {
+  const settings = status?.services?.settings;
+  if (!settings || settings.storage !== 'file' || typeof settings.file !== 'string' || settings.file === '') {
+    return { level: 'fail', text: "l'application n'annonce aucun fichier pour les réglages : ils ne seraient pas conservés", file: null };
+  }
+  const { file } = settings;
+  if (settings.problem) {
+    const detail = typeof settings.lastError === 'string' && settings.lastError ? ` : ${settings.lastError}` : '';
+    return { level: 'fail', text: `les réglages ne peuvent pas être enregistrés dans ${file} (${settings.problem}${detail})`, file };
+  }
+  if (custom) return { level: 'note', text: `réglages : ${file} (dossier demandé par --settings-dir)`, file };
+  if (!expected) return { level: 'note', text: `réglages : ${file}`, file };
+  if (!samePath(file, expected)) return { level: 'fail', text: `emplacement des réglages inattendu : ${file} (attendu : ${expected})`, file };
+  return { level: 'pass', text: `réglages rangés dans le dossier de l'utilisateur : ${file}`, file };
+}
+
+/**
+ * Le fichier des réglages après un lancement où aucun réglage n'a été modifié :
+ * il ne doit être ni créé, ni réécrit.
+ * @param {string} file
+ * @param {Buffer|null|undefined} before  contenu avant le lancement (`null` : absent ; `undefined` : inconnu)
+ * @param {Buffer|null} after             contenu après la fermeture (`null` : absent)
+ * @returns {{ level: 'pass'|'fail'|'note', text: string }}
+ */
+export function settingsUntouched(file, before, after) {
+  if (before === undefined) return { level: 'note', text: `fichier des réglages déjà présent avant le lancement, non contrôlé : ${file}` };
+  if (before === null && after === null) return { level: 'pass', text: "aucun fichier de réglages écrit : aucun réglage n'a été modifié pendant ce lancement" };
+  if (before === null) return { level: 'fail', text: `l'application a écrit le fichier des réglages alors qu'aucun réglage n'a été modifié : ${file}` };
+  if (after === null) return { level: 'fail', text: `l'application a supprimé le fichier des réglages : ${file}` };
+  if (!before.equals(after)) return { level: 'fail', text: `l'application a réécrit le fichier des réglages alors qu'aucun réglage n'a été modifié : ${file}` };
+  return { level: 'pass', text: `fichier des réglages existant laissé intact (${after.length} octets) : ${file}` };
+}
+
 // --- Particularités du système ---------------------------------------------------
 
 /**
@@ -579,11 +662,18 @@ export async function main(argv, { capture = captureScreen } = {}) {
   for (const file of [statusFile, `${statusFile}.tmp`, renderFile, screenFile]) rmSync(file, { force: true });
 
   // Emplacements habituels des données d'une application dans le profil de
-  // l'utilisateur (variables définies sous Windows) : Evolve ne doit rien y créer.
+  // l'utilisateur (variables définies sous Windows). Evolve n'y range que le
+  // fichier de ses réglages, créé au premier réglage modifié : ce lancement,
+  // qui n'en modifie aucun, ne doit donc rien y créer.
   const profileFolders = [process.env.APPDATA, process.env.LOCALAPPDATA]
     .filter(Boolean)
     .map((dir) => path.join(dir, pkg.build.productName))
     .map((dir) => ({ dir, existed: existsSync(dir) }));
+  // Fichier des réglages attendu, calculé ici sans rien demander à
+  // l'application, et son contenu avant le lancement.
+  const expectedSettings = process.env.APPDATA ? path.join(process.env.APPDATA, pkg.build.productName, 'settings.json') : null;
+  const settingsBefore = expectedSettings ? readOrNull(expectedSettings) : undefined;
+  const customSettings = extraArgs.some((arg) => arg.startsWith('--settings-dir='));
 
   // Dossiers de travail déjà présents : ils ne sont pas ceux de ce lancement.
   // Windows désigne le dossier temporaire par plusieurs variables, et parfois
@@ -641,6 +731,12 @@ export async function main(argv, { capture = captureScreen } = {}) {
     );
   }
   for (const problem of problems) fail(problem);
+
+  // Emplacement des réglages annoncé par l'application.
+  const location = settingsLocation(status, { expected: expectedSettings, custom: customSettings });
+  if (location.level === 'pass') pass(location.text);
+  else if (location.level === 'fail') fail(location.text);
+  else notes.push(location.text);
 
   // --- 3. Espace temporaire de l'exécutable portable ------------------------------
   // L'exécutable portable se décompresse dans un dossier de nom fixe ; son
@@ -750,7 +846,16 @@ export async function main(argv, { capture = captureScreen } = {}) {
     const { files, bytes } = folderUsage(status.userData);
     notes.push(`données conservées après la fermeture : ${status.userData} (${files} fichier${files > 1 ? 's' : ''}, ${formatSize(bytes)})`);
   }
-  // Rien dans le profil de l'utilisateur.
+  // Aucun réglage n'a été modifié : le fichier des réglages n'est ni créé, ni réécrit.
+  if (location.file) {
+    const known = expectedSettings !== null && samePath(location.file, expectedSettings);
+    const before = known ? settingsBefore : status.services.settings.exists === false ? null : undefined;
+    const untouched = settingsUntouched(location.file, before, readOrNull(location.file));
+    if (untouched.level === 'pass') pass(untouched.text);
+    else if (untouched.level === 'fail') fail(untouched.text);
+    else notes.push(untouched.text);
+  }
+  // Rien d'autre dans le profil de l'utilisateur.
   if (profileFolders.length > 0) {
     const created = profileFolders.filter(({ dir, existed }) => !existed && existsSync(dir));
     const earlier = profileFolders.filter(({ existed }) => existed);

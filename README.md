@@ -2,7 +2,7 @@
 
 **Evolve** est un environnement de bureau au style néon violet : bureau, barre des tâches, menu Démarrer, fenêtres, explorateur de fichiers.
 
-Cette version 0.1.0 est un **aperçu de l'interface graphique**. Elle prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie rien sur le PC.
+Cette version 0.2.0 est un **aperçu de l'interface graphique**, qui retient désormais vos réglages d'un lancement à l'autre. Elle prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie aucun réglage de Windows. Ce qu'il écrit sur le PC se limite à un petit fichier de réglages et à des fichiers temporaires, [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
 
 ![Le bureau d'Evolve : fond d'écran, icônes, widgets et barre des tâches](docs/captures/bureau.jpg)
 
@@ -14,6 +14,7 @@ Cette version 0.1.0 est un **aperçu de l'interface graphique**. Elle prend la f
 
 - [Télécharger et lancer Evolve](#télécharger-et-lancer-evolve)
 - [Ce qu'Evolve fait — et ne fait pas — sur votre PC](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc)
+- [Vos réglages](#vos-réglages)
 - [Ce que contient cet aperçu](#ce-que-contient-cet-aperçu)
 - [Raccourcis utiles](#raccourcis-utiles)
 - [Vérifications automatiques](#vérifications-automatiques)
@@ -27,7 +28,7 @@ L'exécutable est fabriqué automatiquement par GitHub à chaque modification du
 
 1. Connectez-vous à GitHub, puis ouvrez la page **[Actions → Exécutable Windows](https://github.com/leoblanchart92-hub/Evolve/actions/workflows/build-windows.yml)**.
 2. Cliquez sur l'exécution la plus récente marquée d'une coche verte.
-3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.1.0-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
+3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.2.0-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
 4. Double-cliquez sur le fichier téléchargé. Evolve s'ouvre en plein écran.
 
 À savoir :
@@ -43,14 +44,15 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 
 | Engagement | En pratique |
 | --- | --- |
-| **Aucune installation** | Rien n'est ajouté au menu Démarrer de Windows, au bureau, à la liste des programmes ni au démarrage de l'ordinateur. Pour « désinstaller » Evolve, supprimez le fichier `.exe`. |
+| **Aucune installation** | Rien n'est ajouté au menu Démarrer de Windows, au bureau, à la liste des programmes ni au démarrage de l'ordinateur. Pour « désinstaller » Evolve, supprimez le fichier `.exe` et, si vous avez modifié des réglages, le dossier `%APPDATA%\Evolve`. |
 | **Aucun droit administrateur** | Evolve s'exécute avec les droits de l'utilisateur et ne déclenche jamais la demande d'élévation de Windows. Ce point est contrôlé à chaque compilation. |
 | **Aucun fichier personnel lu ou modifié** | L'explorateur de fichiers présente un contenu d'exemple, fictif. Vos documents ne sont ni parcourus, ni affichés, ni modifiés. |
-| **Aucun réglage de Windows modifié** | Les paramètres rapides (Wi-Fi, Bluetooth, volume, luminosité…) sont purement visuels : ils n'agissent que sur l'interface d'Evolve. |
+| **Aucun réglage de Windows modifié** | Les paramètres rapides (Wi-Fi, Bluetooth, volume, luminosité…) sont purement visuels : ils n'agissent que sur l'interface d'Evolve, qui retient leur position sans rien changer à Windows. |
+| **Un seul dossier dans votre profil** | Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié : tant que vous ne changez rien, Evolve n'écrit rien dans votre profil. Ces deux points sont contrôlés à chaque compilation. |
 | **Aucune mesure réelle du matériel** | Les widgets processeur, mémoire et carte graphique affichent des valeurs simulées, signalées par la mention « DÉMO ». |
 | **Aucune connexion réseau** | L'interface est entièrement locale ; toute requête vers Internet y est bloquée. |
 
-**Fichiers temporaires.** Evolve ne crée aucun dossier à son nom dans votre profil (`AppData\Roaming`, `AppData\Local`), là où les applications installées rangent leurs données. Il n'utilise que le dossier temporaire de Windows (`%TEMP%`) :
+**Fichiers temporaires.** En dehors du fichier de réglages décrit ci-dessous, Evolve n'utilise que le dossier temporaire de Windows (`%TEMP%`) :
 
 | Dossier dans `%TEMP%` | Contenu | Taille | Durée de vie |
 | --- | --- | --- | --- |
@@ -59,6 +61,31 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 | `Evolve` | cache technique du moteur d'affichage | environ 3 Mo | conservé d'un lancement à l'autre |
 
 Ces dossiers peuvent être supprimés sans risque lorsqu'Evolve est fermé. Leur taille et leur suppression à la fermeture sont relevées à chaque compilation (voir [Vérifications automatiques](#vérifications-automatiques)).
+
+## Vos réglages
+
+Evolve retient d'un lancement à l'autre :
+
+- l'affichage des **widgets** et des **icônes du bureau** (affichés ou masqués) ;
+- la position des **paramètres rapides** : Wi-Fi, Bluetooth, mode avion, économie d'énergie, éclairage nocturne, « Ne pas déranger », luminosité, volume et son coupé.
+
+Ils sont rangés dans le dossier `%APPDATA%\Evolve` — c'est-à-dire `C:\Users\<votre nom>\AppData\Roaming\Evolve` ; pour l'ouvrir, collez `%APPDATA%\Evolve` dans la barre d'adresse de l'explorateur de Windows.
+
+| Fichier dans `%APPDATA%\Evolve` | Contenu | Durée de vie |
+| --- | --- | --- |
+| `settings.json` | les réglages que vous avez modifiés, en texte lisible (moins de 1 Ko) | créé au premier réglage modifié, conservé ensuite |
+| `settings.corrupt.json` | copie d'un fichier de réglages devenu inutilisable | n'existe qu'après un incident (voir ci-dessous) |
+| `settings.json.tmp` | enregistrement en cours | un instant, pendant l'enregistrement |
+
+À savoir :
+
+- **Enregistrement.** Un réglage modifié est enregistré dans la seconde qui suit ; un changement encore en attente l'est à la fermeture d'Evolve ou à l'extinction de Windows. Le fichier est remplacé en une seule opération, pour qu'une coupure de courant laisse soit l'ancienne version, soit la nouvelle, et non un fichier tronqué.
+- **Revenir aux réglages d'origine.** Fermez Evolve, puis supprimez `settings.json` (ou le dossier `%APPDATA%\Evolve` entier).
+- **Fichier endommagé.** Si `settings.json` est devenu inutilisable (modification à la main, disque défaillant), Evolve démarre avec les réglages d'origine, vous en informe, et met le fichier de côté sous le nom `settings.corrupt.json` au lieu de le perdre. Une valeur isolée invalide reprend simplement sa valeur d'origine.
+- **Fichier inaccessible.** Si le fichier ne peut pas être lu ou écrit (droits insuffisants, disque plein), Evolve fonctionne normalement et vous prévient que vos changements risquent de ne pas être conservés. Un fichier qu'il n'a pas pu lire n'est jamais écrasé.
+- **Changement de version.** Les réglages enregistrés par une version plus récente d'Evolve ne sont pas perdus si vous relancez une version plus ancienne : ceux qu'elle ne connaît pas sont conservés tels quels.
+
+Avec l'option `--settings-dir=DOSSIER` (voir [Raccourcis utiles](#raccourcis-utiles)), les réglages sont rangés dans le dossier de votre choix plutôt que dans votre profil. Un chemin relatif part du dossier où se trouve le fichier `.exe` : `--settings-dir=reglages` range ainsi les réglages à côté de lui, par exemple sur une clé USB.
 
 ## Ce que contient cet aperçu
 
@@ -90,7 +117,9 @@ Le fichier `.exe` accepte aussi des options, à ajouter après son nom dans une 
 | --- | --- |
 | `--windowed` | démarre dans une fenêtre plutôt qu'en plein écran |
 | `--devtools` | autorise les outils de développement (touche `F12`) |
-| `--self-test` | lance l'auto-test décrit ci-dessous, puis quitte ; le rapport est enregistré dans un dossier `self-test-output` créé à côté du fichier `.exe` |
+| `--settings-dir=DOSSIER` | range les réglages dans `DOSSIER` au lieu de `%APPDATA%\Evolve` ; le dossier est créé au premier réglage modifié (voir [Vos réglages](#vos-réglages)) |
+| `--self-test` | lance l'auto-test décrit ci-dessous, puis quitte ; le rapport est enregistré dans un dossier `self-test-output` créé à côté du fichier `.exe`. Pendant l'auto-test, les réglages restent en mémoire : vos réglages ne sont ni lus ni modifiés |
+| `--self-test-scenario=NOM` | avec `--self-test`, choisit ce qui est contrôlé : `full` (par défaut, le contrôle complet), ou `settings-write` puis `settings-read`, les deux lancements de la vérification des réglages décrite ci-dessous (ils exigent `--settings-dir`) |
 | `--status-file=FICHIER` | une fois l'interface démarrée, écrit dans `FICHIER` l'état de la fenêtre et enregistre à côté l'image affichée ; sert à la vérification du lancement décrite ci-dessous |
 
 ## Vérifications automatiques
@@ -100,8 +129,9 @@ Evolve ne pouvant pas être essayé à la main à chaque modification, la compil
 1. **Tests automatiques** du code (`npm test`).
 2. **Fabrication** du fichier `.exe` portable.
 3. **Droits demandés** : lecture du manifeste de l'exécutable, qui doit indiquer le niveau `asInvoker` (aucun droit administrateur).
-4. **Auto-test** : le `.exe` est réellement lancé avec l'option `--self-test`. L'application vérifie alors son propre affichage — fond d'écran identique à l'image d'origine, polices, barre des tâches, menu Démarrer, recherche, panneaux, fenêtres, explorateur, absence d'erreur — et enregistre un rapport accompagné de captures d'écran.
-5. **Lancement normal** : le `.exe` est lancé une seconde fois, sans option d'essai, comme par un double-clic. Un contrôle extérieur vérifie que la fenêtre s'ouvre en plein écran et couvre tout l'écran, compare une capture de l'écran à l'image dessinée par l'application, puis demande la fermeture comme le ferait `Alt` + `F4` : l'application doit se fermer sans erreur, et sans avoir créé de dossier dans le profil de l'utilisateur. L'espace occupé dans le dossier temporaire, et ce qu'il en reste après la fermeture, sont relevés.
+4. **Auto-test** : le `.exe` est réellement lancé avec l'option `--self-test`. L'application vérifie alors son propre affichage — fond d'écran identique à l'image d'origine, polices, barre des tâches, menu Démarrer, recherche, panneaux, fenêtres, explorateur, services joignables depuis l'interface, absence d'erreur — et enregistre un rapport accompagné de captures d'écran.
+5. **Lancement normal** : le `.exe` est lancé une seconde fois, sans option d'essai, comme par un double-clic. Un contrôle extérieur vérifie que la fenêtre s'ouvre en plein écran et couvre tout l'écran, compare une capture de l'écran à l'image dessinée par l'application, puis demande la fermeture comme le ferait `Alt` + `F4` : l'application doit se fermer sans erreur. Il vérifie aussi que les réglages sont bien destinés à `%APPDATA%\Evolve\settings.json` et que ce lancement, où aucun réglage n'est modifié, n'a rien écrit dans le profil de l'utilisateur : ni fichier, ni dossier. L'espace occupé dans le dossier temporaire, et ce qu'il en reste après la fermeture, sont relevés.
+6. **Réglages et redémarrage** : le `.exe` est lancé deux fois de suite sur le véritable dossier `%APPDATA%\Evolve` de la machine. Au premier lancement, l'application modifie cinq réglages depuis son interface, par les mêmes boutons et curseurs qu'un utilisateur, puis se ferme. Le contrôle lit alors lui-même `settings.json` : le fichier doit exister, être seul dans son dossier et contenir exactement ces cinq réglages. Au second lancement, l'interface doit les afficher sans aucune action — widgets masqués, éclairage nocturne et « Ne pas déranger » activés, luminosité et volume réglés —, et relire le fichier ne doit pas le modifier. Le fichier est ensuite retiré de la machine.
 
 Le fichier `.exe` n'est publié que si toutes ces étapes réussissent. Les rapports et les captures d'écran sont joints à chaque exécution, dans l'artefact `auto-test` ; l'essentiel est résumé en tête de la page de l'exécution.
 
@@ -109,9 +139,12 @@ Le fichier `.exe` n'est publié que si toutes ces étapes réussissent. Les rapp
 
 - Cet aperçu est une application qui *ressemble* à un environnement de bureau : il ne remplace pas le bureau de Windows et ne lance pas de vrais programmes.
 - Seul l'explorateur de fichiers est fonctionnel, sur un contenu d'exemple ; ses actions sur les fichiers (nouveau, renommer, supprimer…) ne sont pas encore disponibles.
+- Les paramètres rapides sont retenus, mais restent visuels : ils ne règlent ni le Wi-Fi, ni le son, ni la luminosité de Windows.
+- Si Evolve est fermé en mode avion, quitter ce mode après le redémarrage réactive le Wi-Fi et le Bluetooth tous les deux, même si l'un d'eux était désactivé avant le mode avion : cet état antérieur n'est pas retenu.
+- Les fenêtres ouvertes, leur position et le dossier affiché par l'explorateur ne sont pas retenus d'un lancement à l'autre.
 - L'interface est en français uniquement.
 - L'exécutable n'est pas signé (voir l'avertissement de Windows ci-dessus) et n'existe que pour Windows 64 bits.
-- Si Evolve est interrompu brutalement (gestionnaire des tâches, coupure de courant), des fichiers temporaires peuvent subsister dans `%TEMP%` (dossiers `Evolve-portable` et `ns….tmp`). Ils peuvent être supprimés à la main.
+- Si Evolve est interrompu brutalement (gestionnaire des tâches, coupure de courant), des fichiers temporaires peuvent subsister dans `%TEMP%` (dossiers `Evolve-portable` et `ns….tmp`). Ils peuvent être supprimés à la main. Un réglage modifié dans la seconde qui précède l'interruption peut ne pas avoir été enregistré.
 
 ## Développement
 
@@ -127,17 +160,21 @@ npm run build:win      # fabrique dist/Evolve-<version>-portable.exe (sous Windo
 npm run check:manifest # vérifie que l'exécutable ne demande aucun droit administrateur
 npm run check:exe      # lance l'auto-test de l'exécutable fabriqué
 npm run check:launch   # lance l'exécutable normalement et vérifie plein écran, affichage et fermeture
+npm run check:settings # lance l'exécutable deux fois et vérifie que les réglages sont conservés
 npm run check:dev      # lance l'auto-test de la version de développement
 npm run icons          # régénère la planche de pictogrammes
 ```
 
 L'interface est écrite en HTML, CSS et JavaScript, sans bibliothèque ni étape de compilation ; [Electron](https://www.electronjs.org) l'affiche dans une fenêtre de bureau.
 
+Tout ce qui touche à l'ordinateur passe par une **couche de services** (`src/services/`), indépendante d'Electron comme de l'interface. Chaque service s'inscrit auprès d'un point d'accès unique (`hub.js`) en déclarant ses méthodes publiques et ses événements ; l'interface, isolée dans un bac à sable, ne peut qu'appeler ces méthodes par leur nom (`services.call('settings', 'set', …)`) et recevoir ces événements — elle n'a accès ni aux fichiers ni au système. Le premier service est celui des réglages ; les suivants s'ajouteront de la même façon, sans modifier ni la passerelle ni la fenêtre.
+
 ```text
 assets/          fond d'écran, polices, icône de l'application
 src/main/        application de bureau (Electron) : fenêtre, sécurité, auto-test
+src/services/    services : point d'accès, réglages (schéma, fichier, emplacement)
 src/renderer/    interface : page, feuilles de style et modules JavaScript
-  js/core/       outils communs (DOM, formats, horloge, pictogrammes)
+  js/core/       outils communs (DOM, formats, horloge, pictogrammes, accès aux services)
   js/shell/      bureau, barre des tâches, menu Démarrer, panneaux
   js/wm/         gestionnaire de fenêtres
   js/widgets/    widgets matériels (processeur, mémoire, carte graphique)

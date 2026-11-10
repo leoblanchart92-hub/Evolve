@@ -13,6 +13,7 @@
  */
 
 const { EventEmitter } = require('node:events');
+const path = require('node:path');
 
 /** Événement annulable, comme ceux d'Electron. */
 function cancellable() {
@@ -26,7 +27,10 @@ function cancellable() {
 
 /**
  * @param {object} options
- * @param {string} options.tempDir                 dossier temporaire renvoyé par app.getPath('temp')
+ * @param {string} options.tempDir                 dossier temporaire renvoyé par app.getPath('temp') ;
+ *                                                 le dossier de configuration de l'utilisateur
+ *                                                 (app.getPath('appData')) est placé à l'intérieur :
+ *                                                 les tests n'écrivent jamais dans le vrai profil
  * @param {boolean} [options.packaged]             application empaquetée (app.isPackaged)
  * @param {boolean} [options.lock]                 verrou d'instance unique obtenu
  * @param {{width:number,height:number}} [options.workArea]  zone de travail de l'écran principal
@@ -64,9 +68,11 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
   const app = Object.assign(new EventEmitter(), {
     isPackaged: packaged,
     getName: () => 'Evolve',
+    getVersion: () => '9.8.7',
     getPath(name) {
       if (state.paths[name]) return state.paths[name];
       if (name === 'temp') return tempDir;
+      if (name === 'appData') return path.join(tempDir, 'profil', 'AppData', 'Roaming');
       throw new Error(`faux electron : chemin inattendu « ${name} »`);
     },
     setPath(name, value) {
@@ -217,7 +223,11 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
       invoke(channel, ...args) {
         const handler = state.ipcHandlers.get(channel);
         if (!handler) return Promise.reject(new Error(`No handler registered for '${channel}'`));
-        return Promise.resolve().then(() => handler({ sender: webContents }, ...args));
+        // Comme le vrai canal : arguments et résultat sont copiés, jamais partagés ;
+        // ce qui ne peut pas être copié (une fonction…) fait échouer l'appel.
+        return Promise.resolve()
+          .then(() => handler({ sender: webContents }, ...structuredClone(args)))
+          .then((result) => structuredClone(result));
       },
       on(channel, listener) {
         const list = webContents.rendererListeners.get(channel) ?? [];

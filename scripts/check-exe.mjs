@@ -13,7 +13,9 @@
  *   EXÉCUTABLE   par défaut : dist/Evolve-<version>-portable.exe ; le mot
  *                « electron » désigne le moteur installé par « npm install »
  *   --out=DOSSIER  dossier des résultats (par défaut : self-test-output/)
- *   ARGUMENTS    placés avant `--self-test`
+ *   ARGUMENTS    placés avant `--self-test` ; l'option
+ *                `--self-test-scenario=NOM` de l'application choisit ce qui
+ *                est contrôlé, et son nom figure alors dans les titres
  *
  * Exemples :
  *   npm run check:exe     vérifie l'exécutable produit par « npm run build:win »
@@ -49,6 +51,17 @@ const resultFile = path.join(outDir, 'result.json');
 /** Erreur fatale du processus principal, consignée par l'application elle-même. */
 const fatalFile = path.join(outDir, 'fatal-error.log');
 
+/**
+ * Scénario demandé à l'application (voir src/main/selftest.js). Un scénario
+ * particulier est nommé dans les titres : plusieurs auto-tests du même
+ * exécutable ne se confondent pas sur la page de la compilation.
+ */
+const SCENARIO_NAMES = { 'settings-write': 'réglages modifiés', 'settings-read': 'réglages retrouvés' };
+const SCENARIO_FLAG = '--self-test-scenario=';
+// Comme l'application : si l'option est répétée, la première compte.
+const scenario = (extraArgs.find((arg) => arg.startsWith(SCENARIO_FLAG)) ?? '').slice(SCENARIO_FLAG.length).trim();
+const testName = !scenario || scenario === 'full' ? 'Auto-test' : `Auto-test « ${SCENARIO_NAMES[scenario] ?? scenario} »`;
+
 /** Chemin de l'exécutable à vérifier. */
 function resolveExecutable(name) {
   if (name === 'electron') {
@@ -68,7 +81,7 @@ function resolveExecutable(name) {
  */
 function annotate(kind, message) {
   if (process.env.GITHUB_ACTIONS !== 'true') return;
-  console.log(annotation(kind, `Auto-test — ${path.basename(exe)}`, String(message).slice(0, 3500)));
+  console.log(annotation(kind, `${testName} — ${path.basename(exe)}`, String(message).slice(0, 3500)));
 }
 
 function fail(message) {
@@ -76,7 +89,7 @@ function fail(message) {
   console.error(`\n✖ ${message}`);
   if (fatal) console.error(`\nErreur consignée par l'application :\n${fatal}`);
   annotate('error', fatal ? `${message}\n\n${fatal}` : message);
-  summarize(`### ❌ Auto-test de l'exécutable : échec\n\n${message}\n${fatal ? `\n\`\`\`\n${fatal}\n\`\`\`\n` : ''}`);
+  summarize(`### ❌ ${testName} de l'exécutable : échec\n\n${message}\n${fatal ? `\n\`\`\`\n${fatal}\n\`\`\`\n` : ''}`);
   process.exit(1);
 }
 
@@ -114,7 +127,7 @@ for (const name of readdirSync(outDir)) {
   }
 }
 
-console.log(`Auto-test de ${path.relative(root, exe) || exe}`);
+console.log(`${testName} de ${path.relative(root, exe) || exe}`);
 console.log(`Résultats  : ${path.relative(root, outDir) || outDir}\n`);
 
 // --- Exécution -------------------------------------------------------------------
@@ -178,7 +191,7 @@ child.on('exit', (code, signal) => {
 
   summarize(
     [
-      `### ${success ? '✅' : '❌'} Auto-test de l'exécutable : ${success ? 'réussi' : 'échec'}`,
+      `### ${success ? '✅' : '❌'} ${testName} de l'exécutable : ${success ? 'réussi' : 'échec'}`,
       '',
       `${passed}/${checks.length} contrôles · ${captures.length} captures${imagesInfo} · fenêtre ${size} · ${engine} · ${seconds} s`,
       '',

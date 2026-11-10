@@ -60,10 +60,11 @@ function captureFileFor(file) {
  * @param {string} options.file fichier du compte rendu
  * @param {import('electron').Screen} options.screen
  * @param {string} [options.userData] dossier des données de l'application, cité dans le compte rendu
+ * @param {() => object} [options.describeServices] état des services d'Evolve (emplacement des réglages…)
  * @param {Partial<typeof DEFAULT_TIMINGS>} [options.timings]
  * @returns {Promise<object>} l'état écrit dans le fichier
  */
-async function reportStatus(win, { file, screen, userData, timings = {} }) {
+async function reportStatus(win, { file, screen, userData, describeServices = null, timings = {} }) {
   const t = { ...DEFAULT_TIMINGS, ...timings };
   const started = Date.now();
   const { webContents } = win;
@@ -111,6 +112,8 @@ async function reportStatus(win, { file, screen, userData, timings = {} }) {
     executable: process.execPath,
     /** Dossier où l'application conserve ses données (cache du moteur d'affichage). */
     userData: typeof userData === 'string' ? userData : null,
+    /** Services d'Evolve : inventaire, état, emplacement du fichier des réglages. */
+    services: null,
     versions: {
       electron: process.versions.electron ?? null,
       chrome: process.versions.chrome ?? null,
@@ -130,6 +133,14 @@ async function reportStatus(win, { file, screen, userData, timings = {} }) {
       bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
       display: { ...display.bounds, scaleFactor: display.scaleFactor },
     });
+  }
+
+  if (describeServices) {
+    try {
+      status.services = describeServices();
+    } catch (error) {
+      errors.push(`état des services indisponible : ${error?.message}`);
+    }
   }
 
   fs.mkdirSync(path.dirname(file), { recursive: true });

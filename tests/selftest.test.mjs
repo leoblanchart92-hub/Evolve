@@ -16,7 +16,9 @@ import vm from 'node:vm';
 import { fromRoot } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
-const { runSelfTest, countColors, DEFAULT_TIMINGS, MIN_CAPTURE_COLORS, WALLPAPER } = require('../src/main/selftest.js');
+const { runSelfTest, countColors, DEFAULT_TIMINGS, DEFAULT_SCENARIO, MIN_CAPTURE_COLORS, WALLPAPER } = require('../src/main/selftest.js');
+const { CHANGED_SETTINGS, EXPECTED_SETTINGS } = require('../src/main/selftest-settings.js');
+const { SETTINGS, defaultsOf } = require('../src/services/settings-schema.js');
 
 const workDir = mkdtempSync(path.join(tmpdir(), 'evolve-selftest-'));
 after(() => rmSync(workDir, { recursive: true, force: true }));
@@ -74,9 +76,9 @@ function createWindow(answer = () => true, { capturePage } = {}) {
 }
 
 /** Lance l'auto-test et renvoie son code de sortie et son rapport. */
-async function run(win, timings = FAST) {
+async function run(win, timings = FAST, options = {}) {
   const outDir = freshDir();
-  const code = await runSelfTest(win, { outDir, timings });
+  const code = await runSelfTest(win, { outDir, timings, ...options });
   const report = JSON.parse(readFileSync(path.join(outDir, 'result.json'), 'utf8'));
   return { code, report, outDir };
 }
@@ -89,7 +91,10 @@ test('tout est conforme : code 0, rapport complet, sept captures', async () => {
 
   assert.equal(code, 0);
   assert.equal(report.ok, true);
-  assert.equal(report.checks.length, 23);
+  assert.equal(report.scenario, 'full');
+  assert.equal(DEFAULT_SCENARIO, 'full');
+  assert.equal(report.services, null, "sans état des services fourni, le rapport n'en invente pas");
+  assert.equal(report.checks.length, 24);
   assert.deepEqual(failed(report), []);
   assert.deepEqual(report.errors, []);
   assert.deepEqual(report.warnings, []);
@@ -97,7 +102,7 @@ test('tout est conforme : code 0, rapport complet, sept captures', async () => {
   assert.equal(report.versions.node, process.versions.node);
   assert.equal(report.executable, process.execPath);
   assert.ok(report.durationMs >= 0);
-  assert.equal(new Set(report.checks.map((item) => item.name)).size, 23, 'intitulés tous différents');
+  assert.equal(new Set(report.checks.map((item) => item.name)).size, 24, 'intitulés tous différents');
 
   assert.deepEqual(report.captures, [
     '01-bureau.png',
@@ -143,7 +148,7 @@ test('un contrôle en échec : code 1, valeur observée consignée, les autres c
 
   assert.equal(code, 1);
   assert.equal(report.ok, false);
-  assert.equal(report.checks.length, 23);
+  assert.equal(report.checks.length, 24);
   assert.deepEqual(failed(report), ["fond d'écran officiel affiché sans déformation ni filtre"]);
   assert.deepEqual(report.checks.find((item) => !item.ok).value, observed);
   assert.equal(report.captures.length, 7);
@@ -358,7 +363,7 @@ test('capture non mesurable : le contrôle correspondant est simplement omis', a
   for (const image of images) {
     const { code, report } = await run(createWindow(() => true, { capturePage: async () => image }));
     assert.equal(code, 0);
-    assert.equal(report.checks.length, 22);
+    assert.equal(report.checks.length, 23);
     assert.ok(!report.checks.some((item) => item.name === PAINTED));
     assert.deepEqual(report.images, []);
     assert.equal(report.captures.length, 7);
@@ -370,7 +375,7 @@ test('captures impossibles ou vides : simples avertissements, le test reste vala
   const failing = createWindow(() => true, { capturePage: async () => Promise.reject(new Error('fenêtre masquée')) });
   const first = await run(failing);
   assert.equal(first.code, 0);
-  assert.equal(first.report.checks.length, 22);
+  assert.equal(first.report.checks.length, 23);
   assert.deepEqual(first.report.captures, []);
   assert.equal(first.report.warnings.length, 7);
   assert.match(first.report.warnings[0], /capture « 01-bureau » impossible : fenêtre masquée/);
@@ -418,4 +423,133 @@ test('les durées de production laissent le temps à une machine lente', () => {
   assert.ok(DEFAULT_TIMINGS.check >= 10_000);
   assert.ok(DEFAULT_TIMINGS.total >= 120_000 && DEFAULT_TIMINGS.total <= 240_000, 'inférieure au délai de scripts/check-exe.mjs (300 s)');
   assert.ok(Object.isFrozen(DEFAULT_TIMINGS));
+});
+
+// ---------------------------------------------------------------------------------
+// Services et scénarios
+// ---------------------------------------------------------------------------------
+
+test('le contrôle complet vérifie que la page joint les services et que ceux-ci refusent une demande invalide', async () => {
+  const { report } = await run(createWindow());
+  const name = "services d'Evolve joignables depuis l'interface (réglages)";
+  assert.ok(report.checks.some((item) => item.name === name && item.ok));
+
+  // Passerelle sans services (ancienne version) : le contrôle échoue, seul.
+  const win = createWindow((code) => (code.includes('window.evolve.services') ? { values: undefined } : true));
+  const broken = await run(win);
+  assert.equal(broken.code, 1);
+  assert.deepEqual(failed(broken.report), [name]);
+});
+
+test('l’état des services est joint au rapport ; son absence est un simple avertissement', async () => {
+  const described = { settings: { state: 'available', storage: 'memory', file: null } };
+  const first = await run(createWindow(), FAST, { describeServices: () => described });
+  assert.equal(first.code, 0);
+  assert.deepEqual(first.report.services, described);
+
+  const second = await run(createWindow(), FAST, {
+    describeServices: () => {
+      throw new Error('inventaire en panne');
+    },
+  });
+  assert.equal(second.code, 0);
+  assert.equal(second.report.services, null);
+  assert.deepEqual(second.report.warnings, ['état des services indisponible : inventaire en panne']);
+});
+
+test('scénario inconnu : échec, sans rien exécuter dans la page', async () => {
+  for (const scenario of ['inconnu', 'constructor', '__proto__', 'toString', '']) {
+    const win = createWindow();
+    const { code, report } = await run(win, FAST, { scenario });
+    assert.equal(code, 1, scenario);
+    assert.equal(report.ok, false);
+    assert.equal(report.scenario, scenario);
+    assert.deepEqual(report.checks, []);
+    assert.deepEqual(report.errors, [`scénario d'auto-test inconnu : ${scenario}`]);
+    assert.equal(win.webContents.executed.length, 0);
+    assert.equal(win.showCalls, 0);
+  }
+});
+
+test('scénarios des réglages : les valeurs attendues sont de vrais réglages, différents des valeurs par défaut', () => {
+  const defaults = defaultsOf(SETTINGS);
+  assert.ok(Object.keys(CHANGED_SETTINGS).length >= 5);
+  for (const [key, value] of Object.entries(CHANGED_SETTINGS)) {
+    assert.ok(Object.hasOwn(SETTINGS, key), key);
+    assert.notEqual(value, defaults[key], `${key} : une valeur égale à la valeur par défaut ne prouverait rien`);
+  }
+  // Interrupteurs et curseurs, bureau et paramètres rapides : chaque nature de réglage est couverte.
+  const kinds = new Set(Object.keys(CHANGED_SETTINGS).map((key) => `${key.split('.')[0]}:${SETTINGS[key].type}`));
+  assert.deepEqual([...kinds].sort(), ['desktop:boolean', 'quick:boolean', 'quick:integer']);
+  assert.deepEqual(EXPECTED_SETTINGS, { ...defaults, ...CHANGED_SETTINGS });
+  assert.deepEqual(Object.keys(EXPECTED_SETTINGS), Object.keys(SETTINGS));
+});
+
+test('scénario « settings-write » : réglages modifiés par des gestes dans l’interface, puis confirmés par le service', async () => {
+  const win = createWindow();
+  const { code, report, outDir } = await run(win, FAST, { scenario: 'settings-write' });
+  assert.equal(code, 0);
+  assert.equal(report.scenario, 'settings-write');
+  assert.deepEqual(report.checks.map((item) => item.name), [
+    "l'interface a démarré",
+    'premier lancement : chaque réglage a sa valeur par défaut',
+    'les réglages sont enregistrés dans un fichier',
+    "le panneau des paramètres rapides s'ouvre",
+    "l'interface affiche les réglages modifiés",
+    'le service des réglages a reçu chaque changement',
+  ]);
+  assert.deepEqual(report.captures, ['01-reglages-modifies.png']);
+  assert.deepEqual(readdirSync(outDir).sort(), ['01-reglages-modifies.png', 'result.json']);
+
+  const { executed } = win.webContents;
+  for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
+  // Des gestes d'utilisateur — clics et curseurs — et non des appels directs au service.
+  const actions = executed.filter((script) => /\.click\(\)|dispatchEvent/.test(script));
+  assert.equal(actions.length, 6);
+  for (const needle of ['.tb-tray', 'data-setting="nightLight"', 'data-setting="doNotDisturb"', "input.value = '60'", "input.value = '35'", '.tb-widgets']) {
+    assert.equal(actions.filter((script) => script.includes(needle)).length, 1, needle);
+  }
+  assert.ok(!executed.some((script) => /services\.call\('settings', '(?:set|reset)'/.test(script)), 'aucune écriture directe');
+});
+
+test('scénario « settings-read » : aucune modification, seulement des constats et l’ouverture du panneau', async () => {
+  const win = createWindow();
+  const { code, report } = await run(win, FAST, { scenario: 'settings-read' });
+  assert.equal(code, 0);
+  assert.deepEqual(report.checks.map((item) => item.name), [
+    "l'interface a démarré",
+    "nouveau lancement : l'interface affiche les réglages enregistrés, sans aucune action",
+    'leurs effets sont appliqués : teinte nocturne, luminosité réduite, widgets masqués',
+    'le service des réglages restitue les valeurs enregistrées',
+    'le fichier des réglages a été relu sans incident',
+    "le panneau des paramètres rapides s'ouvre",
+  ]);
+  assert.deepEqual(report.captures, ['01-reglages-restaures.png']);
+
+  const { executed } = win.webContents;
+  for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
+  assert.ok(!executed.some((script) => /dispatchEvent|\.value = |services\.call\('settings', '(?:set|reset)'/.test(script)), 'aucun réglage touché');
+  const clicks = executed.filter((script) => script.includes('.click()'));
+  assert.equal(clicks.length, 1);
+  assert.match(clicks[0], /\.tb-tray/);
+  // Le constat précède toute action : l'ouverture du panneau vient en dernier.
+  const firstClick = executed.findIndex((script) => script.includes('.click()'));
+  const lastSettingsCheck = executed.findLastIndex((script) => script.includes("services.call('settings', 'state')"));
+  assert.ok(firstClick > lastSettingsCheck);
+});
+
+test('scénarios des réglages : un réglage non retrouvé fait échouer le test, valeur observée à l’appui', async () => {
+  const observed = { 'desktop.widgetsVisible': true, 'quick.nightLight': false, 'quick.doNotDisturb': false, 'quick.brightness': 100, 'quick.volume': 64 };
+  const win = createWindow((code) => (code.includes('const state = shown()') ? observed : true));
+  const { code, report } = await run(win, FAST, { scenario: 'settings-read' });
+  assert.equal(code, 1);
+  assert.deepEqual(failed(report), ["nouveau lancement : l'interface affiche les réglages enregistrés, sans aucune action"]);
+  assert.deepEqual(report.checks.find((item) => !item.ok).value, observed);
+
+  // Réglages gardés en mémoire seulement : le premier lancement échoue lui aussi.
+  const memory = { ok: true, value: { storage: 'memory', durable: false, problem: null, recovered: null } };
+  const volatile = createWindow((script) => (script.includes("'state'") ? memory : true));
+  const second = await run(volatile, FAST, { scenario: 'settings-write' });
+  assert.equal(second.code, 1);
+  assert.deepEqual(failed(second.report), ['les réglages sont enregistrés dans un fichier']);
 });

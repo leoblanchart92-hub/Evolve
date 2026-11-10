@@ -12,10 +12,16 @@
  *   --status-file=FICHIER   écrit dans FICHIER l'état de la fenêtre une fois
  *                           l'interface démarrée (voir status.js) ; sert à
  *                           vérifier le lancement normal de l'exécutable
+ *   --settings-dir=DOSSIER  conserve les réglages dans DOSSIER plutôt que dans
+ *                           le dossier de l'utilisateur (%APPDATA%\Evolve)
+ *   --self-test-scenario=NOM  scénario exécuté par l'auto-test (voir
+ *                           selftest.js) ; par défaut, le contrôle complet
  */
 
 const SELF_TEST_FLAG = '--self-test';
 const STATUS_FILE_FLAG = '--status-file';
+const SETTINGS_DIR_FLAG = '--settings-dir';
+const SELF_TEST_SCENARIO_FLAG = '--self-test-scenario';
 
 /** Valeur d'une option de la forme `--nom=valeur` (chaîne vide si absente). */
 function valueOf(args, name) {
@@ -26,7 +32,8 @@ function valueOf(args, name) {
 
 /**
  * @param {string[]} argv  arguments du processus (process.argv)
- * @returns {{ windowed: boolean, devtools: boolean, selfTest: boolean, selfTestDir: string|null, statusFile: string|null }}
+ * @returns {{ windowed: boolean, devtools: boolean, selfTest: boolean, selfTestDir: string|null,
+ *   selfTestScenario: string|null, statusFile: string|null, settingsDir: string|null }}
  */
 function parseArgs(argv) {
   const args = Array.isArray(argv) ? argv.slice(1).map(String) : [];
@@ -37,8 +44,10 @@ function parseArgs(argv) {
     devtools: args.includes('--devtools'),
     selfTest,
     selfTestDir: valueOf(args, SELF_TEST_FLAG) || null,
+    selfTestScenario: valueOf(args, SELF_TEST_SCENARIO_FLAG) || null,
     statusFile: valueOf(args, STATUS_FILE_FLAG) || null,
+    settingsDir: valueOf(args, SETTINGS_DIR_FLAG) || null,
   };
 }
 
-module.exports = { parseArgs, SELF_TEST_FLAG, STATUS_FILE_FLAG };
+module.exports = { parseArgs, SELF_TEST_FLAG, STATUS_FILE_FLAG, SETTINGS_DIR_FLAG, SELF_TEST_SCENARIO_FLAG };

@@ -177,6 +177,29 @@ test('le dossier des données de l’application est cité dans le compte rendu'
   assert.equal(other.userData, null);
 });
 
+test('l’état des services (emplacement des réglages) est joint au compte rendu', async () => {
+  const described = { settings: { state: 'available', storage: 'file', file: 'C:\\Users\\moi\\AppData\\Roaming\\Evolve\\settings.json', exists: false } };
+  const file = freshFile();
+  const withServices = await reportStatus(createWindow(), { file, screen, timings: FAST, describeServices: () => described });
+  assert.deepEqual(withServices.services, described);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).services, described);
+
+  // Non fourni : le compte rendu ne l'invente pas. En panne : une erreur consignée, le reste est écrit.
+  const { written } = await run(createWindow());
+  assert.equal(written.services, null);
+  const broken = await reportStatus(createWindow(), {
+    file: freshFile(),
+    screen,
+    timings: FAST,
+    describeServices: () => {
+      throw new Error('inventaire en panne');
+    },
+  });
+  assert.equal(broken.services, null);
+  assert.equal(broken.ready, true);
+  assert.deepEqual(broken.errors, ['état des services indisponible : inventaire en panne']);
+});
+
 test('nom de l’image : celui du compte rendu, avec l’extension .png', () => {
   const dir = path.join(workDir, 'dossier.v2');
   assert.equal(captureFileFor(path.join(dir, 'etat.json')), path.join(dir, 'etat.png'));

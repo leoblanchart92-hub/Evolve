@@ -10,11 +10,22 @@
  *
  * Il écrit un rapport (result.json) et des captures d'écran dans DOSSIER,
  * puis renvoie 0 (tout est conforme) ou 1 (au moins un contrôle en échec).
+ *
+ * Scénarios (`--self-test-scenario=NOM`) :
+ *   full             contrôle complet de l'interface (par défaut) ;
+ *   settings-write   modifie des réglages depuis l'interface ;
+ *   settings-read    vérifie, après un nouveau lancement, que l'interface les
+ *                    a retrouvés (voir selftest-settings.js).
  */
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+
+const { settingsScenarios } = require('./selftest-settings');
+
+/** Scénario exécuté quand aucun n'est demandé. */
+const DEFAULT_SCENARIO = 'full';
 
 /** Durées de l'auto-test, en millisecondes (réduites par les tests unitaires). */
 const DEFAULT_TIMINGS = Object.freeze({
@@ -90,16 +101,21 @@ function withTimeout(promise, ms, message) {
 
 /**
  * @param {import('electron').BrowserWindow} win
- * @param {{ outDir: string, timings?: Partial<typeof DEFAULT_TIMINGS> }} options
+ * @param {object} options
+ * @param {string} options.outDir  dossier du rapport et des captures d'écran
+ * @param {Partial<typeof DEFAULT_TIMINGS>} [options.timings]
+ * @param {string} [options.scenario]  scénario à exécuter (voir l'en-tête)
+ * @param {() => object} [options.describeServices]  état des services d'Evolve, joint au rapport
  * @returns {Promise<number>} code de sortie : 0 = réussite, 1 = échec
  */
-async function runSelfTest(win, { outDir, timings = {} }) {
+async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null }) {
   const started = Date.now();
   const { webContents } = win;
   const t = { ...DEFAULT_TIMINGS, ...timings };
 
   const report = {
     ok: false,
+    scenario: scenarioName,
     startedAt: new Date(started).toISOString(),
     durationMs: 0,
     platform: `${process.platform} ${process.arch}`,
@@ -116,6 +132,8 @@ async function runSelfTest(win, { outDir, timings = {} }) {
     captures: [],
     /** Dimensions et nombre de couleurs de chaque capture (voir `countColors`). */
     images: [],
+    /** Inventaire et état des services d'Evolve à la fin du test. */
+    services: null,
   };
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -224,17 +242,25 @@ async function runSelfTest(win, { outDir, timings = {} }) {
     }
   };
 
-  const scenario = async () => {
+  /**
+   * Début commun à tous les scénarios : la fenêtre s'affiche et l'écran de
+   * démarrage laisse place au bureau. Renvoie faux si l'interface ne démarre pas.
+   */
+  const begin = async () => {
     win.show();
-
-    // 1. L'interface démarre : l'écran de démarrage laisse place au bureau.
     const ready = await check("l'interface a démarré", `return document.documentElement.classList.contains('is-ready');`, {
       timeout: t.ready,
     });
-    if (!ready) return;
+    if (ready) {
+      const bounds = win.getContentBounds();
+      report.window = { width: bounds.width, height: bounds.height };
+    }
+    return ready;
+  };
 
-    const bounds = win.getContentBounds();
-    report.window = { width: bounds.width, height: bounds.height };
+  const scenario = async () => {
+    // 1. L'interface démarre.
+    if (!(await begin())) return;
 
     // 2. Fond d'écran : le fichier embarqué est l'image fournie, à l'octet près,
     //    et l'interface l'affiche sans la déformer ni la retoucher.
@@ -262,6 +288,14 @@ async function runSelfTest(win, { outDir, timings = {} }) {
       "passerelle de l'application de bureau (quitter, plein écran)",
       `return window.evolve?.isDesktopApp === true && typeof window.evolve.quit === 'function'
          && typeof window.evolve.toggleFullscreen === 'function';`,
+    );
+    // La page atteint la couche de services, qui contrôle ce qu'elle demande.
+    await check(
+      "services d'Evolve joignables depuis l'interface (réglages)",
+      `const values = await window.evolve.services.call('settings', 'getAll');
+       const refused = await window.evolve.services.call('settings', 'set', 'reglage.inconnu', true);
+       return (values.ok === true && typeof values.value['quick.volume'] === 'number'
+         && refused.ok === false && refused.code === 'unknown-key') || { values, refused };`,
     );
     await check(
       'polices embarquées chargées',
@@ -390,12 +424,25 @@ async function runSelfTest(win, { outDir, timings = {} }) {
     }, t.total);
   });
 
+  const scenarios = { [DEFAULT_SCENARIO]: scenario, ...settingsScenarios({ begin, check, act, capture }) };
+  // Un scénario inconnu est un échec : un test qui ne contrôle rien ne doit jamais réussir.
+  const selected = Object.hasOwn(scenarios, scenarioName) ? scenarios[scenarioName] : null;
+  if (!selected) report.errors.push(`scénario d'auto-test inconnu : ${scenarioName}`);
+
   try {
-    await Promise.race([scenario(), timeout]);
+    if (selected) await Promise.race([selected(), timeout]);
   } catch (error) {
     report.errors.push(`exception : ${error?.stack ?? error}`);
   } finally {
     clearTimeout(timer);
+  }
+
+  if (describeServices) {
+    try {
+      report.services = describeServices();
+    } catch (error) {
+      report.warnings.push(`état des services indisponible : ${error?.message}`);
+    }
   }
 
   report.durationMs = Date.now() - started;
@@ -411,4 +458,4 @@ async function runSelfTest(win, { outDir, timings = {} }) {
   return report.ok ? 0 : 1;
 }
 
-module.exports = { runSelfTest, countColors, DEFAULT_TIMINGS, MIN_CAPTURE_COLORS, WALLPAPER };
+module.exports = { runSelfTest, countColors, DEFAULT_TIMINGS, DEFAULT_SCENARIO, MIN_CAPTURE_COLORS, WALLPAPER };

@@ -6,6 +6,7 @@
 import { PRODUCT, TIMING } from './config.js';
 import { wait } from './core/dom.js';
 import { installIcons } from './core/icons.js';
+import { startSettingsSync } from './shell/settings-sync.js';
 import { Shell } from './shell/shell.js';
 
 const boot = document.getElementById('boot');
@@ -34,6 +35,13 @@ function showBootError(error) {
 async function start() {
   const startedAt = performance.now();
   installIcons();
+
+  // Les réglages enregistrés sont appliqués avant de construire le bureau : il
+  // apparaît directement tel qu'il a été laissé. L'attente est bornée et
+  // masquée par l'écran de démarrage.
+  const settings = startSettingsSync();
+  await settings.ready;
+
   const shell = new Shell();
 
   await assetsReady();
@@ -57,6 +65,9 @@ async function start() {
     colors: ['#e2c6ff', '#7c3aed'],
     timeout: 6500,
   });
+
+  // Incident d'enregistrement des réglages : l'utilisateur en est informé.
+  settings.onNotice((notice) => shell.toasts.show(notice));
 }
 
 start().catch(showBootError);
