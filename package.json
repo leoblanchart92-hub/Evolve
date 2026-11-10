@@ -65,7 +65,8 @@
     "portable": {
       "artifactName": "Evolve-${version}-portable.exe",
       "requestExecutionLevel": "user",
-      "unpackDirName": "Evolve-portable"
+      "unpackDirName": "Evolve-portable",
+      "useZip": true
     },
     "publish": null
   }
