@@ -10,7 +10,7 @@ propre licence, reproduite ou référencée ici.
 | [Outfit](https://github.com/Outfitio/Outfit-Fonts) | Police des titres et des chiffres | SIL Open Font License 1.1 | Oui (`assets/fonts/outfit/`) |
 | [Electron](https://www.electronjs.org) 45 (Chromium, Node.js) | Moteur de l'application de bureau | MIT, BSD et autres | Oui |
 | [electron-builder](https://www.electron.build) 26 | Fabrication de l'exécutable portable | MIT | Non (outil de compilation) |
-| [NSIS](https://nsis.sourceforge.io) et son module d'extraction issu de [7-Zip](https://www.7-zip.org) | Lanceur du fichier `.exe` : décompresse l'application puis la démarre | zlib/libpng (NSIS), GNU LGPL (7-Zip) | Oui (ajoutés par electron-builder) |
+| [NSIS](https://nsis.sourceforge.io) et ses modules System et [StdUtils](https://github.com/lordmulder/stdutils) | Lanceur du fichier `.exe` : décompresse l'application puis la démarre | zlib/libpng (NSIS, System), GNU LGPL 2.1 (StdUtils, copie non modifiée) | Oui (ajoutés par electron-builder) |
 
 Le fond d'écran (`assets/wallpapers/panorama-cosmique-violet-sur-lac-miroir.png`)
 est l'image fournie par l'auteur du projet ; elle est intégrée sans aucune
