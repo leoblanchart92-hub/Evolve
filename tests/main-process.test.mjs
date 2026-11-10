@@ -20,6 +20,7 @@ const ELECTRON = require.resolve('electron');
 const MAIN = fromRoot('src', 'main', 'main.js');
 const PRELOAD = fromRoot('src', 'main', 'preload.js');
 const SELFTEST = fromRoot('src', 'main', 'selftest.js');
+const STATUS = fromRoot('src', 'main', 'status.js');
 const ARGS = fromRoot('src', 'main', 'args.js');
 
 /** Laisse s'exécuter les suites de promesses en attente. */
@@ -42,15 +43,24 @@ function stubModule(file, exports) {
  * @param {string[]} [options.argv]        arguments de la ligne de commande
  * @param {boolean} [options.ready]        émettre l'événement « prêt » d'Electron
  * @param {Function} [options.runSelfTest] remplace l'auto-test réel
+ * @param {Function} [options.reportStatus] remplace le compte rendu de démarrage réel
  * @param {object} [options.env]           variables d'environnement à définir
  */
-async function launch({ argv = [], ready = true, runSelfTest, env = {}, ...electronOptions } = {}) {
+async function launch({ argv = [], ready = true, runSelfTest, reportStatus, env = {}, ...electronOptions } = {}) {
   const tempDir = mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
   const fake = createFakeElectron({ tempDir, ...electronOptions });
   fake.tempDir = tempDir;
 
   stubModule(ELECTRON, fake.electron);
   if (runSelfTest) stubModule(SELFTEST, { runSelfTest });
+  // Par défaut, tout appel au compte rendu de démarrage est une erreur du test.
+  stubModule(STATUS, {
+    reportStatus:
+      reportStatus ??
+      (() => {
+        throw new Error('compte rendu de démarrage inattendu');
+      }),
+  });
   for (const file of [MAIN, PRELOAD, ARGS]) delete require.cache[file];
 
   const savedArgv = process.argv;
@@ -472,4 +482,69 @@ test('auto-test : fermer la fenêtre ne décide pas du code de sortie', async ()
   finish(0);
   await settle();
   assert.deepEqual(state.exitCodes, [0]);
+});
+
+// ---------------------------------------------------------------------------------
+// Compte rendu de démarrage (--status-file)
+// ---------------------------------------------------------------------------------
+
+test('--status-file : compte rendu demandé en lancement normal, sans changer l’affichage', async () => {
+  const absolute = path.join(tmpdir(), 'evolve-etat', 'etat.json');
+  const calls = [];
+  const fake = await launch({
+    argv: [`--status-file=${absolute}`],
+    env: { PORTABLE_EXECUTABLE_DIR: path.join(tmpdir(), 'ailleurs') },
+    reportStatus: async (win, options) => {
+      calls.push({ win, options });
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].win, fake.window);
+  assert.equal(calls[0].options.file, absolute);
+  assert.equal(calls[0].options.screen, fake.electron.screen);
+  assert.equal(calls[0].options.userData, path.join(fake.tempDir, 'Evolve'));
+  // Le lancement reste strictement celui d'un double-clic.
+  assert.equal(fake.window.options.fullscreen, true);
+  assert.equal(fake.window.options.webPreferences.backgroundThrottling, true);
+  assert.equal(fake.state.paths.userData, path.join(fake.tempDir, 'Evolve'));
+  assert.deepEqual(fake.state.switches, []);
+  assert.deepEqual(fake.state.exitCodes, []);
+});
+
+test('--status-file : chemin relatif résolu depuis le dossier du fichier .exe', async () => {
+  let received;
+  const reportStatus = async (_win, options) => {
+    received = options.file;
+  };
+  const exeDir = path.join(tmpdir(), 'dossier-du-exe');
+
+  await launch({ argv: ['--status-file=etat.json'], env: { PORTABLE_EXECUTABLE_DIR: exeDir }, reportStatus });
+  assert.equal(received, path.join(exeDir, 'etat.json'));
+
+  await launch({ argv: ['--status-file=etat.json'], env: { PORTABLE_EXECUTABLE_DIR: '' }, reportStatus });
+  assert.equal(received, path.resolve(process.cwd(), 'etat.json'));
+});
+
+test('--status-file : un compte rendu impossible ne gêne pas l’application', async () => {
+  const { state } = await launch({
+    argv: ['--status-file=etat.json'],
+    reportStatus: async () => {
+      throw new Error('disque plein');
+    },
+  });
+  await settle();
+  assert.deepEqual(state.exitCodes, []);
+  assert.deepEqual(state.errorBoxes, []);
+  assert.equal(state.windows.length, 1);
+});
+
+test('sans --status-file, ou pendant l’auto-test, aucun compte rendu de démarrage', async () => {
+  // Le faux module lève une erreur au moindre appel (voir launch()).
+  const normal = await launch();
+  assert.deepEqual(normal.state.exitCodes, []);
+  assert.deepEqual(normal.state.errorBoxes, []);
+
+  const selfTest = await launch({ argv: ['--self-test', '--status-file=etat.json'], runSelfTest: async () => 0 });
+  assert.deepEqual(selfTest.state.exitCodes, [0]);
 });

@@ -238,7 +238,7 @@ test('les textes affichés n’utilisent que des caractères présents dans les 
 
 test('les scripts de l’application de bureau existent', () => {
   assert.equal(pkg.main, 'src/main/main.js');
-  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js']) {
+  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js', 'status.js']) {
     assert.ok(existsSync(fromRoot('src', 'main', file)), `src/main/${file}`);
   }
   const main = readText('src/main/main.js');
@@ -389,6 +389,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
     'npm run build:win',
     'npm run check:manifest',
     'check-exe.mjs --out=self-test-output/executable',
+    'check-launch.mjs --out=self-test-output/lancement',
     'path: dist/Evolve-*-portable.exe',
   ].map((needle) => {
     const index = workflowCode.indexOf(needle);
@@ -404,7 +405,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const lenient = steps.filter((step) => step.includes('continue-on-error: true'));
   assert.equal(lenient.length, 1);
   assert.match(lenient[0], /^Régler l'écran/);
-  assert.ok(!/check-exe|build:win|check:manifest|npm test/.test(lenient[0]));
+  assert.ok(!/check-exe|check-launch|build:win|check:manifest|npm test/.test(lenient[0]));
 
   // La publication du .exe n'a pas de condition : elle n'a lieu que si tout a réussi.
   const publish = steps.find((step) => step.includes('path: dist/Evolve-*-portable.exe'));

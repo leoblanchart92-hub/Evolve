@@ -23,6 +23,7 @@
     "build:win": "electron-builder --win portable --x64 --publish never",
     "check:dev": "node scripts/check-exe.mjs electron -- .",
     "check:exe": "node scripts/check-exe.mjs",
+    "check:launch": "node scripts/check-launch.mjs",
     "check:manifest": "node scripts/check-manifest.mjs"
   },
   "devDependencies": {

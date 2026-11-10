@@ -6,9 +6,12 @@
 #   3. fabrique le fichier .exe portable ;
 #   4. vérifie ce fichier : aucun droit administrateur demandé, puis démarrage
 #      réel et nouveau passage de l'auto-test ;
-#   5. publie le .exe, téléchargeable depuis la page de l'exécution
-#      (rubrique « Artifacts »), ainsi que le rapport et les captures d'écran
-#      de l'auto-test.
+#   5. lance ce fichier normalement, comme un double-clic : fenêtre en plein
+#      écran, écran comparé à l'image dessinée par l'application, fermeture
+#      normale, fichiers temporaires ;
+#   6. publie le .exe, téléchargeable depuis la page de l'exécution
+#      (rubrique « Artifacts »), ainsi que les rapports et les captures
+#      d'écran des vérifications.
 #
 # Le .exe n'est publié que si toutes les vérifications ont réussi.
 #
@@ -89,7 +92,13 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-executable node scripts/check-exe.mjs --out=self-test-output/executable
 
-      - name: Publier le rapport et les captures d'écran de l'auto-test
+      # L'auto-test ouvre une fenêtre ordinaire ; ici, l'exécutable est lancé
+      # sans aucune option d'essai, exactement comme par un double-clic.
+      - name: Lancement normal de l'exécutable portable (plein écran)
+        timeout-minutes: 8
+        run: bash scripts/ci-run.sh lancement-normal node scripts/check-launch.mjs --out=self-test-output/lancement
+
+      - name: Publier les rapports et les captures d'écran des vérifications
         if: always()
         uses: actions/upload-artifact@v7
         with:

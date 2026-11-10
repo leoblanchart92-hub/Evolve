@@ -32,12 +32,18 @@ const devToolsAllowed = options.devtools || !app.isPackaged;
 /** @type {BrowserWindow|null} */
 let mainWindow = null;
 
+/**
+ * Chemin d'un fichier ou d'un dossier demandé sur la ligne de commande.
+ * L'exécutable portable se décompresse dans un dossier temporaire supprimé à
+ * la fermeture : un chemin relatif part donc du dossier du fichier .exe.
+ */
+function fromLaunchDir(target) {
+  return path.resolve(process.env.PORTABLE_EXECUTABLE_DIR || process.cwd(), target);
+}
+
 /** Dossier des résultats de l'auto-test (rapport et captures d'écran). */
 function selfTestOutputDir() {
-  // L'exécutable portable se décompresse dans un dossier temporaire supprimé à
-  // la fermeture : un chemin relatif part donc du dossier du fichier .exe.
-  const base = process.env.PORTABLE_EXECUTABLE_DIR || process.cwd();
-  return path.resolve(base, options.selfTestDir || 'self-test-output');
+  return fromLaunchDir(options.selfTestDir || 'self-test-output');
 }
 
 /**
@@ -239,6 +245,11 @@ async function start() {
     const { runSelfTest } = require('./selftest');
     const exitCode = await runSelfTest(win, { outDir: selfTestOutputDir() });
     app.exit(exitCode === 0 ? 0 : 1);
+  } else if (options.statusFile) {
+    // Chargé à la demande : ne sert qu'à vérifier le lancement de l'exécutable.
+    // Un compte rendu impossible à écrire ne doit pas gêner l'application.
+    const { reportStatus } = require('./status');
+    reportStatus(win, { file: fromLaunchDir(options.statusFile), screen, userData: app.getPath('userData') }).catch(() => {});
   }
 }
 
