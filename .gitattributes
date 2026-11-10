@@ -1,0 +1,10 @@
+# Fins de ligne normalisées pour les fichiers texte.
+* text=auto eol=lf
+
+# Ressources binaires : jamais converties ni modifiées par Git.
+# (Le fond d'écran officiel doit rester identique à l'octet près.)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.woff2 binary

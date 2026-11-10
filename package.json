@@ -1,0 +1,71 @@
+{
+  "name": "evolve",
+  "productName": "Evolve",
+  "version": "0.1.0",
+  "description": "Evolve — environnement de bureau futuriste pour Windows 10/11 (aperçu de l'interface graphique).",
+  "private": true,
+  "author": "leoblanchart92-hub",
+  "homepage": "https://github.com/leoblanchart92-hub/Evolve",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leoblanchart92-hub/Evolve.git"
+  },
+  "main": "src/main/main.js",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "start:windowed": "electron . --windowed",
+    "preview": "node scripts/preview-server.mjs",
+    "test": "node --test --test-reporter=spec",
+    "icons": "node scripts/build-icons.mjs",
+    "build:win": "electron-builder --win portable --x64 --publish never",
+    "check:dev": "node scripts/check-exe.mjs electron -- .",
+    "check:exe": "node scripts/check-exe.mjs",
+    "check:manifest": "node scripts/check-manifest.mjs"
+  },
+  "devDependencies": {
+    "@phosphor-icons/core": "2.1.1",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "io.github.leoblanchart92hub.evolve",
+    "productName": "Evolve",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "packaging"
+    },
+    "files": [
+      "package.json",
+      "THIRD-PARTY-NOTICES.md",
+      "src/main/**/*",
+      "src/renderer/**/*",
+      "assets/**/*"
+    ],
+    "electronLanguages": [
+      "fr",
+      "en-US"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "packaging/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "portable": {
+      "artifactName": "Evolve-${version}-portable.exe",
+      "requestExecutionLevel": "user",
+      "unpackDirName": "Evolve-portable"
+    },
+    "publish": null
+  }
+}

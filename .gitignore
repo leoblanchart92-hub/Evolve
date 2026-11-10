@@ -1,0 +1,23 @@
+# Dépendances
+node_modules/
+
+# Sorties de compilation (electron-builder)
+dist/
+out/
+
+# Journaux et fichiers temporaires
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Éditeurs
+.vscode/
+.idea/
+
+# Résultats de l'auto-test de l'exécutable (rapport et captures d'écran)
+self-test-output/
+
+# Journaux des étapes de la compilation automatique
+ci-logs/
