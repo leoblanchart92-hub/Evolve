@@ -424,14 +424,17 @@ const posixOnly = { skip: process.platform === 'win32' };
  * @param {string[]} [options.args] options supplémentaires du script
  * @param {string[]} [options.appArgs] arguments transmis à la fausse application
  * @param {object} [options.env] variables d'environnement supplémentaires
- * @param {(tempDir: string) => object|void} [options.prepare] prépare le dossier temporaire avant le
- *   lancement ; peut renvoyer des modifications de l'état signalé par la fausse application
+ * @param {(tempDir: string, profile: { APPDATA: string, LOCALAPPDATA: string }) => object|void} [options.prepare]
+ *   prépare le dossier temporaire et le profil simulé avant le lancement ; peut renvoyer des
+ *   modifications de l'état signalé par la fausse application
  */
 function run(mode, { args = [], appArgs = [], env = {}, prepare } = {}) {
   const outDir = path.join(workDir, `${mode}-${Math.random().toString(36).slice(2, 8)}`);
   const tempDir = path.join(outDir, 'temp');
-  mkdirSync(tempDir, { recursive: true });
-  const statusChanges = prepare?.(tempDir);
+  // Profil de l'utilisateur simulé (variables de Windows).
+  const profile = { APPDATA: path.join(outDir, 'profil', 'Roaming'), LOCALAPPDATA: path.join(outDir, 'profil', 'Local') };
+  for (const dir of [tempDir, ...Object.values(profile)]) mkdirSync(dir, { recursive: true });
+  const statusChanges = prepare?.(tempDir, profile);
   const result = spawnSync(
     process.execPath,
     [SCRIPT, process.execPath, `--out=${outDir}`, '--timeout=20', '--close-timeout=20', '--observe=0.1', ...args, '--', FAKE_APP, mode, ...appArgs],
@@ -442,6 +445,7 @@ function run(mode, { args = [], appArgs = [], env = {}, prepare } = {}) {
         GITHUB_STEP_SUMMARY: '',
         GITHUB_ACTIONS: '',
         TMPDIR: tempDir,
+        ...profile,
         FAKE_STATUS: statusChanges ? JSON.stringify(statusChanges) : '',
         ...env,
       },
@@ -453,6 +457,7 @@ function run(mode, { args = [], appArgs = [], env = {}, prepare } = {}) {
     output: `${result.stdout}\n${result.stderr}`,
     outDir,
     tempDir,
+    profile,
     unpackDir: path.join(tempDir, 'Evolve-portable'),
     launcherDir: path.join(tempDir, 'nsk3F2A.tmp'),
   };
@@ -636,6 +641,30 @@ test('données conservées par l’application : dossier et taille indiqués', p
   const missing = run('ok', { prepare: (dir) => ({ userData: path.join(dir, 'absent') }) });
   assert.equal(missing.code, 0, missing.output);
   assert.ok(!missing.output.includes('données conservées'));
+});
+
+test('profil de l’utilisateur : aucun dossier créé par l’application', posixOnly, () => {
+  const clean = run('ok');
+  assert.equal(clean.code, 0, clean.output);
+  assert.match(clean.output, /✔ aucun dossier créé dans le profil de l'utilisateur \(\S*Roaming\/Evolve ; \S*Local\/Evolve\)/);
+
+  // L'application range des données dans le profil : l'exécutable n'est pas distribué.
+  const leaking = run('writes-profile');
+  assert.equal(leaking.code, 1, leaking.output);
+  assert.match(leaking.output, /✖ l'application a créé un dossier dans le profil de l'utilisateur : \S*Roaming\/Evolve\n/);
+  assert.match(leaking.output, /✔ fermeture normale/);
+  assert.ok(!leaking.output.includes('aucun dossier créé'));
+
+  // Dossier antérieur au lancement (autre programme du même nom) : rien ne peut être conclu.
+  const earlier = run('ok', { prepare: (_temp, profile) => mkdirSync(path.join(profile.LOCALAPPDATA, 'Evolve')) });
+  assert.equal(earlier.code, 0, earlier.output);
+  assert.match(earlier.output, /· dossier déjà présent avant le lancement, non contrôlé : \S*Local\/Evolve\n/);
+  assert.ok(!earlier.output.includes('aucun dossier créé'));
+
+  // Hors de Windows, ces emplacements n'existent pas : aucun contrôle.
+  const none = run('ok', { env: { APPDATA: '', LOCALAPPDATA: '' } });
+  assert.equal(none.code, 0, none.output);
+  assert.ok(!none.output.includes("profil de l'utilisateur"));
 });
 
 test('hors exécutable portable : aucun dossier temporaire à surveiller', posixOnly, () => {

@@ -13,7 +13,9 @@
  * Pour l'exécutable portable, il mesure aussi l'espace occupé dans le dossier
  * temporaire pendant le fonctionnement, signale ce qui n'aurait pas été
  * supprimé à la fermeture, et indique la taille des données que l'application
- * conserve.
+ * conserve. Enfin, il contrôle que l'application n'a créé aucun dossier à son
+ * nom dans le profil de l'utilisateur (AppData), où les applications rangent
+ * d'ordinaire leurs données.
  *
  * L'application signale son état grâce à l'option `--status-file`
  * (voir src/main/status.js). Le dossier des résultats contient ensuite :
@@ -576,6 +578,13 @@ export async function main(argv, { capture = captureScreen } = {}) {
   mkdirSync(outDir, { recursive: true });
   for (const file of [statusFile, `${statusFile}.tmp`, renderFile, screenFile]) rmSync(file, { force: true });
 
+  // Emplacements habituels des données d'une application dans le profil de
+  // l'utilisateur (variables définies sous Windows) : Evolve ne doit rien y créer.
+  const profileFolders = [process.env.APPDATA, process.env.LOCALAPPDATA]
+    .filter(Boolean)
+    .map((dir) => path.join(dir, pkg.build.productName))
+    .map((dir) => ({ dir, existed: existsSync(dir) }));
+
   // Dossiers de travail déjà présents : ils ne sont pas ceux de ce lancement.
   // Windows désigne le dossier temporaire par plusieurs variables, et parfois
   // sous deux écritures (nom long ou abrégé) : seuls les noms sont retenus.
@@ -740,6 +749,18 @@ export async function main(argv, { capture = captureScreen } = {}) {
   if (typeof status?.userData === 'string' && existsSync(status.userData)) {
     const { files, bytes } = folderUsage(status.userData);
     notes.push(`données conservées après la fermeture : ${status.userData} (${files} fichier${files > 1 ? 's' : ''}, ${formatSize(bytes)})`);
+  }
+  // Rien dans le profil de l'utilisateur.
+  if (profileFolders.length > 0) {
+    const created = profileFolders.filter(({ dir, existed }) => !existed && existsSync(dir));
+    const earlier = profileFolders.filter(({ existed }) => existed);
+    if (created.length > 0) {
+      fail(`l'application a créé un dossier dans le profil de l'utilisateur : ${created.map(({ dir }) => dir).join(' ; ')}`);
+    } else if (earlier.length === 0) {
+      pass(`aucun dossier créé dans le profil de l'utilisateur (${profileFolders.map(({ dir }) => dir).join(' ; ')})`);
+    } else {
+      notes.push(`dossier déjà présent avant le lancement, non contrôlé : ${earlier.map(({ dir }) => dir).join(' ; ')}`);
+    }
   }
 
   return finish();

@@ -300,6 +300,11 @@ test('configuration de la compilation Windows', () => {
   for (const pattern of build.files) assert.ok(existsSync(fromRoot(pattern.replace(/\/\*\*\/\*$/, ''))), `fichier ou dossier absent : ${pattern}`);
   // Dossier de décompression fixe et reconnaissable dans %TEMP% (voir README).
   assert.equal(build.portable.unpackDirName, 'Evolve-portable');
+  // Fichiers décompressés directement à leur place, sans archive intermédiaire :
+  // lancement plus court de plusieurs secondes et un seul exemplaire de
+  // l'application dans %TEMP% (313 Mo, mesurés par la compilation automatique),
+  // au prix d'un fichier .exe plus gros (141 Mo au lieu de 100 Mo).
+  assert.equal(build.portable.useZip, true);
   assert.ok(existsSync(fromRoot(build.win.icon)));
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
 });

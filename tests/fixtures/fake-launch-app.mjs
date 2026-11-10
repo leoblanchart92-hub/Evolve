@@ -126,6 +126,12 @@ switch (mode) {
     report();
     stayOpen({ cleanup: [unpackDir] });
     break;
+  case 'writes-profile': // range des données dans le profil de l'utilisateur (AppData)
+    mkdirSync(path.join(process.env.APPDATA, 'Evolve'), { recursive: true });
+    writeFileSync(path.join(process.env.APPDATA, 'Evolve', 'Preferences'), '{}');
+    report();
+    stayOpen();
+    break;
   case 'development': // lancée hors exécutable portable : aucun dossier temporaire à surveiller
     report({ executable: process.execPath });
     stayOpen();
