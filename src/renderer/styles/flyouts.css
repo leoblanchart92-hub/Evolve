@@ -1,0 +1,570 @@
+/* ==========================================================================
+   Evolve — Panneaux latéraux : paramètres rapides, notifications et calendrier
+   ========================================================================== */
+
+.side-flyout {
+  right: var(--taskbar-gap);
+  bottom: calc(var(--taskbar-h) + var(--taskbar-gap) + var(--flyout-gap));
+  display: flex;
+  flex-direction: column;
+  width: min(23.5rem, calc(100vw - 1.25rem));
+  max-height: calc(100vh - var(--taskbar-h) - var(--taskbar-gap) - var(--flyout-gap) - 0.75rem);
+  border-radius: var(--r-xl);
+  transform-origin: 85% 100%;
+  opacity: 0;
+  transform: translateY(1.5rem) scale(0.955);
+  visibility: hidden;
+  transition:
+    opacity 170ms var(--ease-in),
+    transform 170ms var(--ease-in),
+    visibility 0s linear 170ms;
+}
+
+.side-flyout.is-open {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition:
+    opacity 240ms var(--ease-out),
+    transform 460ms var(--ease-spring),
+    visibility 0s;
+}
+
+.flyout__title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: #fff;
+}
+
+/* ==========================================================================
+   Paramètres rapides
+   ========================================================================== */
+
+.qs {
+  gap: 1.125rem;
+  padding: 1.25rem;
+}
+
+.qs__tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.625rem;
+}
+
+.qs-tile {
+  --i: 0;
+  position: relative;
+  display: grid;
+  align-content: space-between;
+  justify-items: start;
+  gap: 0.625rem;
+  min-height: 6.5rem;
+  padding: 0.75rem 0.75rem 0.6875rem;
+  border-radius: var(--r-lg);
+  background: rgb(255 255 255 / 0.06);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+  color: var(--text-2);
+  text-align: left;
+  transition:
+    background-color var(--dur-3) var(--ease-out),
+    box-shadow var(--dur-3) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    scale var(--dur-2) var(--ease-spring);
+}
+
+.qs-tile .icon {
+  --icon-size: 1.375rem;
+  transition: scale var(--dur-3) var(--ease-spring);
+}
+
+.qs-tile__label {
+  display: grid;
+  gap: 0.0625rem;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.25;
+}
+
+.qs-tile__name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: 580;
+  color: var(--text);
+}
+
+.qs-tile__state {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.qs-tile:hover {
+  background: rgb(255 255 255 / 0.1);
+  box-shadow: inset 0 0 0 1px var(--stroke-strong);
+}
+
+.qs-tile:hover .icon {
+  scale: 1.1;
+}
+
+.qs-tile:active {
+  scale: 0.96;
+}
+
+.qs-tile[aria-pressed='true'] {
+  background: linear-gradient(145deg, rgb(185 139 255 / 0.9), rgb(124 58 237 / 0.82) 55%, rgb(208 91 255 / 0.85));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    inset 0 0 0 1px rgb(255 255 255 / 0.16),
+    0 0.375rem 1.25rem rgb(var(--accent-rgb) / 0.5);
+  color: #fff;
+}
+
+.qs-tile[aria-pressed='true'] .qs-tile__name {
+  color: #fff;
+}
+
+.qs-tile[aria-pressed='true'] .qs-tile__state {
+  color: rgb(255 255 255 / 0.78);
+}
+
+.qs-tile[aria-pressed='true']:hover {
+  filter: brightness(1.08);
+}
+
+/* Réglage indisponible (ex. Wi-Fi en mode avion). */
+.qs-tile[aria-disabled='true'] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Apparition en cascade à l'ouverture. */
+.qs.is-open .qs-tile {
+  animation: qs-tile-in 440ms var(--ease-out) both;
+  animation-delay: calc(40ms + var(--i) * 28ms);
+}
+
+@keyframes qs-tile-in {
+  from {
+    opacity: 0;
+    translate: 0 0.75rem;
+    scale: 0.94;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+    scale: 1;
+  }
+}
+
+/* Mise en évidence d'un réglage ouvert depuis la recherche. */
+.is-spotlit {
+  animation: spotlight 1500ms var(--ease-in-out) 260ms both !important;
+}
+
+@keyframes spotlight {
+  0%,
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+  18%,
+  58% {
+    outline: 2px solid var(--c-violet-200);
+    outline-offset: 3px;
+    box-shadow: 0 0 1.75rem rgb(var(--neon-rgb) / 0.9);
+  }
+  38% {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+}
+
+/* --- Curseurs --------------------------------------------------------------- */
+
+.qs__sliders {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.qs-slider {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 2.875rem;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.125rem 0.25rem 0.125rem 0.125rem;
+  border-radius: var(--r-md);
+}
+
+.qs-slider .icon-btn {
+  color: var(--c-violet-200);
+}
+
+.qs-slider .icon-btn .icon {
+  --icon-size: 1.25rem;
+}
+
+.qs-slider__icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  color: var(--c-violet-200);
+}
+
+.qs-slider__icon .icon {
+  --icon-size: 1.25rem;
+}
+
+.qs-slider__value {
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 560;
+  text-align: right;
+}
+
+/* --- Pied : batterie et mention -------------------------------------------- */
+
+.qs__footer {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--stroke);
+}
+
+.qs__battery {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text);
+  font-size: var(--fs-md);
+  font-weight: 540;
+}
+
+.qs__battery .icon {
+  --icon-size: 1.375rem;
+  color: var(--c-violet-200);
+}
+
+.qs__battery .chip {
+  margin-left: auto;
+}
+
+.qs__note {
+  display: flex;
+  gap: 0.5rem;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.qs__note .icon {
+  --icon-size: 0.9375rem;
+  flex: none;
+  margin-top: 0.0625rem;
+  color: var(--c-violet-300);
+}
+
+/* ==========================================================================
+   Centre de notifications et calendrier
+   ========================================================================== */
+
+.nc {
+  gap: 0;
+}
+
+.nc__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.125rem 1rem 0.625rem 1.375rem;
+}
+
+.nc__dnd {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 1rem 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--r-md);
+  background: var(--fill-accent);
+  box-shadow: inset 0 0 0 1px rgb(var(--neon-rgb) / 0.35);
+  color: var(--c-violet-100);
+  font-size: var(--fs-sm);
+}
+
+.nc__dnd .icon {
+  --icon-size: 1rem;
+}
+
+.nc__list {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 6.5rem;
+  padding: 0.25rem 1rem 0.875rem;
+  overflow-x: hidden;
+}
+
+.notif {
+  --i: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.125rem 0.75rem;
+  flex: none;
+  margin-bottom: 0.5rem;
+  padding: 0.75rem 0.5rem 0.8125rem 0.75rem;
+  border-radius: var(--r-lg);
+  background: rgb(255 255 255 / 0.055);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+  overflow: hidden;
+  transition:
+    background-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+
+.notif:hover {
+  background: rgb(255 255 255 / 0.09);
+  box-shadow: inset 0 0 0 1px var(--stroke-strong);
+}
+
+.notif .app-icon {
+  --tile: 2rem;
+  grid-row: 1 / span 3;
+  margin-top: 0.125rem;
+}
+
+.notif__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.notif__source {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.notif__title {
+  grid-column: 2;
+  font-size: var(--fs-md);
+  font-weight: 620;
+  color: #fff;
+}
+
+.notif__body {
+  grid-column: 2 / span 2;
+  padding-right: 0.5rem;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.notif__close {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  width: 1.625rem;
+  height: 1.625rem;
+  opacity: 0;
+  transition:
+    opacity var(--dur-2) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
+}
+
+.notif__close .icon {
+  --icon-size: 0.875rem;
+}
+
+.notif:hover .notif__close,
+.notif__close:focus-visible {
+  opacity: 1;
+}
+
+.nc.is-open .notif {
+  animation: notif-in 480ms var(--ease-out) both;
+  animation-delay: calc(60ms + var(--i) * 55ms);
+}
+
+@keyframes notif-in {
+  from {
+    opacity: 0;
+    translate: 2rem 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.nc__empty {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 0.375rem;
+  flex: 1;
+  padding: 1.25rem 1rem;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  text-align: center;
+  animation: boot-fade 400ms var(--ease-out) both;
+}
+
+.nc__empty .icon {
+  --icon-size: 2.25rem;
+  margin-bottom: 0.25rem;
+  color: var(--c-violet-300);
+  filter: drop-shadow(0 0 0.875rem rgb(var(--neon-rgb) / 0.6));
+}
+
+.nc__empty strong {
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  font-weight: 560;
+}
+
+/* --- Calendrier ------------------------------------------------------------- */
+
+.cal {
+  flex: none;
+  padding: 0.875rem 1.25rem 1.125rem;
+  border-top: 1px solid var(--stroke);
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  background: rgb(4 1 12 / 0.24);
+}
+
+.cal__today {
+  margin: 0 0.125rem 0.625rem;
+  font-family: var(--font-display);
+  font-size: var(--fs-xl);
+  font-weight: 450;
+  color: #fff;
+}
+
+.cal__head {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.375rem;
+}
+
+.cal__month {
+  margin-right: auto;
+  padding: 0.25rem 0.5rem;
+  margin-left: -0.375rem;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.cal__month:hover {
+  background: var(--fill-2);
+}
+
+.cal__head .icon-btn {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.cal__head .icon-btn .icon {
+  --icon-size: 0.875rem;
+}
+
+.cal__weekdays,
+.cal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  justify-items: center;
+}
+
+.cal__weekdays {
+  margin-bottom: 0.125rem;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.cal__weekdays span {
+  display: grid;
+  place-items: center;
+  height: 1.5rem;
+}
+
+.cal__viewport {
+  overflow: hidden;
+}
+
+.cal__grid.is-next {
+  animation: cal-next 300ms var(--ease-out) both;
+}
+
+.cal__grid.is-prev {
+  animation: cal-prev 300ms var(--ease-out) both;
+}
+
+@keyframes cal-next {
+  from {
+    opacity: 0;
+    translate: 0 1.25rem;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cal-prev {
+  from {
+    opacity: 0;
+    translate: 0 -1.25rem;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.cal__day {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  transition:
+    background-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+
+.cal__day:hover {
+  background: var(--fill-2);
+  box-shadow: inset 0 0 0 1px var(--stroke-strong);
+}
+
+.cal__day.is-outside {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
+.cal__day.is-today {
+  background: var(--accent-gradient);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    0 0 1rem rgb(var(--accent-rgb) / 0.75);
+  color: #fff;
+  font-weight: 700;
+}

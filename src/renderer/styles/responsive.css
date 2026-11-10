@@ -1,0 +1,131 @@
+/* ==========================================================================
+   Evolve — Adaptation aux résolutions d'écran
+
+   Toute l'interface est dimensionnée en rem : il suffit d'ajuster la taille de
+   police racine pour la mettre à l'échelle. Les seuils sont exprimés en pixels
+   CSS (la mise à l'échelle Windows 125 % / 150 % est donc déjà prise en compte).
+   ========================================================================== */
+
+/* Écrans compacts : 1366×768, 1440×900, 1536×864 (portables) */
+@media (max-width: 1440px), (max-height: 820px) {
+  html {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 1280px), (max-height: 740px) {
+  html {
+    font-size: 14px;
+  }
+}
+
+@media (max-height: 640px) {
+  html {
+    font-size: 13px;
+  }
+}
+
+/* Très grands écrans (1440p ultra-large, 4K à 100 %) */
+@media (min-width: 2200px) and (min-height: 1200px) {
+  html {
+    font-size: 18px;
+  }
+}
+
+@media (min-width: 3000px) and (min-height: 1600px) {
+  html {
+    font-size: 22px;
+  }
+}
+
+/* --- Barre des tâches : on allège quand la largeur manque ------------------ */
+
+@media (max-width: 1100px) {
+  .tb-widgets__label {
+    display: none;
+  }
+
+  .tb-search {
+    width: 2.625rem;
+    margin: 0 0.125rem;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .tb-search__text {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .taskbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .taskbar__center {
+    justify-content: center;
+  }
+
+  .tb-clock__date {
+    display: none;
+  }
+}
+
+/* --- Widgets : colonne plus étroite, puis masquée si la hauteur manque ----- */
+
+@media (max-width: 1100px) {
+  .widgets {
+    width: 17rem;
+  }
+}
+
+/* Sur un écran peu haut, les widgets passent sur deux colonnes. */
+@media (max-height: 700px) and (min-width: 1100px) {
+  .widgets {
+    display: grid;
+    grid-template-columns: repeat(2, 17rem);
+    width: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .widgets {
+    display: none;
+  }
+}
+
+/* --- Menu Démarrer : grille plus compacte ---------------------------------- */
+
+@media (max-width: 720px) {
+  .start__grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .start__reco {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Écran peu haut : deux lignes de recommandations au lieu de trois, pour que
+   la vue d'accueil reste entièrement visible sans défilement. */
+@media (max-height: 690px) {
+  .start {
+    --start-h: 40.375rem;
+  }
+
+  .start__view--home {
+    padding-bottom: 0.625rem;
+  }
+
+  .start__reco > :nth-child(n + 5) {
+    display: none;
+  }
+}
+
+/* --- Animations d'entrée : elles attendent la fin de l'écran de démarrage -- */
+
+html:not(.is-ready) .taskbar,
+html:not(.is-ready) .desktop-icon,
+html:not(.is-ready) .widget {
+  animation-play-state: paused;
+}

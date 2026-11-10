@@ -1,0 +1,271 @@
+/* ==========================================================================
+   Evolve — Fenêtres personnalisées (verre dépoli, liseré néon)
+   ========================================================================== */
+
+/* Zone de travail : tout l'écran sauf la bande de la barre des tâches. */
+.windows-layer {
+  position: absolute;
+  inset: 0 0 var(--taskbar-reserved) 0;
+  z-index: var(--z-windows);
+  pointer-events: none; /* le bureau reste cliquable entre les fenêtres */
+}
+
+.window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  border-radius: var(--r-lg);
+  background: var(--glass-window);
+  box-shadow: var(--shadow-2), var(--highlight);
+  pointer-events: auto;
+  transition:
+    box-shadow var(--dur-3) var(--ease-out),
+    background-color var(--dur-3) var(--ease-out);
+}
+
+.window[hidden] {
+  display: none !important;
+}
+
+.window.is-closing {
+  pointer-events: none;
+}
+
+/* Fenêtre active : liseré néon complet et halo violet. */
+.window.is-focused {
+  background: rgb(20 11 40 / 0.68);
+  box-shadow: var(--shadow-3), var(--glow-2), var(--highlight);
+}
+
+.window.is-focused::before {
+  background: var(--neon-border);
+}
+
+/* Transition de géométrie pendant l'agrandissement / la restauration. */
+.window.is-morphing {
+  transition:
+    translate 340ms var(--ease-out),
+    width 340ms var(--ease-out),
+    height 340ms var(--ease-out),
+    border-radius 340ms var(--ease-out),
+    box-shadow var(--dur-3) var(--ease-out);
+}
+
+.window.is-maximized {
+  translate: 0 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+
+.window.is-dragging,
+.window.is-resizing {
+  transition: none;
+}
+
+/* --- Barre de titre -------------------------------------------------------- */
+
+.window__titlebar {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  height: 2.625rem;
+  min-width: 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+
+.window.is-maximized .window__titlebar {
+  border-radius: 0;
+}
+
+.window__title {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+  padding: 0 0.75rem 0 0.8125rem;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  font-weight: 540;
+  transition: color var(--dur-3) var(--ease-out);
+}
+
+.window.is-focused .window__title {
+  color: var(--text);
+}
+
+.window__title .app-icon {
+  --tile: 1.3125rem;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.42),
+    0 0.125rem 0.375rem rgb(0 0 0 / 0.4);
+  opacity: 0.7;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.window.is-focused .window__title .app-icon {
+  opacity: 1;
+}
+
+/* --- Boutons de fenêtre ---------------------------------------------------- */
+
+.window__controls {
+  display: flex;
+  flex: none;
+}
+
+.window__control {
+  display: grid;
+  place-items: center;
+  width: 2.875rem;
+  color: var(--text-2);
+  transition:
+    background-color var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
+}
+
+.window__control:last-child {
+  border-top-right-radius: var(--r-lg);
+}
+
+.window.is-maximized .window__control:last-child {
+  border-top-right-radius: 0;
+}
+
+.window__glyph {
+  width: 0.75rem;
+  height: 0.75rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  overflow: visible;
+  pointer-events: none;
+  transition: scale var(--dur-2) var(--ease-spring);
+}
+
+.window__control:hover {
+  background: rgb(255 255 255 / 0.1);
+  color: #fff;
+}
+
+.window__control:active {
+  background: rgb(255 255 255 / 0.16);
+}
+
+.window__control:active .window__glyph {
+  scale: 0.82;
+}
+
+.window__control--close:hover {
+  background: linear-gradient(180deg, #ff5c8a, #e0306a);
+  box-shadow: 0 0 1.25rem rgb(255 92 138 / 0.55);
+  color: #fff;
+}
+
+.window__control--close:active {
+  background: #c9255c;
+}
+
+.window__control:focus-visible {
+  outline-offset: -3px;
+}
+
+/* --- Contenu ---------------------------------------------------------------- */
+
+.window__body {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+}
+
+/* Fenêtre inactive : le contenu s'efface légèrement. */
+.window:not(.is-focused) .window__body {
+  opacity: 0.86;
+}
+
+.window__body {
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+/* --- Poignées de redimensionnement (8 directions) -------------------------- */
+
+.window__resize {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+
+.window.is-maximized .window__resize {
+  display: none;
+}
+
+.window__resize[data-dir='n'],
+.window__resize[data-dir='s'] {
+  left: 0.5625rem;
+  right: 0.5625rem;
+  height: 0.625rem;
+  cursor: ns-resize;
+}
+
+.window__resize[data-dir='e'],
+.window__resize[data-dir='w'] {
+  top: 0.5625rem;
+  bottom: 0.5625rem;
+  width: 0.625rem;
+  cursor: ew-resize;
+}
+
+.window__resize[data-dir='n'] {
+  top: -0.3125rem;
+}
+
+.window__resize[data-dir='s'] {
+  bottom: -0.3125rem;
+}
+
+.window__resize[data-dir='e'] {
+  right: -0.3125rem;
+}
+
+.window__resize[data-dir='w'] {
+  left: -0.3125rem;
+}
+
+.window__resize[data-dir='ne'],
+.window__resize[data-dir='se'],
+.window__resize[data-dir='sw'],
+.window__resize[data-dir='nw'] {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.window__resize[data-dir='ne'] {
+  top: -0.3125rem;
+  right: -0.3125rem;
+  cursor: nesw-resize;
+}
+
+.window__resize[data-dir='sw'] {
+  bottom: -0.3125rem;
+  left: -0.3125rem;
+  cursor: nesw-resize;
+}
+
+.window__resize[data-dir='nw'] {
+  top: -0.3125rem;
+  left: -0.3125rem;
+  cursor: nwse-resize;
+}
+
+.window__resize[data-dir='se'] {
+  bottom: -0.3125rem;
+  right: -0.3125rem;
+  cursor: nwse-resize;
+}

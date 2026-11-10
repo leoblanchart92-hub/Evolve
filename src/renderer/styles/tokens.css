@@ -1,0 +1,143 @@
+/* ==========================================================================
+   Evolve — Jetons de design
+   Identité visuelle : noir profond + violet néon, verre dépoli, lueurs.
+   Toutes les dimensions sont exprimées en rem : l'interface entière se met à
+   l'échelle en changeant la taille de police racine (voir responsive.css).
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* --- Palette ----------------------------------------------------------- */
+  --c-void: #05020c;
+  --c-ink: #0b0618;
+
+  --c-violet-50: #f6f0ff;
+  --c-violet-100: #eadcff;
+  --c-violet-200: #d8bfff;
+  --c-violet-300: #c29cff;
+  --c-violet-400: #ab78ff;
+  --c-violet-500: #9455ff;
+  --c-violet-600: #7c3aed;
+  --c-violet-700: #5b21b6;
+  --c-violet-800: #3b1578;
+  --c-violet-900: #1e0b40;
+
+  --c-magenta: #e06bff;
+  --c-pink: #ff6bd6;
+  --c-indigo: #6f6bff;
+  --c-cyan: #6be4ff;
+  --c-danger: #ff5c8a;
+  --c-success: #5ff0b3;
+  --c-warning: #ffc76b;
+
+  /* Canaux RVB (pour composer des transparences : rgb(var(--x) / .5)) */
+  --accent-rgb: 148 85 255;
+  --neon-rgb: 186 130 255;
+  --magenta-rgb: 224 107 255;
+
+  --accent: rgb(var(--accent-rgb));
+  --neon: rgb(var(--neon-rgb));
+  --accent-gradient: linear-gradient(135deg, #b98bff 0%, #9455ff 45%, #d05bff 100%);
+
+  /* --- Texte ------------------------------------------------------------- */
+  --text: #f5efff;
+  --text-2: rgb(234 223 255 / 0.74);
+  --text-3: rgb(234 223 255 / 0.48);
+  --text-on-accent: #ffffff;
+
+  /* --- Verre (glassmorphism) -------------------------------------------- */
+  --glass-panel: rgb(17 9 34 / 0.56);
+  --glass-window: rgb(20 11 40 / 0.62);
+  --glass-menu: rgb(13 7 27 / 0.74);
+  --glass-widget: rgb(17 9 34 / 0.42);
+
+  --fill-1: rgb(255 255 255 / 0.045);
+  --fill-2: rgb(255 255 255 / 0.08);
+  --fill-3: rgb(255 255 255 / 0.13);
+  --fill-accent: rgb(var(--accent-rgb) / 0.22);
+
+  --blur: 1.75rem;
+  --glass-filter: blur(var(--blur)) saturate(170%);
+  --glass-filter-strong: blur(2.5rem) saturate(180%);
+
+  /* --- Bordures ---------------------------------------------------------- */
+  --stroke: rgb(196 160 255 / 0.14);
+  --stroke-strong: rgb(204 170 255 / 0.3);
+  --neon-border: linear-gradient(
+    140deg,
+    rgb(224 196 255 / 0.9) 0%,
+    rgb(var(--accent-rgb) / 0.35) 28%,
+    rgb(124 58 237 / 0.14) 58%,
+    rgb(var(--magenta-rgb) / 0.7) 100%
+  );
+  --neon-border-soft: linear-gradient(
+    140deg,
+    rgb(224 196 255 / 0.5) 0%,
+    rgb(var(--accent-rgb) / 0.16) 30%,
+    rgb(124 58 237 / 0.08) 60%,
+    rgb(var(--magenta-rgb) / 0.36) 100%
+  );
+
+  /* --- Rayons ------------------------------------------------------------ */
+  --r-xs: 0.375rem;
+  --r-sm: 0.5rem;
+  --r-md: 0.75rem;
+  --r-lg: 1rem;
+  --r-xl: 1.375rem;
+  --r-pill: 999px;
+
+  /* --- Ombres et lueurs (profondeur) ------------------------------------ */
+  --shadow-1: 0 0.25rem 0.875rem rgb(0 0 0 / 0.32);
+  --shadow-2: 0 0.875rem 2.25rem rgb(3 0 12 / 0.5);
+  --shadow-3: 0 1.75rem 4.5rem rgb(3 0 12 / 0.62);
+  --glow-1: 0 0 0.75rem rgb(var(--neon-rgb) / 0.32);
+  --glow-2: 0 0 1.5rem rgb(var(--neon-rgb) / 0.3), 0 0 3.75rem rgb(var(--accent-rgb) / 0.2);
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0.09);
+
+  /* --- Mouvement --------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.6, 0, 0.9, 0.3);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: linear(
+    0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017, 1.077, 1.121,
+    1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%,
+    0.991, 0.977 51%, 0.974 53.8%, 0.975 57.1%, 0.997 69.8%, 1.003 76.9%, 1.004 83.8%, 1
+  );
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --dur-4: 520ms;
+
+  /* --- Typographie ------------------------------------------------------- */
+  --font-ui: 'Inter Variable', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Outfit Variable', 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+
+  --fs-xs: 0.6875rem;
+  --fs-sm: 0.75rem;
+  --fs-md: 0.8125rem;
+  --fs-lg: 0.9375rem;
+  --fs-xl: 1.125rem;
+
+  /* --- Mise en page du bureau ------------------------------------------- */
+  --taskbar-h: 3.5rem;
+  --taskbar-gap: 0.625rem;
+  /* Bande réservée en bas de l'écran : les fenêtres agrandies s'arrêtent au-dessus. */
+  --taskbar-reserved: calc(var(--taskbar-h) + var(--taskbar-gap) * 2);
+  --flyout-gap: 0.75rem;
+
+  /* --- Empilement -------------------------------------------------------- */
+  --z-wallpaper: 0;
+  --z-desktop: 10;
+  --z-widgets: 20;
+  --z-windows: 100;
+  /* Panneaux et notifications passent SOUS la barre des tâches : leur ombre
+     portée ne vient ainsi jamais assombrir ses icônes. */
+  --z-flyouts: 400;
+  --z-toasts: 450;
+  --z-taskbar: 500;
+  --z-menus: 800;
+  --z-tooltip: 900;
+  --z-screen-fx: 980;
+  --z-boot: 1000;
+}

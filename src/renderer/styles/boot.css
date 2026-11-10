@@ -1,0 +1,164 @@
+/* ==========================================================================
+   Evolve — Écran de démarrage
+   ========================================================================== */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-boot);
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(60rem 36rem at 50% 46%, rgb(var(--accent-rgb) / 0.2), transparent 62%),
+    radial-gradient(28rem 18rem at 50% 50%, rgb(var(--magenta-rgb) / 0.1), transparent 70%),
+    var(--c-void);
+  transition:
+    opacity 620ms var(--ease-in-out),
+    visibility 0s linear 620ms;
+}
+
+.boot.is-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.boot__inner {
+  display: grid;
+  justify-items: center;
+  gap: 1.375rem;
+  transition:
+    scale 620ms var(--ease-in-out),
+    filter 620ms var(--ease-in-out);
+}
+
+.boot.is-done .boot__inner {
+  scale: 1.12;
+  filter: blur(0.5rem);
+}
+
+.boot__logo {
+  width: 6.5rem;
+  height: 6.5rem;
+  overflow: visible;
+  filter: drop-shadow(0 0 1.5rem rgb(var(--neon-rgb) / 0.65));
+}
+
+.boot__planet {
+  transform-origin: 32px 32px;
+  animation: boot-planet 900ms var(--ease-out) both;
+}
+
+.boot__ring {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: boot-ring 620ms var(--ease-in-out) forwards;
+}
+
+.boot__ring--back {
+  opacity: 0.75;
+  animation-delay: 180ms;
+  animation-timing-function: var(--ease-in);
+}
+
+.boot__ring--front {
+  animation-delay: 620ms;
+  animation-timing-function: var(--ease-out);
+}
+
+.boot__name {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 300;
+  letter-spacing: 0.62em;
+  margin-right: -0.62em; /* compense l'espacement après la dernière lettre */
+  text-transform: uppercase;
+  color: var(--c-violet-100);
+  text-shadow: 0 0 1.5rem rgb(var(--neon-rgb) / 0.75);
+  animation: boot-name 900ms var(--ease-out) 320ms both;
+}
+
+.boot__loader {
+  position: relative;
+  width: 9rem;
+  height: 0.1875rem;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: rgb(255 255 255 / 0.08);
+  animation: boot-fade 500ms var(--ease-out) 520ms both;
+}
+
+.boot__loader span {
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--c-violet-300), var(--c-magenta), transparent);
+  animation: boot-loader 1150ms var(--ease-in-out) infinite;
+}
+
+@keyframes boot-planet {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes boot-ring {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes boot-name {
+  from {
+    opacity: 0;
+    letter-spacing: 1em;
+  }
+  to {
+    opacity: 1;
+    letter-spacing: 0.62em;
+  }
+}
+
+@keyframes boot-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes boot-loader {
+  from {
+    translate: -110% 0;
+  }
+  to {
+    translate: 235% 0;
+  }
+}
+
+/* --- Erreur de démarrage ---------------------------------------------------- */
+
+.boot.has-error .boot__loader {
+  display: none;
+}
+
+.boot__error {
+  max-width: 34rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--r-md);
+  background: rgb(255 92 138 / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(255 92 138 / 0.45);
+  color: #ffc2d3;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  text-align: center;
+  user-select: text;
+  -webkit-user-select: text;
+}
