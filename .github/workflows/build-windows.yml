@@ -1,0 +1,127 @@
+# Evolve — Fabrication de l'exécutable Windows portable.
+#
+# À chaque envoi de code, une machine Windows de GitHub :
+#   1. lance les tests automatiques ;
+#   2. démarre l'application et vérifie que l'interface répond (auto-test) ;
+#   3. fabrique le fichier .exe portable ;
+#   4. vérifie ce fichier : aucun droit administrateur demandé, puis démarrage
+#      réel et nouveau passage de l'auto-test ;
+#   5. publie le .exe, téléchargeable depuis la page de l'exécution
+#      (rubrique « Artifacts »), ainsi que le rapport et les captures d'écran
+#      de l'auto-test.
+#
+# Le .exe n'est publié que si toutes les vérifications ont réussi.
+#
+# Les étapes passent par scripts/ci-run.sh : en cas d'échec, la fin de leur
+# sortie est affichée en tête de la page de l'exécution.
+
+name: Exécutable Windows
+
+on:
+  push:
+    branches: ['**']
+    # Une modification de la seule documentation ne nécessite pas de recompiler.
+    paths:
+      - '**'
+      - '!README.md'
+      - '!docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Tester et fabriquer le .exe portable
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installer les dépendances
+        run: bash scripts/ci-run.sh installation npm ci --no-audit --no-fund
+
+      - name: Tests automatiques
+        run: bash scripts/ci-run.sh tests-automatiques npm test
+
+      # Les machines de GitHub affichent par défaut en 1024 × 768 ; une
+      # définition courante donne des captures d'écran plus représentatives.
+      # L'auto-test fonctionne dans les deux cas : cette étape est facultative.
+      - name: Régler l'écran de la machine en 1920 × 1080
+        continue-on-error: true
+        shell: powershell
+        run: |
+          try {
+            Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop
+            Write-Host "Ecran regle en 1920 x 1080."
+          } catch {
+            Write-Host "Reglage impossible, definition par defaut conservee : $($_.Exception.Message)"
+          }
+
+      - name: Auto-test de l'application (avant fabrication du .exe)
+        timeout-minutes: 8
+        run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --out=self-test-output/application -- .
+
+      - name: Fabriquer l'exécutable portable
+        run: bash scripts/ci-run.sh fabrication-executable npm run build:win
+
+      - name: Vérifier que le .exe ne demande aucun droit administrateur
+        run: bash scripts/ci-run.sh droits-administrateur npm run check:manifest
+
+      - name: Auto-test de l'exécutable portable
+        timeout-minutes: 8
+        run: bash scripts/ci-run.sh auto-test-executable node scripts/check-exe.mjs --out=self-test-output/executable
+
+      - name: Publier le rapport et les captures d'écran de l'auto-test
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: auto-test
+          path: |
+            self-test-output/
+            ci-logs/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Résumé de l'exécutable
+        run: |
+          exe="$(ls dist/Evolve-*-portable.exe)"
+          size="$(stat -c %s "$exe")"
+          sha="$(sha256sum "$exe" | cut -d ' ' -f 1)"
+          {
+            echo "### 📦 Exécutable portable"
+            echo ""
+            echo "| Fichier | Taille | Empreinte SHA-256 |"
+            echo "| --- | --- | --- |"
+            echo "| \`$(basename "$exe")\` | $((size / 1024 / 1024)) Mo | \`$sha\` |"
+            echo ""
+            echo "Téléchargement : rubrique **Artifacts**, en bas de cette page."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Exécutable portable::$(basename "$exe") — $((size / 1024 / 1024)) Mo — SHA-256 $sha"
+
+      # Publié tel quel (sans archive .zip) : le fichier téléchargé est
+      # directement l'exécutable.
+      - name: Publier l'exécutable
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/Evolve-*-portable.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
