@@ -1,0 +1,267 @@
+/* ==========================================================================
+   Evolve — Calques flottants : menus contextuels, infobulles, notifications
+   éphémères et effets d'écran
+   ========================================================================== */
+
+/* --- Menus contextuels et déroulants -------------------------------------- */
+
+.menus-layer {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-menus);
+  pointer-events: none;
+}
+
+.menu {
+  position: absolute;
+  top: 0;
+  left: 0;
+  min-width: 13.75rem;
+  max-width: 21rem;
+  padding: 0.375rem;
+  border-radius: var(--r-md);
+  pointer-events: auto;
+  transform-origin: var(--origin, 0 0);
+  animation: menu-in 220ms var(--ease-out) both;
+  box-shadow: var(--shadow-2), var(--glow-1), var(--highlight);
+}
+
+.menu.is-closing {
+  pointer-events: none;
+  animation: menu-out 130ms var(--ease-in) both;
+}
+
+.menu__header {
+  padding: 0.4375rem 0.625rem 0.3125rem;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.menu__separator {
+  height: 1px;
+  margin: 0.3125rem 0.5rem;
+  background: var(--stroke);
+}
+
+.menu__item {
+  display: grid;
+  grid-template-columns: 1.125rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6875rem;
+  width: 100%;
+  min-height: 2.125rem;
+  padding: 0.25rem 0.75rem 0.25rem 0.625rem;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs-md);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+.menu__item .icon {
+  --icon-size: 1.125rem;
+  color: var(--c-violet-200);
+}
+
+.menu__item:hover,
+.menu__item.is-highlighted {
+  background: rgb(var(--accent-rgb) / 0.3);
+  box-shadow: inset 0 0 0 1px rgb(var(--neon-rgb) / 0.32);
+}
+
+.menu__item:active {
+  background: rgb(var(--accent-rgb) / 0.42);
+}
+
+.menu__item:focus-visible {
+  outline: none;
+}
+
+.menu__item[aria-disabled='true'] {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+.menu__item--danger,
+.menu__item--danger .icon {
+  color: #ff8fb0;
+}
+
+.menu__item--danger:hover,
+.menu__item--danger.is-highlighted {
+  background: rgb(255 92 138 / 0.22);
+  box-shadow: inset 0 0 0 1px rgb(255 92 138 / 0.4);
+}
+
+.menu__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu__hint {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    scale: 0.92;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+@keyframes menu-out {
+  to {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+/* --- Infobulle ------------------------------------------------------------- */
+
+.tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: var(--z-tooltip);
+  max-width: 20rem;
+  padding: 0.3125rem 0.625rem;
+  border-radius: var(--r-sm);
+  background: rgb(14 7 30 / 0.84);
+  -webkit-backdrop-filter: blur(1rem) saturate(160%);
+  backdrop-filter: blur(1rem) saturate(160%);
+  box-shadow:
+    inset 0 0 0 1px var(--stroke-strong),
+    var(--shadow-1);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 140ms var(--ease-out);
+}
+
+.tooltip.is-visible {
+  opacity: 1;
+}
+
+/* --- Notifications éphémères ---------------------------------------------- */
+
+.toasts {
+  position: absolute;
+  right: var(--taskbar-gap);
+  bottom: calc(var(--taskbar-h) + var(--taskbar-gap) + var(--flyout-gap));
+  z-index: var(--z-toasts);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.625rem;
+  width: min(23rem, calc(100vw - 1.25rem));
+  pointer-events: none;
+}
+
+.toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.125rem 0.75rem;
+  padding: 0.875rem 0.75rem 0.875rem 0.875rem;
+  border-radius: var(--r-lg);
+  pointer-events: auto;
+  animation: toast-in 560ms var(--ease-spring) both;
+}
+
+.toast.is-leaving {
+  pointer-events: none;
+  animation: toast-out 240ms var(--ease-in) both;
+}
+
+.toast .app-icon {
+  --tile: 2.25rem;
+  grid-row: 1 / span 2;
+}
+
+.toast__title {
+  align-self: end;
+  font-size: var(--fs-md);
+  font-weight: 620;
+  color: #fff;
+}
+
+.toast__message {
+  grid-column: 2;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.toast__close {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  width: 1.625rem;
+  height: 1.625rem;
+}
+
+.toast__close .icon {
+  --icon-size: 0.875rem;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    translate: calc(100% + 1rem) 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    translate: calc(100% + 1rem) 0;
+  }
+}
+
+/* --- Effets d'écran (visuels uniquement) -----------------------------------
+   Luminosité et éclairage nocturne des paramètres rapides : de simples calques
+   au-dessus de l'interface. Aucun réglage de Windows n'est modifié.          */
+
+.screen-fx {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-screen-fx);
+  pointer-events: none;
+}
+
+.screen-fx__dim,
+.screen-fx__night {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.screen-fx__dim {
+  background: #000;
+  transition: opacity 160ms linear;
+}
+
+.screen-fx__night {
+  background: linear-gradient(180deg, rgb(255 150 46 / 0.17), rgb(255 106 28 / 0.22));
+  transition: opacity 700ms var(--ease-in-out);
+}
+
+.screen-fx__night.is-on {
+  opacity: 1;
+}

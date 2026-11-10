@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Aucune ressource distante : tout est embarqué dans l'application. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#05020c" />
+    <title>Evolve</title>
+    <link rel="icon" type="image/png" href="../../assets/icons/evolve-256.png" />
+
+    <link rel="stylesheet" href="./styles/tokens.css" />
+    <link rel="stylesheet" href="./styles/fonts.css" />
+    <link rel="stylesheet" href="./styles/base.css" />
+    <link rel="stylesheet" href="./styles/glass.css" />
+    <link rel="stylesheet" href="./styles/boot.css" />
+    <link rel="stylesheet" href="./styles/desktop.css" />
+    <link rel="stylesheet" href="./styles/widgets.css" />
+    <link rel="stylesheet" href="./styles/taskbar.css" />
+    <link rel="stylesheet" href="./styles/start-menu.css" />
+    <link rel="stylesheet" href="./styles/flyouts.css" />
+    <link rel="stylesheet" href="./styles/windows.css" />
+    <link rel="stylesheet" href="./styles/overlays.css" />
+    <link rel="stylesheet" href="./styles/apps/explorer.css" />
+    <link rel="stylesheet" href="./styles/apps/placeholder.css" />
+    <link rel="stylesheet" href="./styles/responsive.css" />
+  </head>
+
+  <body>
+    <div id="shell" class="shell">
+      <!-- 1. Fond d'écran officiel : image fournie, affichée telle quelle
+              (proportions conservées, recadrage centré pour remplir l'écran). -->
+      <div class="wallpaper" aria-hidden="true">
+        <img
+          id="wallpaper"
+          class="wallpaper__image"
+          src="../../assets/wallpapers/panorama-cosmique-violet-sur-lac-miroir.png"
+          alt=""
+          draggable="false"
+          decoding="async"
+        />
+      </div>
+
+      <!-- 2. Bureau : icônes -->
+      <main id="desktop" class="desktop" aria-label="Bureau"></main>
+
+      <!-- 3. Widgets : horloge, CPU, RAM, GPU -->
+      <aside id="widgets" class="widgets" aria-label="Widgets"></aside>
+
+      <!-- 4. Fenêtres -->
+      <div id="windows" class="windows-layer"></div>
+
+      <!-- 5. Panneaux : menu Démarrer, paramètres rapides, notifications -->
+      <div id="flyouts" class="flyouts-layer"></div>
+
+      <!-- 6. Barre des tâches -->
+      <footer id="taskbar" class="taskbar glass" aria-label="Barre des tâches"></footer>
+
+      <!-- 7. Menus contextuels, notifications éphémères, infobulles -->
+      <div id="menus" class="menus-layer"></div>
+      <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+      <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+
+      <!-- 8. Effets d'écran visuels (luminosité, éclairage nocturne) -->
+      <div id="screen-fx" class="screen-fx" aria-hidden="true"></div>
+    </div>
+
+    <!-- Écran de démarrage (retiré dès que l'interface est prête) -->
+    <div id="boot" class="boot" role="status" aria-label="Démarrage d'Evolve">
+      <div class="boot__inner">
+        <svg class="boot__logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <defs>
+            <radialGradient id="boot-planet" cx="34%" cy="28%" r="78%">
+              <stop offset="0" stop-color="#f7ebff" />
+              <stop offset="0.32" stop-color="#c9a0ff" />
+              <stop offset="0.66" stop-color="#9455ff" />
+              <stop offset="1" stop-color="#4c1d95" />
+            </radialGradient>
+            <linearGradient id="boot-ring" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#ffb3f4" />
+              <stop offset="0.5" stop-color="#d0a8ff" />
+              <stop offset="1" stop-color="#8e7bff" />
+            </linearGradient>
+          </defs>
+          <g transform="rotate(-24 32 32)">
+            <path
+              class="boot__ring boot__ring--back"
+              d="M4.5 32A27.5 9.5 0 0 1 59.5 32"
+              fill="none"
+              stroke="url(#boot-ring)"
+              stroke-width="3.4"
+              stroke-linecap="round"
+              pathLength="100"
+            />
+          </g>
+          <circle class="boot__planet" cx="32" cy="32" r="15.5" fill="url(#boot-planet)" />
+          <g transform="rotate(-24 32 32)">
+            <path
+              class="boot__ring boot__ring--front"
+              d="M59.5 32A27.5 9.5 0 0 1 4.5 32"
+              fill="none"
+              stroke="url(#boot-ring)"
+              stroke-width="3.4"
+              stroke-linecap="round"
+              pathLength="100"
+            />
+          </g>
+        </svg>
+        <p class="boot__name">Evolve</p>
+        <div class="boot__loader" aria-hidden="true"><span></span></div>
+      </div>
+    </div>
+
+    <script type="module" src="./js/main.js"></script>
+  </body>
+</html>

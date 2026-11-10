@@ -1,0 +1,6 @@
+{
+  "name": "evolve-renderer",
+  "private": true,
+  "type": "module",
+  "description": "Marque les fichiers .js de l'interface comme modules ES (chargés par <script type=\"module\"> et par les tests Node)."
+}

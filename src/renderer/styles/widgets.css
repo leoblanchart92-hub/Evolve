@@ -1,0 +1,221 @@
+/* ==========================================================================
+   Evolve — Widgets du bureau : horloge, processeur, mémoire, carte graphique
+   ========================================================================== */
+
+.widgets {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: var(--z-widgets);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: 19.5rem;
+  max-height: calc(100% - var(--taskbar-reserved) - 1.5rem);
+  transition:
+    translate var(--dur-4) var(--ease-out),
+    opacity var(--dur-3) var(--ease-out),
+    visibility 0s linear 0s;
+}
+
+.widgets.is-hidden {
+  translate: calc(100% + 2rem) 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    translate var(--dur-3) var(--ease-in),
+    opacity var(--dur-3) var(--ease-in),
+    visibility 0s linear var(--dur-3);
+}
+
+.widget {
+  --i: 0;
+  background: var(--glass-widget);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-2), var(--highlight);
+  animation: widget-in 700ms var(--ease-out) both;
+  animation-delay: calc(140ms + var(--i) * 80ms);
+  transition: box-shadow var(--dur-3) var(--ease-out);
+}
+
+.widget:hover {
+  box-shadow: var(--shadow-2), var(--glow-1), var(--highlight);
+}
+
+.widget:hover::before {
+  background: var(--neon-border);
+}
+
+@keyframes widget-in {
+  from {
+    opacity: 0;
+    translate: 1.5rem 0;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+/* --- Horloge et date ------------------------------------------------------- */
+
+.clock-widget {
+  display: grid;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem 1.0625rem;
+}
+
+.clock-widget__time {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  font-family: var(--font-display);
+  font-size: 3.625rem;
+  font-weight: 250;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: #fff;
+  text-shadow: 0 0 1.75rem rgb(var(--neon-rgb) / 0.55);
+}
+
+.clock-widget__seconds {
+  font-size: 1.25rem;
+  font-weight: 350;
+  color: var(--c-violet-300);
+  text-shadow: none;
+}
+
+.clock-widget__date {
+  font-size: var(--fs-lg);
+  font-weight: 480;
+  color: var(--text-2);
+}
+
+/* --- Widget matériel (CPU / RAM / GPU) ------------------------------------ */
+
+.hw {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem 0.875rem;
+  padding: 0.75rem 1rem 0.9375rem;
+  overflow: hidden;
+}
+
+.hw__head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.hw__head .icon {
+  --icon-size: 1.125rem;
+  color: var(--c-violet-300);
+}
+
+.hw__title {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+/* Jauge circulaire */
+.hw__gauge {
+  position: relative;
+  width: 4rem;
+  height: 4rem;
+}
+
+.hw__gauge svg {
+  width: 100%;
+  height: 100%;
+  rotate: -90deg;
+  overflow: visible;
+}
+
+.hw__gauge-track {
+  fill: none;
+  stroke: rgb(255 255 255 / 0.09);
+  stroke-width: 5;
+}
+
+.hw__gauge-value {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 0.25rem rgb(var(--neon-rgb) / 0.9));
+  transition: stroke-dashoffset 900ms var(--ease-out);
+}
+
+.hw__percent {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  padding-top: 1.3125rem;
+  font-family: var(--font-display);
+  font-size: 1.1875rem;
+  font-weight: 480;
+  line-height: 1;
+  color: #fff;
+}
+
+.hw__percent small {
+  margin-left: 0.0625rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.hw__details {
+  display: grid;
+  gap: 0.1875rem;
+  min-width: 0;
+}
+
+.hw__primary {
+  font-size: var(--fs-lg);
+  font-weight: 580;
+  color: var(--text);
+}
+
+.hw__secondary {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* Courbe d'historique, en fond de carte */
+.spark {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: -1;
+  height: 2.5rem;
+  overflow: hidden;
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 22%);
+  mask-image: linear-gradient(to right, transparent, #000 22%);
+}
+
+.spark svg {
+  height: 100%;
+  max-width: none;
+  overflow: visible;
+}
+
+.spark__line {
+  fill: none;
+  stroke: var(--c-violet-300);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.85;
+}
