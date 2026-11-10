@@ -5,7 +5,7 @@
  * (signal SIGTERM) — ou adopte l'un des comportements anormaux à détecter.
  *
  * Comme l'exécutable portable, elle occupe deux dossiers du dossier
- * temporaire — « Evolve-portable » (le programme) et « nsA1B2.tmp » (le
+ * temporaire — « Evolve-portable » (le programme) et « nsk3F2A.tmp » (le
  * dossier de travail du lanceur) — qu'elle supprime en se fermant.
  */
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,7 +18,7 @@ const statusFile = flag ? flag.slice('--status-file='.length) : null;
 
 // Le test désigne un dossier temporaire propre à chaque essai (variable TMPDIR).
 const unpackDir = path.join(tmpdir(), 'Evolve-portable');
-const launcherDir = path.join(tmpdir(), 'nsA1B2.tmp');
+const launcherDir = path.join(tmpdir(), 'nsk3F2A.tmp');
 mkdirSync(path.join(unpackDir, 'resources'), { recursive: true });
 mkdirSync(path.join(launcherDir, '7z-out'), { recursive: true });
 writeFileSync(path.join(unpackDir, 'Evolve.exe'), Buffer.alloc(2048));

@@ -65,9 +65,11 @@ const CLEANUP_TIMEOUT_MS = 10_000;
 
 /**
  * Dossier de travail du lanceur de l'exécutable portable, créé dans le dossier
- * temporaire sous un nom variable : « ns » suivi de chiffres hexadécimaux.
+ * temporaire sous un nom variable : « ns », une lettre, puis un numéro
+ * hexadécimal (exemple : nsk3F2A.tmp). Le motif accepte toute suite de lettres
+ * et de chiffres : seuls les dossiers apparus depuis le lancement sont retenus.
  */
-const LAUNCHER_DIR = /^ns[0-9a-f]+\.tmp$/i;
+const LAUNCHER_DIR = /^ns[a-z0-9]+\.tmp$/i;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

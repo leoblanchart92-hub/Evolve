@@ -376,13 +376,14 @@ test('image illisible : la comparaison le signale par une erreur', () => {
 
 test('dossier temporaire : dossiers de travail du lanceur reconnus à leur nom', () => {
   const tempDir = path.join(workDir, 'noms');
-  for (const name of ['nsA1B2.tmp', 'ns7.tmp', 'NSF00D.TMP', 'nsXYZ.tmp', 'ns.tmp', 'nsA1B2.tmp.old', 'autre', 'xnsA1B2.tmp']) {
-    mkdirSync(path.join(tempDir, name), { recursive: true });
-  }
+  // Noms réels : « ns », une lettre quelconque, un numéro hexadécimal.
+  const launcher = ['nsA1B2.tmp', 'nsk3F2A.tmp', 'nsz7.tmp', 'NSF00D.TMP'];
+  const others = ['ns.tmp', 'ns-1.tmp', 'nsA1B2.tmp.old', 'nsA1B2', 'autre', 'autre.tmp', 'xnsA1B2.tmp', 'Evolve-portable'];
+  for (const name of [...launcher, ...others]) mkdirSync(path.join(tempDir, name), { recursive: true });
   writeFileSync(path.join(tempDir, 'nsBEEF.tmp'), 'un fichier, pas un dossier');
 
   const found = launcherDirs(tempDir).map((dir) => path.basename(dir)).sort();
-  assert.deepEqual(found, ['NSF00D.TMP', 'ns7.tmp', 'nsA1B2.tmp']);
+  assert.deepEqual(found, [...launcher].sort());
   assert.ok(launcherDirs(tempDir).every((dir) => path.isAbsolute(dir)));
   assert.deepEqual(launcherDirs(path.join(workDir, 'inexistant')), []);
 });
@@ -453,7 +454,7 @@ function run(mode, { args = [], appArgs = [], env = {}, prepare } = {}) {
     outDir,
     tempDir,
     unpackDir: path.join(tempDir, 'Evolve-portable'),
-    launcherDir: path.join(tempDir, 'nsA1B2.tmp'),
+    launcherDir: path.join(tempDir, 'nsk3F2A.tmp'),
   };
 }
 
@@ -480,8 +481,8 @@ test('lancement conforme : démarrage, plein écran, fermeture normale, nettoyag
   assert.match(output, /✔ interface démarrée \(état signalé [\d.]+ s après le lancement\)/);
   assert.match(output, /✔ fenêtre visible, en plein écran : 1920 × 1080 sur un écran de 1920 × 1080/);
   assert.match(output, /✔ fermeture normale en [\d.]+ s \(code de sortie 0\)/);
-  assert.match(output, /· espace temporaire occupé pendant le fonctionnement : 3 Mo \(Evolve-portable : 3 Ko ; nsA1B2\.tmp : 3 Mo\)/);
-  assert.match(output, /✔ fichiers temporaires supprimés à la fermeture \(Evolve-portable, nsA1B2\.tmp\)/);
+  assert.match(output, /· espace temporaire occupé pendant le fonctionnement : 3 Mo \(Evolve-portable : 3 Ko ; nsk3F2A\.tmp : 3 Mo\)/);
+  assert.match(output, /✔ fichiers temporaires supprimés à la fermeture \(Evolve-portable, nsk3F2A\.tmp\)/);
   assert.match(output, /! écran non capturé : capture de l'écran disponible sous Windows uniquement/);
   assert.match(output, /✔ Lancement normal conforme\./);
   assert.ok(!output.includes('✖'));
@@ -587,31 +588,30 @@ test('fichiers temporaires laissés à la fermeture : signalés, sans bloquer', 
   assert.match(both.output, /✔ fermeture normale/);
   assert.match(
     both.output,
-    /! fichiers temporaires encore présents après la fermeture : \S*Evolve-portable \(2 fichiers, 3 Ko\) ; \S*nsA1B2\.tmp \(2 fichiers, 3 Mo\)/,
+    /! fichiers temporaires encore présents après la fermeture : \S*Evolve-portable \(2 fichiers, 3 Ko\) ; \S*nsk3F2A\.tmp \(2 fichiers, 3 Mo\)/,
   );
   assert.ok(!both.output.includes('fichiers temporaires supprimés'));
   assert.ok(existsSync(both.unpackDir), 'le script ne supprime rien lui-même');
 
   const launcherOnly = run('leftover-launcher', { args: ['--close-timeout=1'] });
   assert.equal(launcherOnly.code, 0, launcherOnly.output);
-  assert.match(launcherOnly.output, /! fichiers temporaires encore présents après la fermeture : \S*nsA1B2\.tmp \(2 fichiers, 3 Mo\)\n/);
+  assert.match(launcherOnly.output, /! fichiers temporaires encore présents après la fermeture : \S*nsk3F2A\.tmp \(2 fichiers, 3 Mo\)\n/);
   assert.ok(!launcherOnly.output.includes('Evolve-portable ('));
 });
 
 test('dossiers de travail antérieurs au lancement : ni mesurés, ni attendus à la fermeture', posixOnly, () => {
   const { code, output, tempDir } = run('ok', {
     prepare: (dir) => {
-      // Reste d'un lancement précédent, et dossiers au nom seulement ressemblant.
-      mkdirSync(path.join(dir, 'ns0C1D.tmp'));
-      writeFileSync(path.join(dir, 'ns0C1D.tmp', 'ancien.bin'), Buffer.alloc(5 * 1024 * 1024));
-      mkdirSync(path.join(dir, 'nsXYZ.tmp'));
+      // Reste d'un lancement précédent, et dossier sans rapport.
+      mkdirSync(path.join(dir, 'nsq0C1D.tmp'));
+      writeFileSync(path.join(dir, 'nsq0C1D.tmp', 'ancien.bin'), Buffer.alloc(5 * 1024 * 1024));
       mkdirSync(path.join(dir, 'autre.tmp'));
     },
   });
   assert.equal(code, 0, output);
-  assert.match(output, /espace temporaire occupé pendant le fonctionnement : 3 Mo \(Evolve-portable : 3 Ko ; nsA1B2\.tmp : 3 Mo\)/);
-  assert.match(output, /✔ fichiers temporaires supprimés à la fermeture \(Evolve-portable, nsA1B2\.tmp\)/);
-  assert.ok(existsSync(path.join(tempDir, 'ns0C1D.tmp', 'ancien.bin')));
+  assert.match(output, /espace temporaire occupé pendant le fonctionnement : 3 Mo \(Evolve-portable : 3 Ko ; nsk3F2A\.tmp : 3 Mo\)/);
+  assert.match(output, /✔ fichiers temporaires supprimés à la fermeture \(Evolve-portable, nsk3F2A\.tmp\)/);
+  assert.ok(existsSync(path.join(tempDir, 'nsq0C1D.tmp', 'ancien.bin')));
 });
 
 test('données conservées par l’application : dossier et taille indiqués', posixOnly, () => {
