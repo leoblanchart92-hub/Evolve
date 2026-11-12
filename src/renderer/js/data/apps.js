@@ -168,11 +168,11 @@ export const START_PINNED = Object.freeze(APPS.map((app) => app.id));
 
 /**
  * Icônes du bureau. `open` désigne l'application à ouvrir et, pour
- * l'explorateur, l'emplacement à afficher (voir data/demo-files.js).
+ * l'explorateur, l'emplacement à afficher (voir LOCATION_IDS, apps/explorer-nav.js).
  */
 export const DESKTOP_ICONS = Object.freeze([
   { id: 'this-pc', name: 'Ce PC', glyph: 'desktop', colors: ['#a6b8ff', '#5a3fe0'], open: { app: 'explorer', location: 'pc' } },
-  { id: 'documents', name: 'Documents', glyph: 'folder', colors: ['#d3b0ff', '#7c3aed'], open: { app: 'explorer', location: 'pc/Documents' } },
+  { id: 'documents', name: 'Documents', glyph: 'folder', colors: ['#d3b0ff', '#7c3aed'], open: { app: 'explorer', location: 'documents' } },
   { id: 'trash', name: 'Corbeille', glyph: 'trash', colors: ['#b9b3d6', '#4a3a8c'], open: { app: 'explorer', location: 'trash' } },
   { id: 'browser', name: 'Navigateur', glyph: 'compass', colors: ['#8fd8ff', '#6557f5'], open: { app: 'browser' } },
   { id: 'settings', name: 'Paramètres', glyph: 'gear-six', colors: ['#b4b4dc', '#51409c'], open: { app: 'settings' } },

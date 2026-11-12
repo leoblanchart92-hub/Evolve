@@ -36,8 +36,8 @@ export function createDemoNotifications(now = new Date()) {
     {
       id: 'explorer',
       app: 'explorer',
-      title: "Contenu d'exemple",
-      body: "L'explorateur présente des dossiers fictifs : vos fichiers ne sont ni lus ni modifiés.",
+      title: 'Explorateur en lecture seule',
+      body: "Dans l'application Windows, l'explorateur affiche vos vrais dossiers sans rien modifier. Les fichiers recommandés du menu Démarrer restent fictifs.",
       time: at(27),
     },
     {

@@ -4,21 +4,26 @@
  */
 
 import { h, highlight } from '../core/dom.js';
+import { describeNode } from '../core/file-types.js';
 import { icon } from '../core/icons.js';
 import { normalize } from '../core/text.js';
 import { formatRelative } from '../core/format.js';
 import { isFullscreen, quitApp, toggleFullscreen } from '../core/platform.js';
 import { APPS, START_PINNED, appLabel, getApp } from '../data/apps.js';
-import { describeNode, isContainer } from '../data/demo-files.js';
 import { PRODUCT } from '../config.js';
 import { Flyout } from './flyouts.js';
 import { nodeIcon } from './file-icon.js';
 import { search } from './search.js';
 
+/** Vrai pour un dossier personnel (Documents, Images…) : lui seul mène à un vrai dossier. */
+const isPersonalFolder = (result) => result.type === 'file' && Boolean(result.item.place);
+
+/** Groupes de résultats, dans l'ordre : [titre, résultats concernés]. */
 const RESULT_GROUPS = [
-  ['app', 'Applications'],
-  ['file', 'Fichiers et dossiers'],
-  ['setting', 'Paramètres rapides'],
+  ['Applications', (result) => result.type === 'app'],
+  ['Dossiers personnels', isPersonalFolder],
+  ["Fichiers d'exemple", (result) => result.type === 'file' && !isPersonalFolder(result)],
+  ['Paramètres rapides', (result) => result.type === 'setting'],
 ];
 
 function appTile(app) {
@@ -296,8 +301,8 @@ export class StartMenu extends Flyout {
 
     const [best, ...others] = results;
     const nodes = [h('h3', { class: 'start__group', text: 'Meilleur résultat' }), this.#resultRow(best, { best: true })];
-    for (const [type, title] of RESULT_GROUPS) {
-      const group = others.filter((result) => result.type === type);
+    for (const [title, belongs] of RESULT_GROUPS) {
+      const group = others.filter(belongs);
       if (!group.length) continue;
       nodes.push(h('h3', { class: 'start__group', text: title }));
       for (const result of group) nodes.push(this.#resultRow(result));
@@ -319,8 +324,9 @@ export class StartMenu extends Flyout {
     } else if (type === 'file') {
       visual = nodeIcon(item);
       name = item.name;
+      // Seuls les dossiers personnels mènent à un vrai dossier ; le reste est fictif.
       const location = this.#shell.files.pathTo(item.parent).map((node) => node.name).join(' › ');
-      meta = `${describeNode(item).label} · ${location}`;
+      meta = item.place ? `Dossier personnel · ${location}` : `Exemple · ${describeNode(item).label} · ${location}`;
     } else {
       visual = icon(item.glyph, 'duotone');
       visual.style.fill = 'url(#grad-violet)';
@@ -381,10 +387,24 @@ export class StartMenu extends Flyout {
     shell.launch(appId, options);
   }
 
-  /** Ouvre l'explorateur sur un élément : le dossier lui-même, ou le dossier du fichier (sélectionné). */
+  /**
+   * Élément de l'arborescence d'exemple. Un dossier personnel (Documents,
+   * Images…) ouvre le vrai dossier dans l'explorateur ; tout autre élément est
+   * fictif : il est annoncé comme tel, et jamais présenté dans l'explorateur.
+   */
   #openNode(node) {
-    const params = isContainer(node) ? { location: node.id } : { location: node.parent.id, select: node.id };
-    this.#launch('explorer', { params });
+    if (node.place) {
+      this.#launch('explorer', { params: { location: node.place } });
+      return;
+    }
+    const shell = this.#shell;
+    shell.flyouts.close();
+    shell.toasts.show({
+      key: 'start-example',
+      title: node.name,
+      message: "Élément d'exemple : il illustre le menu Démarrer et n'existe pas sur votre ordinateur. L'explorateur de fichiers, lui, affiche vos vrais dossiers.",
+      glyph: describeNode(node).icon,
+    });
   }
 
   #activateResult({ type, item }) {

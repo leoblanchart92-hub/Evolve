@@ -44,7 +44,9 @@ test('la couche de services ne dépend ni d’Electron, ni de l’interface, ni 
 
 test('la couche de services se charge avec Node seul', () => {
   const services = createServices();
-  assert.deepEqual(Object.keys(services.describe()), ['settings']);
+  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files']);
+  // Le service de fichiers ne sait que consulter : deux méthodes, aucun événement.
+  assert.deepEqual(services.describe().files, { state: 'available', access: 'read-only', places: null, drives: null, methods: ['places', 'list'], events: [] });
   assert.equal(services.flushSync(), true);
 });
 

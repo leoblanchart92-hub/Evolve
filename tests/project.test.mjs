@@ -78,6 +78,26 @@ test('la page est en français et déclare les calques attendus', () => {
 // Feuilles de style
 // ---------------------------------------------------------------------------------
 
+test('animations réduites : un panneau qui s’ouvre est visible aussitôt, pour recevoir le clavier', () => {
+  // Avec les animations réduites de Windows, toutes les transitions durent 1 ms.
+  // Appliquée à la visibilité d'un panneau et de son contenu, cette milliseconde
+  // les rendrait invisibles à l'instant de l'ouverture : le champ de recherche du
+  // menu Démarrer ne pourrait pas recevoir le clavier.
+  const base = stripComments(readText('src/renderer/styles/base.css'));
+  const reduced = base.slice(base.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(reduced, /transition-duration: 1ms !important;/);
+  assert.match(reduced, /\.flyout\.is-open,\s*\.flyout\.is-open \* \{\s*transition-duration: 0s !important;\s*\}/);
+  // Les panneaux qui prennent le clavier à l'ouverture portent tous la classe « flyout »…
+  assert.match(readText('src', 'renderer', 'js', 'shell', 'flyouts.js'), /el\.classList\.add\('flyout'\);/);
+  // … et ce sont les seuls éléments rendus visibles par une classe d'ouverture.
+  for (const file of ['flyouts.css', 'start-menu.css']) {
+    const css = stripComments(readText('src', 'renderer', 'styles', file));
+    const shown = [...css.matchAll(/([^{}]+)\{[^{}]*visibility: visible;[^{}]*\}/g)].map((match) => match[1].trim());
+    assert.ok(shown.length >= 1, file);
+    for (const selector of shown) assert.match(selector, /^\.(?:start|side-flyout)\.is-open$|^\.start__view\.is-current$/, `${file} : ${selector}`);
+  }
+});
+
 test('toutes les ressources citées par les feuilles de style existent', () => {
   let count = 0;
   for (const file of cssFiles) {
@@ -238,7 +258,7 @@ test('les textes affichés n’utilisent que des caractères présents dans les 
 
 test('les scripts de l’application de bureau existent', () => {
   assert.equal(pkg.main, 'src/main/main.js');
-  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js', 'selftest-settings.js', 'status.js']) {
+  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js', 'selftest-explorer.js', 'selftest-settings.js', 'status.js']) {
     assert.ok(existsSync(fromRoot('src', 'main', file)), `src/main/${file}`);
   }
   const main = readText('src/main/main.js');
@@ -252,6 +272,13 @@ test('les scripts de l’application de bureau existent', () => {
 /** Fichiers de l'application de bureau : processus principal et couche de services. */
 const desktopFiles = [...listFiles(fromRoot('src', 'main'), ['.js']), ...listFiles(fromRoot('src', 'services'), ['.js'])];
 
+/**
+ * Modules intégrés à Electron. « original-fs » est le module de fichiers de
+ * Node tel quel : celui d'Electron présente les archives .asar comme des
+ * dossiers, ce que l'explorateur ne doit pas faire.
+ */
+const ELECTRON_MODULES = ['electron', 'original-fs'];
+
 /** Modules locaux requis par un fichier de l'application de bureau (chemins complets). */
 function requiredModules(file) {
   const code = stripComments(readFileSync(file, 'utf8'));
@@ -259,7 +286,8 @@ function requiredModules(file) {
   assert.equal(names.length, [...code.matchAll(/\brequire\s*\(/g)].length, `${relative(file)} : forme de require non reconnue`);
   const modules = [];
   for (const name of names) {
-    if (name === 'electron' || name.startsWith('node:')) continue;
+    // Modules fournis par Electron ou par Node : rien à embarquer.
+    if (ELECTRON_MODULES.includes(name) || name.startsWith('node:')) continue;
     assert.match(name, /^\.{1,2}\//, `${relative(file)} : paquet externe « ${name} » — aucune dépendance n'est embarquée dans le .exe`);
     const target = path.resolve(path.dirname(file), name);
     const resolved = [target, `${target}.js`, path.join(target, 'index.js')].find((candidate) => existsSync(candidate) && statSync(candidate).isFile());
@@ -282,7 +310,20 @@ test('chaque module requis par l’application de bureau existe et est embarqué
     }
   }
   // La couche de services est bien reliée à l'application.
-  for (const name of ['src/services/index.js', 'src/services/settings.js', 'src/services/platform.js']) assert.ok(required.has(name), name);
+  for (const name of ['src/services/index.js', 'src/services/settings.js', 'src/services/platform.js', 'src/services/files.js', 'src/main/selftest-explorer.js']) {
+    assert.ok(required.has(name), name);
+  }
+});
+
+test('le module de fichiers d’origine n’est requis que par le processus principal, pour l’explorateur', () => {
+  const users = desktopFiles.filter((file) => /require\(\s*'original-fs'\s*\)/.test(stripComments(readFileSync(file, 'utf8')))).map(relative);
+  assert.deepEqual(users, ['src/main/main.js']);
+  const main = stripComments(readText('src/main/main.js'));
+  // Hors d'Electron (tests), ce module n'existe pas : le module de Node le remplace.
+  assert.match(main, /try \{\s*return require\('original-fs'\);\s*\} catch \{\s*return fs;/);
+  // Il n'est remis qu'au service de fichiers, qui ne s'en sert que pour lire.
+  assert.equal([...main.matchAll(/plainFileSystem\(\)/g)].length, 2, 'une définition, un usage');
+  assert.match(main, /fs: plainFileSystem\(\)/);
 });
 
 test('aucun module de l’application de bureau n’est orphelin', () => {
@@ -514,6 +555,6 @@ test('le numéro de version est le même partout', async () => {
   const { PRODUCT } = await import('../src/renderer/js/config.js');
   assert.equal(PRODUCT.version, pkg.version, 'src/renderer/js/config.js');
   assert.equal(JSON.parse(readText('package-lock.json')).version, pkg.version, 'package-lock.json');
-  // L'exécutable d'exemple présenté dans l'explorateur porte le nom du vrai fichier.
+  // L'exécutable d'exemple recommandé par le menu Démarrer porte le nom du vrai fichier.
   assert.ok(readText('src/renderer/js/data/demo-files.js').includes(`'Evolve-${pkg.version}-portable.exe'`));
 });

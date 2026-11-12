@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 import { appLabel, APPS, DESKTOP_ICONS, getApp, START_PINNED, TASKBAR_PINNED } from '../src/renderer/js/data/apps.js';
 import { createDemoNotifications } from '../src/renderer/js/data/demo-content.js';
-import { createDemoFileSystem } from '../src/renderer/js/data/demo-files.js';
+import { LOCATION_IDS } from '../src/renderer/js/apps/explorer-nav.js';
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
@@ -38,14 +38,13 @@ test('les applications épinglées existent et ne sont pas en double', () => {
 });
 
 test('chaque icône du bureau ouvre une application et un emplacement existants', () => {
-  const files = createDemoFileSystem(new Date(2026, 10, 10));
   assert.equal(new Set(DESKTOP_ICONS.map((item) => item.id)).size, DESKTOP_ICONS.length);
   for (const item of DESKTOP_ICONS) {
     assert.ok(item.name.length > 0);
     assert.ok(getApp(item.open.app), `application inconnue pour l'icône ${item.id}`);
     if (item.open.location) {
       assert.equal(item.open.app, 'explorer');
-      assert.ok(files.get(item.open.location), `emplacement inconnu : ${item.open.location}`);
+      assert.ok(LOCATION_IDS.includes(item.open.location), `emplacement inconnu : ${item.open.location}`);
     }
     for (const color of item.colors) assert.match(color, HEX_COLOR);
   }

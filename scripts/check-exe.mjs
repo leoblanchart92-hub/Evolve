@@ -180,6 +180,15 @@ child.on('exit', (code, signal) => {
   for (const message of errors) console.log(`  ✖ erreur : ${message}`);
   for (const message of warnings) console.log(`  ! avertissement : ${message}`);
 
+  // Ce que l'explorateur de fichiers a trouvé sur cette machine : dossiers personnels et lecteurs.
+  const listed = (values) => (Array.isArray(values) ? values.slice(0, 30).map((value) => String(value).slice(0, 24)) : null);
+  const places = listed(report.explorer?.places);
+  const drives = listed(report.explorer?.drives);
+  const explorer =
+    places && drives
+      ? `Explorateur : dossiers personnels ${places.length ? places.join(', ') : 'aucun'} · lecteurs ${drives.length ? drives.join(', ') : 'aucun'}`
+      : null;
+
   const passed = checks.filter((item) => item.ok).length;
   const success = code === 0 && report.ok === true && checks.length > 0 && passed === checks.length && errors.length === 0;
   const size = report.window ? `${report.window.width} × ${report.window.height}` : 'inconnue';
@@ -188,12 +197,14 @@ child.on('exit', (code, signal) => {
   console.log(`\n  Contrôles : ${passed}/${checks.length} · captures : ${captures.length}${imagesInfo} · fenêtre : ${size} · durée : ${seconds} s`);
   console.log(`  Moteur    : ${engine}`);
   if (report.executable) console.log(`  Programme : ${report.executable}`);
+  if (explorer) console.log(`  ${explorer}`);
 
   summarize(
     [
       `### ${success ? '✅' : '❌'} ${testName} de l'exécutable : ${success ? 'réussi' : 'échec'}`,
       '',
       `${passed}/${checks.length} contrôles · ${captures.length} captures${imagesInfo} · fenêtre ${size} · ${engine} · ${seconds} s`,
+      ...(explorer ? ['', explorer] : []),
       '',
       '| Contrôle | Résultat |',
       '| --- | --- |',
@@ -217,6 +228,7 @@ child.on('exit', (code, signal) => {
         ...checks.filter((item) => !item.ok).map((item) => `✖ ${item.name} → ${JSON.stringify(item.value)}`),
         ...errors.map((message) => `✖ erreur : ${message}`),
         ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`),
+        ...(explorer ? [explorer] : []),
         ...(fatal ? ['', fatal] : []),
       ].join('\n'),
     );
@@ -225,6 +237,11 @@ child.on('exit', (code, signal) => {
   console.log('\n✔ Auto-test réussi.');
   annotate(
     'notice',
-    [`Auto-test réussi — ${overview}`, ...(report.executable ? [`Programme : ${report.executable}`] : []), ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`)].join('\n'),
+    [
+      `Auto-test réussi — ${overview}`,
+      ...(report.executable ? [`Programme : ${report.executable}`] : []),
+      ...(explorer ? [explorer] : []),
+      ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`),
+    ].join('\n'),
   );
 });

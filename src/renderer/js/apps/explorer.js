@@ -1,21 +1,24 @@
 /**
  * Evolve — Explorateur de fichiers (interface graphique).
  *
- * CONTENU D'EXEMPLE : l'explorateur parcourt une arborescence fictive
- * (data/demo-files.js). Il ne lit ni ne modifie aucun fichier de l'ordinateur.
- * Navigation, sélection, tri, recherche et modes d'affichage sont fonctionnels ;
- * les opérations sur les fichiers (copier, supprimer…) arriveront plus tard.
+ * L'explorateur parcourt les vrais dossiers de l'ordinateur — Bureau,
+ * Documents, Téléchargements, Images, Musique, Vidéos et lecteurs — EN LECTURE
+ * SEULE : il n'ouvre, ne crée, ne modifie, ne déplace et ne supprime rien.
+ * Il ne touche jamais au disque lui-même : il interroge le service « files »
+ * de l'application de bureau (src/services/files.js), qui contrôle chaque
+ * chemin demandé. La navigation est tenue par explorer-nav.js.
+ *
+ * Dans un simple navigateur (aperçu de développement), aucun dossier n'est
+ * lisible : l'explorateur l'annonce et n'affiche aucun fichier fictif.
  */
 
 import { h, highlight } from '../core/dom.js';
-import { icon } from '../core/icons.js';
-import { normalize } from '../core/text.js';
+import { describeNode, sortNodes } from '../core/file-types.js';
 import { formatFileDate, formatNumber, formatSize, plural } from '../core/format.js';
-import { describeNode, isContainer, sortNodes } from '../data/demo-files.js';
-import { WALLPAPER_URL } from '../config.js';
+import { icon } from '../core/icons.js';
+import { services } from '../core/services.js';
 import { nodeIcon } from '../shell/file-icon.js';
-
-const QUICK_ACCESS = ['desktop', 'documents', 'pictures', 'music', 'downloads', 'videos'];
+import { Navigator, PLACES, visibleNodes } from './explorer-nav.js';
 
 const COLUMNS = [
   { key: 'name', label: 'Nom' },
@@ -26,19 +29,23 @@ const COLUMNS = [
 
 const SORT_LABELS = { name: 'Nom', modified: 'Date de modification', type: 'Type', size: 'Taille' };
 
-const GB = 1024 ** 3;
+/** Délai avant d'annoncer un chargement : une lecture rapide ne fait pas clignoter le contenu. */
+const LOADING_DELAY_MS = 250;
 
 class Explorer {
   #win;
   #shell;
-  #fs;
-  /** Dossier affiché. */
-  #current = null;
-  #back = [];
-  #forward = [];
+  /** Navigation : emplacement courant, historique, page à afficher. */
+  #nav;
+  /** Emplacement de la page affichée (pour distinguer une actualisation d'un déplacement). */
+  #shownKey = null;
   #view = 'grid';
   #sort = { key: 'name', direction: 1 };
   #filter = '';
+  /** Afficher aussi les éléments que l'Explorateur de Windows masque. */
+  #showHidden = false;
+  /** Nombre d'éléments masqués de la page affichée. */
+  #hiddenCount = 0;
   /** Identifiants sélectionnés. */
   #selection = new Set();
   /** Dernier élément activé (point de départ du clavier et des plages). */
@@ -47,13 +54,22 @@ class Explorer {
   #items = [];
   /** @type {Map<string, HTMLElement>} */
   #itemEls = new Map();
+  #loadingTimer = null;
+  #destroyed = false;
 
   // Éléments d'interface
   #buttons = {};
   #crumbs;
+  /** Étapes du fil d'Ariane : { step, crumb, separator } ; les premières sont repliées si la place manque. */
+  #crumbParts = [];
+  #crumbsMore = null;
+  #crumbsObserver = null;
   #filterInput;
   #filterClear;
   #sidebarButtons = new Map();
+  /** Lecteurs de la barre latérale : leurs boutons et leur liste actuelle. */
+  #driveList;
+  #driveButtons = new Map();
   #content;
   #statusText;
   #statusSelection;
@@ -62,7 +78,14 @@ class Explorer {
   constructor(win, shell) {
     this.#win = win;
     this.#shell = shell;
-    this.#fs = shell.files;
+    this.#nav = new Navigator({
+      files: {
+        available: services.available,
+        places: () => services.call('files', 'places'),
+        list: (path) => services.call('files', 'list', path),
+      },
+      onChange: () => this.#onNavigation(),
+    });
 
     this.el = h(
       'div',
@@ -74,13 +97,20 @@ class Explorer {
     );
     this.el.addEventListener('keydown', (event) => this.#onKeyDown(event));
     win.body.append(this.el);
+
+    // Fenêtre redimensionnée : le fil d'Ariane replie ou déplie ses premiers dossiers.
+    this.#crumbsObserver = new ResizeObserver(() => this.#fitCrumbs());
+    this.#crumbsObserver.observe(this.#crumbs);
   }
 
   // --- API (appelée par le gestionnaire de fenêtres) --------------------------
 
-  /** Affiche un emplacement et, éventuellement, y sélectionne un élément. */
-  show({ location = 'home', select } = {}) {
-    this.#navigate(location, { select });
+  /**
+   * Affiche un emplacement : « home », « pc », « network », « trash » ou un
+   * dossier personnel (« desktop », « documents », « downloads »…).
+   */
+  show({ location = 'home' } = {}) {
+    this.#nav.open(location);
   }
 
   onParams(params) {
@@ -88,6 +118,9 @@ class Explorer {
   }
 
   destroy() {
+    this.#destroyed = true;
+    clearTimeout(this.#loadingTimer);
+    this.#crumbsObserver.disconnect();
     this.#shell.menus.close();
   }
 
@@ -103,10 +136,10 @@ class Explorer {
   }
 
   #buildNav() {
-    this.#buttons.back = this.#iconButton('arrow-left', 'Précédent (Alt+Gauche)', () => this.#goBack());
-    this.#buttons.forward = this.#iconButton('arrow-right', 'Suivant (Alt+Droite)', () => this.#goForward());
-    this.#buttons.up = this.#iconButton('arrow-up', 'Dossier parent (Alt+Haut)', () => this.#goUp());
-    const refresh = this.#iconButton('arrow-clockwise', 'Actualiser (F5)', () => this.#refresh());
+    this.#buttons.back = this.#iconButton('arrow-left', 'Précédent (Alt+Gauche)', () => this.#nav.goBack());
+    this.#buttons.forward = this.#iconButton('arrow-right', 'Suivant (Alt+Droite)', () => this.#nav.goForward());
+    this.#buttons.up = this.#iconButton('arrow-up', 'Dossier parent (Alt+Haut)', () => this.#nav.goUp());
+    const refresh = this.#iconButton('arrow-clockwise', 'Actualiser (F5)', () => this.#nav.refresh());
 
     this.#crumbs = h('nav', { class: 'ex-crumbs', 'aria-label': 'Emplacement' });
 
@@ -196,32 +229,38 @@ class Explorer {
     );
   }
 
+  /** Entrée de la barre latérale ; `key` est l'identifiant que la page annonce dans `active`. */
+  #sideEntry(key, node, location) {
+    const button = h(
+      'button',
+      { class: 'ex-side', type: 'button', 'data-tip': node.name, dataset: { id: key } },
+      nodeIcon(node, { plain: true }),
+      h('span', { class: 'truncate', text: node.name }),
+    );
+    button.addEventListener('click', () => this.#nav.open(location));
+    return button;
+  }
+
   #buildSidebar() {
-    const { places } = this.#fs;
-    const entry = (node) => {
-      const button = h(
-        'button',
-        { class: 'ex-side', type: 'button', 'data-tip': node.name, dataset: { id: node.id } },
-        nodeIcon(node, { plain: true }),
-        h('span', { class: 'truncate', text: node.name }),
-      );
-      button.addEventListener('click', () => this.#navigate(node.id));
-      this.#sidebarButtons.set(node.id, button);
+    const entry = (key, node, location) => {
+      const button = this.#sideEntry(key, node, location);
+      this.#sidebarButtons.set(key, button);
       return button;
     };
-    const drives = places.pc.children.filter((node) => node.kind === 'drive');
+    // Les lecteurs sont ajoutés ici dès que l'application de bureau les a indiqués.
+    this.#driveList = h('div', { class: 'ex-sidebar__drives' });
 
     return h(
       'aside',
       { class: 'ex-sidebar scroll', 'aria-label': 'Emplacements' },
-      entry(places.home),
+      entry('home', { kind: 'place', name: 'Accueil', icon: 'house' }, 'home'),
       h('h3', { class: 'ex-sidebar__title', text: 'Accès rapide' }),
-      QUICK_ACCESS.map((key) => entry(places[key])),
+      PLACES.map((place) => entry(`place:${place.id}`, { kind: 'folder', name: place.name, icon: place.icon }, place.id)),
       h('h3', { class: 'ex-sidebar__title', text: 'Cet appareil' }),
-      entry(places.pc),
-      drives.map(entry),
-      entry(places.network),
-      entry(places.trash),
+      entry('pc', { kind: 'place', name: 'Ce PC', icon: 'desktop' }, 'pc'),
+      this.#driveList,
+      entry('network', { kind: 'place', name: 'Réseau', icon: 'network' }, 'network'),
+      entry('trash', { kind: 'place', name: 'Corbeille', icon: 'trash' }, 'trash'),
     );
   }
 
@@ -281,16 +320,24 @@ class Explorer {
     this.#viewButtons.list = this.#iconButton('list-bullets', 'Détails', () => this.#setView('list'));
     this.#viewButtons.grid = this.#iconButton('squares-four', 'Grandes icônes', () => this.#setView('grid'));
 
+    const mode = services.available
+      ? h('span', {
+          class: 'chip chip--accent',
+          text: 'Lecture seule',
+          'data-tip': 'Evolve consulte vos dossiers sans jamais rien modifier',
+        })
+      : h('span', {
+          class: 'chip chip--demo',
+          text: 'Aperçu',
+          'data-tip': "Aperçu dans un navigateur : aucun dossier de l'ordinateur n'est lu",
+        });
+
     return h(
       'footer',
       { class: 'ex-status' },
       h('span', { class: 'ex-status__text' }, this.#statusText, this.#statusSelection),
       h('span', { class: 'ex-status__spacer' }),
-      h('span', {
-        class: 'chip chip--demo',
-        text: "Contenu d'exemple",
-        'data-tip': 'Arborescence fictive : vos fichiers ne sont ni lus ni modifiés',
-      }),
+      mode,
       this.#viewButtons.list,
       this.#viewButtons.grid,
     );
@@ -298,52 +345,40 @@ class Explorer {
 
   // --- Navigation ----------------------------------------------------------------
 
-  #navigate(id, { record = true, select } = {}) {
-    const node = this.#fs.get(id);
-    if (!node || !isContainer(node)) return;
-    if (record && this.#current && node !== this.#current) {
-      this.#back.push(this.#current.id);
-      this.#forward = [];
+  /** La navigation a changé d'état : lecture en cours, ou nouvelle page prête. */
+  #onNavigation() {
+    if (this.#destroyed) return;
+    const nav = this.#nav;
+    const setDisabled = (button, disabled) => button.setAttribute('aria-disabled', String(disabled));
+    setDisabled(this.#buttons.back, !nav.canGoBack);
+    setDisabled(this.#buttons.forward, !nav.canGoForward);
+    setDisabled(this.#buttons.up, !nav.page?.up);
+
+    if (nav.loading) {
+      // Le contenu précédent reste affiché ; seule une lecture lente est annoncée.
+      this.#content.setAttribute('aria-busy', 'true');
+      this.#loadingTimer ??= setTimeout(() => {
+        this.#loadingTimer = null;
+        if (!this.#destroyed && this.#nav.loading) this.#showLoading();
+      }, LOADING_DELAY_MS);
+      return;
     }
-    this.#current = node;
-    this.#filter = '';
-    this.#filterInput.value = '';
-    this.#filterClear.hidden = true;
+    clearTimeout(this.#loadingTimer);
+    this.#loadingTimer = null;
+    this.#content.removeAttribute('aria-busy');
+    this.#render();
+  }
+
+  #showLoading() {
+    this.#items = [];
+    this.#itemEls.clear();
     this.#selection.clear();
     this.#cursor = null;
-    this.#render();
-
-    if (select && this.#itemEls.has(select)) {
-      this.#selectOnly(select);
-      this.#content.focus({ preventScroll: true });
-    }
-  }
-
-  #goBack() {
-    const id = this.#back.pop();
-    if (!id) return;
-    this.#forward.push(this.#current.id);
-    this.#navigate(id, { record: false });
-  }
-
-  #goForward() {
-    const id = this.#forward.pop();
-    if (!id) return;
-    this.#back.push(this.#current.id);
-    this.#navigate(id, { record: false });
-  }
-
-  #parentOf(node) {
-    return node.parent && node.parent.kind !== 'root' ? node.parent : null;
-  }
-
-  #goUp() {
-    const parent = this.#parentOf(this.#current);
-    if (parent) this.#navigate(parent.id);
-  }
-
-  #refresh() {
-    this.#render();
+    const loading = this.#empty('arrows-clockwise', 'Lecture du dossier…', 'Le contenu de cet emplacement est en cours de lecture.');
+    loading.classList.add('ex-empty--loading');
+    this.#content.replaceChildren(h('div', { class: 'ex-view' }, loading));
+    this.#syncStatus();
+    this.#syncToolbar();
   }
 
   #setFilter(value) {
@@ -372,54 +407,136 @@ class Explorer {
     this.#renderContent({ keepSelection: true });
   }
 
+  #toggleHidden() {
+    this.#showHidden = !this.#showHidden;
+    this.#renderContent({ keepSelection: true });
+  }
+
   // --- Rendu -----------------------------------------------------------------------
 
   #render() {
-    const node = this.#current;
-    this.#win.setTitle(`${node.name} — Explorateur de fichiers`);
+    const page = this.#nav.page;
+    if (!page) return;
+    // Même emplacement : c'est une actualisation, la recherche et la sélection sont conservées.
+    const moved = page.key !== this.#shownKey;
+    this.#shownKey = page.key;
+    this.#win.setTitle(`${page.title} — Explorateur de fichiers`);
+    // État de la page, lisible par les outils de test : nature, dossier réel, code d'erreur.
+    this.#content.dataset.page = page.kind;
+    this.#content.dataset.path = page.location?.path ?? '';
+    this.#content.dataset.code = page.code ?? '';
 
-    // Boutons de navigation
-    const setDisabled = (button, disabled) => button.setAttribute('aria-disabled', String(disabled));
-    setDisabled(this.#buttons.back, this.#back.length === 0);
-    setDisabled(this.#buttons.forward, this.#forward.length === 0);
-    setDisabled(this.#buttons.up, !this.#parentOf(node));
+    this.#renderCrumbs(page.crumbs);
+    this.#syncSidebar(page.active);
 
-    // Fil d'Ariane
-    const path = this.#fs.pathTo(node);
-    const crumbs = [];
-    path.forEach((step, index) => {
-      if (index > 0) crumbs.push(icon('caret-right'));
+    this.#filterInput.placeholder = `Rechercher dans ${page.title}`;
+    if (moved) {
+      this.#filter = '';
+      this.#filterInput.value = '';
+      this.#filterClear.hidden = true;
+    }
+    this.#renderContent({ keepSelection: !moved });
+    if (moved) this.#content.scrollTop = 0;
+  }
+
+  /** Fil d'Ariane : « Ce PC », puis chaque dossier jusqu'à celui qui est affiché. */
+  #renderCrumbs(steps) {
+    this.#crumbParts = steps.map((step, index) => {
+      const current = index === steps.length - 1;
       const crumb = h(
         'button',
-        { class: 'ex-crumb', type: 'button', style: { animationDelay: `${index * 35}ms` } },
-        index === 0 ? nodeIcon(step, { plain: true }) : null,
-        h('span', { text: step.name }),
+        {
+          class: `ex-crumb${current ? ' is-current' : ''}`,
+          type: 'button',
+          'aria-current': current ? 'location' : null,
+          style: { animationDelay: `${Math.min(index, 6) * 35}ms` },
+        },
+        index === 0 ? nodeIcon({ kind: 'place', icon: step.icon }, { plain: true }) : null,
+        h('span', { text: step.label }),
       );
-      crumb.addEventListener('click', () => this.#navigate(step.id));
-      crumbs.push(crumb);
+      crumb.addEventListener('click', () => this.#nav.open(step.location));
+      return { step, crumb, separator: index > 0 ? icon('caret-right') : null };
     });
-    this.#crumbs.replaceChildren(...crumbs);
 
-    // Barre latérale : l'entrée de l'emplacement courant (ou de son plus proche parent).
-    let active = null;
-    for (let step = node; step && !active; step = step.parent) {
-      if (this.#sidebarButtons.has(step.id)) active = step.id;
+    // « … » : remplace, quand la place manque, les dossiers les plus proches de la racine.
+    const more = h('button', {
+      class: 'ex-crumb ex-crumb--more',
+      type: 'button',
+      text: '…',
+      'aria-label': 'Dossiers parents',
+      'aria-haspopup': 'menu',
+      'aria-expanded': 'false',
+      'data-tip': 'Dossiers parents',
+      hidden: true,
+    });
+    more.addEventListener('click', () => {
+      this.#shell.menus.show({
+        anchor: more,
+        placement: 'bottom-start',
+        label: 'Dossiers parents',
+        items: this.#crumbParts
+          .filter((part) => part.crumb.hidden)
+          .map(({ step }) => ({ label: step.label, glyph: 'folder', onSelect: () => this.#nav.open(step.location) })),
+      });
+    });
+    this.#crumbsMore = { button: more, separator: icon('caret-right') };
+    this.#crumbsMore.separator.toggleAttribute('hidden', true);
+
+    const [first, ...others] = this.#crumbParts;
+    this.#crumbs.replaceChildren(
+      first.crumb,
+      this.#crumbsMore.separator,
+      more,
+      ...others.flatMap((part) => [part.separator, part.crumb]),
+    );
+    this.#fitCrumbs();
+  }
+
+  /**
+   * Replie dans « … » autant de dossiers qu'il le faut pour que le dossier
+   * affiché reste lisible : d'abord les plus proches de la racine, comme
+   * l'Explorateur de Windows. « Ce PC » et le dossier affiché restent visibles.
+   */
+  #fitCrumbs() {
+    const parts = this.#crumbParts;
+    const more = this.#crumbsMore;
+    if (!more || parts.length === 0) return;
+    const bar = this.#crumbs;
+    const collapse = (count) => {
+      parts.forEach((part, index) => {
+        const folded = index >= 1 && index <= count;
+        part.crumb.hidden = folded;
+        part.separator?.toggleAttribute('hidden', folded);
+      });
+      more.button.hidden = count === 0;
+      more.separator.toggleAttribute('hidden', count === 0);
+    };
+
+    // Mesure sans rétrécissement : chaque nom occupe sa largeur entière.
+    bar.classList.add('is-measuring');
+    const foldable = Math.max(0, parts.length - 2);
+    let count = 0;
+    collapse(count);
+    while (count < foldable && bar.scrollWidth > bar.clientWidth) {
+      count += 1;
+      collapse(count);
     }
-    for (const [id, button] of this.#sidebarButtons) {
+    bar.classList.remove('is-measuring');
+  }
+
+  /** Barre latérale : lecteurs connus et entrée de l'emplacement courant. */
+  #syncSidebar(active) {
+    const drives = this.#nav.drives;
+    const ids = drives.map((drive) => drive.id);
+    if (ids.join('\n') !== [...this.#driveButtons.keys()].join('\n')) {
+      this.#driveButtons = new Map(drives.map((drive) => [drive.id, this.#sideEntry(drive.id, drive, drive.location)]));
+      this.#driveList.replaceChildren(...this.#driveButtons.values());
+    }
+    for (const [id, button] of [...this.#sidebarButtons, ...this.#driveButtons]) {
       button.classList.toggle('is-current', id === active);
       if (id === active) button.setAttribute('aria-current', 'page');
       else button.removeAttribute('aria-current');
     }
-
-    this.#filterInput.placeholder = `Rechercher dans ${this.#searchRoot().name}`;
-    this.#renderContent();
-    this.#content.scrollTop = 0;
-  }
-
-  /** Racine de la recherche : le dossier courant (ou « Ce PC » depuis un emplacement virtuel). */
-  #searchRoot() {
-    const node = this.#current;
-    return node.kind === 'home' || node.kind === 'place' ? this.#fs.places.pc : node;
   }
 
   #sorted(nodes) {
@@ -427,34 +544,71 @@ class Explorer {
   }
 
   #renderContent({ keepSelection = false } = {}) {
-    const node = this.#current;
+    const page = this.#nav.page;
+    if (!page) return;
     const view = h('div', { class: 'ex-view' });
     this.#items = [];
     this.#itemEls.clear();
+    this.#hiddenCount = 0;
     if (!keepSelection) {
       this.#selection.clear();
       this.#cursor = null;
     }
 
-    if (this.#filter) {
-      this.#renderSearch(view);
-    } else if (node.kind === 'home') {
-      this.#renderHome(view);
-    } else if (node.kind === 'pc') {
-      const folders = this.#sorted(node.children.filter((child) => child.kind !== 'drive'));
-      const drives = node.children.filter((child) => child.kind === 'drive');
-      view.append(this.#section('Dossiers', folders.length), this.#collection(folders));
-      view.append(this.#section('Périphériques et lecteurs', drives.length), this.#drives(drives));
-    } else if (node.children.length === 0) {
-      view.append(
-        this.#empty(
-          node.kind === 'place' ? node.icon : 'folder-open',
-          node.emptyTitle ?? 'Ce dossier est vide',
-          node.emptyText ?? 'Aucun élément à afficher pour le moment.',
-        ),
-      );
+    if (page.message) {
+      // Information, erreur d'accès ou aperçu sans service : un message, aucun élément.
+      view.append(this.#empty(page.message.glyph, page.message.title, page.message.text));
     } else {
-      view.append(this.#collection(this.#sorted(node.children)));
+      const options = { filter: this.#filter, showHidden: this.#showHidden };
+      const all = page.sections.flatMap((section) => section.nodes);
+      const visible = visibleNodes(all, options);
+      this.#hiddenCount = this.#showHidden ? 0 : all.filter((node) => node.hidden).length;
+
+      if (page.truncated) {
+        view.append(
+          h(
+            'p',
+            { class: 'ex-notice' },
+            icon('info'),
+            h('span', { text: `Ce dossier est très volumineux : seuls ses ${formatNumber(page.limit)} premiers éléments sont affichés.` }),
+          ),
+        );
+      }
+
+      if (this.#filter) {
+        if (visible.length) {
+          view.append(
+            this.#section(`Résultats pour « ${this.#filter} » dans ${page.title}`, visible.length),
+            this.#collection(this.#sorted(visible)),
+          );
+        } else {
+          view.append(
+            this.#empty(
+              'magnifying-glass',
+              `Aucun résultat pour « ${this.#filter} »`,
+              `Aucun élément de « ${page.title} » ne correspond à votre recherche.`,
+            ),
+          );
+        }
+      } else if (page.kind === 'folder' && visible.length === 0) {
+        view.append(
+          all.length
+            ? this.#empty('folder-open', 'Aucun élément à afficher', 'Ce dossier ne contient que des éléments masqués. Le menu Affichage permet de les montrer.')
+            : this.#empty('folder-open', 'Ce dossier est vide', 'Aucun élément à afficher pour le moment.'),
+        );
+      } else {
+        for (const section of page.sections) {
+          const nodes = visibleNodes(section.nodes, options);
+          if (section.title) view.append(this.#section(section.title, nodes.length));
+          if (section.layout === 'drives') {
+            view.append(nodes.length ? this.#drives(nodes) : h('p', { class: 'ex-notice', text: 'Aucun lecteur détecté.' }));
+          } else if (section.layout === 'grid') {
+            view.append(this.#grid(nodes));
+          } else {
+            view.append(this.#collection(this.#sorted(nodes)));
+          }
+        }
+      }
     }
 
     this.#content.replaceChildren(view);
@@ -464,46 +618,6 @@ class Explorer {
     if (this.#cursor && !this.#itemEls.has(this.#cursor)) this.#cursor = null;
     this.#syncSelection();
     this.#syncToolbar();
-  }
-
-  #renderHome(view) {
-    const { places } = this.#fs;
-    const quick = QUICK_ACCESS.map((key) => places[key]);
-    const recents = this.#fs.recents(10);
-    view.append(
-      this.#section('Accès rapide', quick.length),
-      this.#grid(quick),
-      this.#section('Fichiers récents', recents.length),
-      this.#list(recents, { sortable: false }),
-    );
-  }
-
-  #renderSearch(view) {
-    const needle = normalize(this.#filter);
-    const root = this.#searchRoot();
-    const matches = [];
-    const visit = (node) => {
-      for (const child of node.children ?? []) {
-        if (normalize(child.name).includes(needle)) matches.push(child);
-        visit(child);
-      }
-    };
-    visit(root);
-
-    if (!matches.length) {
-      view.append(
-        this.#empty(
-          'magnifying-glass',
-          `Aucun résultat pour « ${this.#filter} »`,
-          `Aucun élément de « ${root.name} » ne correspond à votre recherche.`,
-        ),
-      );
-      return;
-    }
-    view.append(
-      this.#section(`Résultats pour « ${this.#filter} » dans ${root.name}`, matches.length),
-      this.#collection(this.#sorted(matches)),
-    );
   }
 
   #section(title, count) {
@@ -526,15 +640,10 @@ class Explorer {
     return el;
   }
 
-  #visual(node) {
-    if (node.thumbnail === 'wallpaper') {
-      return h('span', { class: 'ex-thumb' }, h('img', { src: WALLPAPER_URL, alt: '', draggable: 'false' }));
-    }
-    return nodeIcon(node);
-  }
-
   #itemProps(node, className) {
-    return { class: `ex-item ${className}`, role: 'option', 'aria-selected': 'false', dataset: { id: node.id } };
+    // Estompés : les éléments masqués par Windows, et un dossier personnel introuvable.
+    const dimmed = node.hidden || node.available === false ? ' is-dimmed' : '';
+    return { class: `ex-item ${className}${dimmed}`, role: 'option', 'aria-selected': 'false', dataset: { id: node.id, kind: node.kind } };
   }
 
   #grid(nodes) {
@@ -547,7 +656,7 @@ class Explorer {
           h(
             'div',
             this.#itemProps(node, 'ex-tile'),
-            this.#visual(node),
+            nodeIcon(node),
             h('span', { class: 'ex-tile__name' }, highlight(node.name, this.#filter)),
           ),
         ),
@@ -587,13 +696,17 @@ class Explorer {
           h(
             'div',
             this.#itemProps(node, 'ex-row'),
-            h('span', { class: 'ex-row__name' }, this.#visual(node), h('span', { class: 'truncate' }, highlight(node.name, this.#filter))),
-            h('span', { class: 'ex-row__cell truncate tabular', 'data-col': 'modified', text: formatFileDate(node.modified) }),
+            h('span', { class: 'ex-row__name' }, nodeIcon(node), h('span', { class: 'truncate' }, highlight(node.name, this.#filter))),
+            h('span', {
+              class: 'ex-row__cell truncate tabular',
+              'data-col': 'modified',
+              text: node.modified ? formatFileDate(node.modified) : '',
+            }),
             h('span', { class: 'ex-row__cell truncate', 'data-col': 'type', text: describeNode(node).label }),
             h('span', {
               class: 'ex-row__cell ex-row__cell--end truncate tabular',
               'data-col': 'size',
-              text: node.kind === 'file' ? formatSize(node.size) : '',
+              text: node.kind === 'file' && node.size !== null ? formatSize(node.size) : '',
             }),
           ),
         ),
@@ -606,8 +719,10 @@ class Explorer {
       'div',
       { class: 'ex-drives' },
       drives.map((drive) => {
-        const used = drive.totalBytes - drive.freeBytes;
-        const free = `${formatNumber(drive.freeBytes / GB)} Go libres sur ${formatNumber(drive.totalBytes / GB)} Go`;
+        // Capacité inconnue (lecteur qui ne l'indique pas) : pas de jauge.
+        const known = typeof drive.totalBytes === 'number' && typeof drive.freeBytes === 'number' && drive.totalBytes > 0;
+        const free = known ? `${formatSize(drive.freeBytes)} libres sur ${formatSize(drive.totalBytes)}` : 'Capacité inconnue';
+        const used = known ? Math.round(((drive.totalBytes - drive.freeBytes) / drive.totalBytes) * 100) : 0;
         return this.#register(
           drive,
           h(
@@ -615,11 +730,7 @@ class Explorer {
             this.#itemProps(drive, 'ex-drive'),
             nodeIcon(drive),
             h('span', { class: 'ex-drive__name truncate', text: drive.name }),
-            h(
-              'span',
-              { class: 'ex-drive__bar', role: 'img', 'aria-label': free },
-              h('span', { style: { '--used': `${Math.round((used / drive.totalBytes) * 100)}%` } }),
-            ),
+            known ? h('span', { class: 'ex-drive__bar', role: 'img', 'aria-label': free }, h('span', { style: { '--used': `${used}%` } })) : null,
             h('span', { class: 'ex-drive__meta truncate tabular', text: free }),
           ),
         );
@@ -676,8 +787,16 @@ class Explorer {
   }
 
   #syncStatus() {
+    const page = this.#nav.page;
+    if (!page || page.message || this.#nav.loading) {
+      // Message (erreur, aperçu…) ou lecture en cours : aucun décompte à annoncer.
+      this.#statusText.textContent = '';
+      this.#statusSelection.textContent = '';
+      return;
+    }
     const count = this.#items.length;
-    this.#statusText.textContent = this.#filter ? plural(count, 'résultat') : plural(count, 'élément');
+    const hidden = this.#hiddenCount ? ` · ${plural(this.#hiddenCount, 'élément masqué', 'éléments masqués')}` : '';
+    this.#statusText.textContent = `${this.#filter ? plural(count, 'résultat') : plural(count, 'élément')}${hidden}`;
 
     const selected = this.#selectedNodes();
     if (!selected.length) {
@@ -685,8 +804,8 @@ class Explorer {
       return;
     }
     const label = selected.length > 1 ? `${formatNumber(selected.length)} éléments sélectionnés` : '1 élément sélectionné';
-    const files = selected.filter((node) => node.kind === 'file');
-    const size = files.length === selected.length ? ` · ${formatSize(files.reduce((sum, node) => sum + node.size, 0))}` : '';
+    const sized = selected.every((node) => node.kind === 'file' && node.size !== null);
+    const size = sized ? ` · ${formatSize(selected.reduce((sum, node) => sum + node.size, 0))}` : '';
     this.#statusSelection.textContent = ` · ${label}${size}`;
   }
 
@@ -695,7 +814,7 @@ class Explorer {
     const setDisabled = (key, disabled) => this.#buttons[key].setAttribute('aria-disabled', String(disabled));
     setDisabled('cut', count === 0);
     setDisabled('copy', count === 0);
-    setDisabled('paste', true); // presse-papiers vide dans cet aperçu
+    setDisabled('paste', true); // aucune opération sur les fichiers : lecture seule
     setDisabled('rename', count !== 1);
     setDisabled('share', count === 0);
     setDisabled('delete', count === 0);
@@ -711,10 +830,10 @@ class Explorer {
   #onKeyDown(event) {
     const { key } = event;
 
-    if (event.altKey && key === 'ArrowLeft') return this.#handled(event, () => this.#goBack());
-    if (event.altKey && key === 'ArrowRight') return this.#handled(event, () => this.#goForward());
-    if (event.altKey && key === 'ArrowUp') return this.#handled(event, () => this.#goUp());
-    if (key === 'F5') return this.#handled(event, () => this.#refresh());
+    if (event.altKey && key === 'ArrowLeft') return this.#handled(event, () => this.#nav.goBack());
+    if (event.altKey && key === 'ArrowRight') return this.#handled(event, () => this.#nav.goForward());
+    if (event.altKey && key === 'ArrowUp') return this.#handled(event, () => this.#nav.goUp());
+    if (key === 'F5') return this.#handled(event, () => this.#nav.refresh());
     if ((event.ctrlKey || event.metaKey) && key.toLowerCase() === 'f') {
       return this.#handled(event, () => this.#filterInput.focus());
     }
@@ -729,7 +848,7 @@ class Explorer {
       });
     }
     if (key === 'Escape' && this.#selection.size) return this.#handled(event, () => this.#clearSelection(), true);
-    if (key === 'Backspace') return this.#handled(event, () => this.#goBack());
+    if (key === 'Backspace') return this.#handled(event, () => this.#nav.goBack());
     if (key === 'Enter') {
       const node = this.#items.find((item) => item.id === this.#cursor && this.#selection.has(item.id));
       if (node) return this.#handled(event, () => this.#open(node));
@@ -756,9 +875,9 @@ class Explorer {
     const index = ids.indexOf(this.#cursor);
     let target;
 
-    if (index < 0) target = ids[0];
-    else if (key === 'Home') target = ids[0];
+    if (key === 'Home') target = ids[0];
     else if (key === 'End') target = ids[ids.length - 1];
+    else if (index < 0) target = ids[0];
     else if (key === 'ArrowLeft') target = ids[Math.max(0, index - 1)];
     else if (key === 'ArrowRight') target = ids[Math.min(ids.length - 1, index + 1)];
     else target = this.#verticalNeighbour(this.#cursor, key === 'ArrowDown') ?? this.#cursor;
@@ -798,38 +917,40 @@ class Explorer {
   // --- Actions ----------------------------------------------------------------------
 
   #open(node) {
-    if (isContainer(node)) {
-      this.#navigate(node.id);
+    // Dossier, lecteur ou lien : on s'y rend. Le service vérifie où un lien mène réellement.
+    if (node.location) {
+      this.#nav.open(node.location);
       return;
     }
     this.#shell.toasts.show({
       key: 'explorer-open',
       title: node.name,
-      message: "L'ouverture des fichiers arrivera dans une prochaine étape. Ce fichier est un exemple.",
+      message: "L'ouverture des fichiers arrivera dans une prochaine étape : cette version consulte vos dossiers en lecture seule.",
       glyph: describeNode(node).icon,
     });
   }
 
-  /** Action d'aperçu : la commande existe visuellement mais n'agit pas encore. */
+  /** Commande présente à l'écran mais sans effet : l'explorateur ne modifie aucun fichier. */
   #preview(action) {
     this.#shell.toasts.show({
       key: 'explorer-preview',
       title: `${action} — bientôt disponible`,
-      message: "Cette commande arrivera avec la gestion réelle des fichiers. L'explorateur affiche pour l'instant un contenu d'exemple.",
+      message: "Cette version de l'explorateur consulte vos fichiers sans jamais les modifier. Les opérations sur les fichiers arriveront dans une prochaine étape.",
       glyph: 'sparkle',
     });
   }
 
   #showProperties(node) {
     const details = [describeNode(node).label];
-    if (node.kind === 'file') details.push(formatSize(node.size));
-    else if (node.kind === 'drive') details.push(`${formatNumber(node.freeBytes / GB)} Go libres`);
-    else details.push(plural(node.children.length, 'élément'));
-    details.push(`modifié le ${formatFileDate(node.modified)}`);
+    if (node.kind === 'file' && node.size !== null) details.push(formatSize(node.size));
+    else if (node.kind === 'drive' && typeof node.freeBytes === 'number') details.push(`${formatSize(node.freeBytes)} libres`);
+    if (node.modified) details.push(`modifié le ${formatFileDate(node.modified)}`);
+    // Élément d'un dossier : son identifiant est son chemin complet.
+    if (node.location?.path || node.kind === 'file') details.push(node.location?.path ?? node.id);
     this.#shell.toasts.show({
       key: 'explorer-properties',
       title: node.name,
-      message: `${details.join(' · ')} (exemple)`,
+      message: details.join(' · '),
       glyph: 'info',
       timeout: 6500,
     });
@@ -844,7 +965,7 @@ class Explorer {
       items: [
         single && {
           label: 'Ouvrir',
-          glyph: isContainer(node) ? 'folder-open' : 'arrow-square-out',
+          glyph: node.location ? 'folder-open' : 'arrow-square-out',
           hint: 'Entrée',
           onSelect: () => this.#open(node),
         },
@@ -863,6 +984,8 @@ class Explorer {
     return [
       { label: 'Grandes icônes', checked: this.#view === 'grid', onSelect: () => this.#setView('grid') },
       { label: 'Détails', checked: this.#view === 'list', onSelect: () => this.#setView('list') },
+      { separator: true },
+      { label: 'Éléments masqués', checked: this.#showHidden, onSelect: () => this.#toggleHidden() },
     ];
   }
 
@@ -885,7 +1008,7 @@ class Explorer {
         { header: 'Trier par' },
         ...this.#sortItems(),
         { separator: true },
-        { label: 'Actualiser', glyph: 'arrow-clockwise', hint: 'F5', onSelect: () => this.#refresh() },
+        { label: 'Actualiser', glyph: 'arrow-clockwise', hint: 'F5', onSelect: () => this.#nav.refresh() },
         { label: 'Nouveau dossier', glyph: 'folder-plus', onSelect: () => this.#preview('Nouveau dossier') },
       ],
     });
@@ -919,7 +1042,7 @@ class Explorer {
 /**
  * Monte l'explorateur dans une fenêtre.
  * @param {import('../wm/window.js').AppWindow} win
- * @param {{ location?: string, select?: string }} [params]
+ * @param {{ location?: string }} [params]  emplacement à afficher (voir `Explorer.show`)
  * @param {import('../shell/shell.js').Shell} shell
  */
 export function mountExplorer(win, params, shell) {

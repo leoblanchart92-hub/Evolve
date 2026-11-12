@@ -1,10 +1,10 @@
 /**
- * Evolve — Icône d'un élément de l'arborescence (dossier, fichier, disque…),
- * colorée par un dégradé néon selon son type.
+ * Evolve — Icône d'un élément (dossier, fichier, lecteur, lien…), colorée par
+ * un dégradé néon selon son type.
  */
 
+import { describeNode } from '../core/file-types.js';
 import { icon } from '../core/icons.js';
-import { describeNode } from '../data/demo-files.js';
 
 const TONE_GRADIENTS = Object.freeze({
   violet: 'grad-violet',
@@ -17,7 +17,7 @@ const TONE_GRADIENTS = Object.freeze({
 });
 
 /**
- * @param {object} node  nœud de l'arborescence (data/demo-files.js)
+ * @param {object} node  élément décrit par `kind`, `ext` et, au besoin, `icon` (core/file-types.js)
  * @param {{ class?: string, plain?: boolean }} [options]
  *        `plain` : pictogramme propre à l'emplacement (barre latérale, fil d'Ariane)
  *        plutôt que la forme « dossier ».

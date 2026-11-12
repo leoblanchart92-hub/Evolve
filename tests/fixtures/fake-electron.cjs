@@ -25,12 +25,23 @@ function cancellable() {
   };
 }
 
+/** Dossiers personnels connus du faux Electron : nom demandé → dossier du faux profil. */
+const PERSONAL_FOLDERS = Object.freeze({
+  desktop: 'Desktop',
+  documents: 'Documents',
+  downloads: 'Downloads',
+  pictures: 'Pictures',
+  music: 'Music',
+  videos: 'Videos',
+});
+
 /**
  * @param {object} options
  * @param {string} options.tempDir                 dossier temporaire renvoyé par app.getPath('temp') ;
  *                                                 le dossier de configuration de l'utilisateur
- *                                                 (app.getPath('appData')) est placé à l'intérieur :
- *                                                 les tests n'écrivent jamais dans le vrai profil
+ *                                                 (app.getPath('appData')) et ses dossiers personnels
+ *                                                 (app.getPath('documents')…) sont placés à l'intérieur :
+ *                                                 les tests ne touchent jamais au vrai profil
  * @param {boolean} [options.packaged]             application empaquetée (app.isPackaged)
  * @param {boolean} [options.lock]                 verrou d'instance unique obtenu
  * @param {{width:number,height:number}} [options.workArea]  zone de travail de l'écran principal
@@ -43,6 +54,10 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
     quitCalls: 0,
     /** Chemins redéfinis par app.setPath(). */
     paths: {},
+    /** Dossiers personnels demandés par app.getPath(), dans l'ordre. */
+    pathRequests: [],
+    /** Dossiers personnels que le faux Windows ne connaît pas (app.getPath() échoue). */
+    unknownFolders: [],
     /** Options de ligne de commande ajoutées au moteur. */
     switches: [],
     /** Fenêtres créées. */
@@ -73,6 +88,12 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
       if (state.paths[name]) return state.paths[name];
       if (name === 'temp') return tempDir;
       if (name === 'appData') return path.join(tempDir, 'profil', 'AppData', 'Roaming');
+      if (Object.hasOwn(PERSONAL_FOLDERS, name)) {
+        state.pathRequests.push(name);
+        // Comme Electron : échec si Windows ne connaît pas ce dossier.
+        if (state.unknownFolders.includes(name)) throw new Error(`Failed to get '${name}' path`);
+        return path.join(tempDir, 'profil', PERSONAL_FOLDERS[name]);
+      }
       throw new Error(`faux electron : chemin inattendu « ${name} »`);
     },
     setPath(name, value) {

@@ -36,7 +36,7 @@ contextBridge.exposeInMainWorld('evolve', {
     return () => ipcRenderer.removeListener('evolve:fullscreen-changed', listener);
   },
 
-  /** Services d'Evolve (réglages…), indépendants de l'interface. */
+  /** Services d'Evolve (réglages, consultation des dossiers…), indépendants de l'interface. */
   services: {
     /**
      * Appelle une méthode d'un service. La promesse renvoie toujours

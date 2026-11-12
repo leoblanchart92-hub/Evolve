@@ -32,7 +32,7 @@ const NAMES = [
   'caret-left', 'caret-right', 'caret-up', 'caret-down', 'arrow-left', 'arrow-right', 'arrow-up',
   'arrow-clockwise', 'arrows-clockwise', 'x', 'check', 'plus', 'minus', 'info', 'question',
   'warning-circle', 'arrow-square-out', 'scissors', 'copy', 'clipboard-text', 'pencil-simple-line',
-  'share-fat', 'trash', 'arrows-down-up', 'list-bullets',
+  'share-fat', 'trash', 'arrows-down-up', 'list-bullets', 'link', 'lock',
   // Emplacements et matériel
   'house', 'desktop', 'download-simple', 'folder', 'folder-open', 'folder-plus', 'images',
   'music-notes', 'film-strip', 'hard-drive', 'network', 'cpu', 'memory', 'graphics-card', 'monitor',

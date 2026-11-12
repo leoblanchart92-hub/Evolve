@@ -41,6 +41,18 @@ switch (mode) {
     });
     process.exit(0);
     break;
+  case 'pass-with-explorer': // réussite, avec les emplacements trouvés par l'explorateur
+    report(true, [{ name: 'contrôle un', ok: true }], [], { explorer: { places: ['desktop', 'documents'], drives: ['C:', 'D:'] } });
+    process.exit(0);
+    break;
+  case 'fail-with-explorer': // échec, sans dossier personnel ni lecteur
+    report(false, [{ name: 'contrôle un', ok: false, value: false }], [], { explorer: { places: [], drives: [] } });
+    process.exit(1);
+    break;
+  case 'pass-with-odd-explorer': // information mal formée : ignorée
+    report(true, [{ name: 'contrôle un', ok: true }], [], { explorer: { places: 'desktop', drives: null } });
+    process.exit(0);
+    break;
   case 'fail':
     report(false, [{ name: 'contrôle un', ok: true }, { name: 'contrôle deux', ok: false, value: { attendu: 1 } }]);
     process.exit(1);

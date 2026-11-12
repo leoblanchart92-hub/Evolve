@@ -2,10 +2,11 @@
  * Processus principal de l'application de bureau (src/main/main.js) et script
  * de préchargement, exécutés avec un faux module « electron »
  * (tests/fixtures/fake-electron.cjs) : fenêtre, sécurité, raccourcis, canaux
- * de communication, instance unique, auto-test, services et réglages.
+ * de communication, instance unique, auto-test, services, réglages et
+ * consultation des dossiers.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -793,4 +794,112 @@ test('services : la fenêtre est prévenue des événements, sauf de ses propres
   fake.app.emit('will-quit');
   assert.equal(sent(), 3);
   assert.deepEqual(readSettings(fake.settingsFile).values, { 'quick.volume': 11 }, 'enregistré à la fermeture');
+});
+
+// ---------------------------------------------------------------------------------
+// Explorateur : consultation des dossiers
+// ---------------------------------------------------------------------------------
+
+/** Crée le faux profil de l'utilisateur : dossiers personnels et quelques fichiers. */
+function createProfile(tempDir, folders = ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Music', 'Videos']) {
+  const profile = path.join(tempDir, 'profil');
+  for (const name of folders) mkdirSync(path.join(profile, name), { recursive: true });
+  if (folders.includes('Documents')) {
+    mkdirSync(path.join(profile, 'Documents', 'Projets été'));
+    writeFileSync(path.join(profile, 'Documents', 'Notes.txt'), 'bonjour');
+  }
+  // Chemin réel (noms longs sous Windows) : celui que le service renvoie.
+  return realpathSync.native(profile);
+}
+
+/** État d'un dossier : chaque élément, sa taille et sa date de modification. */
+function snapshotOf(folder) {
+  const lines = [];
+  (function walk(current) {
+    for (const item of readdirSync(current, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const full = path.join(current, item.name);
+      const info = statSync(full);
+      lines.push(`${path.relative(folder, full)} ${item.isDirectory() ? 'dossier' : info.size} ${Math.round(info.mtimeMs)}`);
+      if (item.isDirectory()) walk(full);
+    }
+  })(folder);
+  return lines;
+}
+
+test('explorateur : les dossiers personnels ne sont demandés à Windows qu’à la première consultation, une seule fois', async () => {
+  const fake = await launch();
+  const { state, tempDir } = fake;
+  const profile = createProfile(tempDir, ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Music']);
+  state.unknownFolders.push('music');
+  const api = loadPreload(fake, fake.window.webContents);
+
+  // Démarrage, réglages : aucun dossier personnel n'est demandé (Electron peut en créer un au passage).
+  await api.services.call('settings', 'getAll');
+  assert.deepEqual(state.pathRequests, []);
+
+  const reply = await api.services.call('files', 'places');
+  assert.equal(reply.ok, true);
+  assert.deepEqual(state.pathRequests, ['desktop', 'documents', 'downloads', 'pictures', 'music', 'videos']);
+  assert.deepEqual(reply.value.places, [
+    { id: 'desktop', path: path.join(profile, 'Desktop'), available: true },
+    { id: 'documents', path: path.join(profile, 'Documents'), available: true },
+    { id: 'downloads', path: path.join(profile, 'Downloads'), available: true },
+    { id: 'pictures', path: path.join(profile, 'Pictures'), available: true },
+    { id: 'music', path: null, available: false }, // inconnu de Windows
+    { id: 'videos', path: null, available: false }, // absent du disque
+  ]);
+  // Lecteurs locaux recherchés automatiquement : celui du dossier temporaire en fait partie.
+  const { root } = path.parse(profile);
+  assert.ok(reply.value.drives.some((drive) => drive.path.toLowerCase() === root.toLowerCase()), JSON.stringify(reply.value.drives));
+
+  await api.services.call('files', 'places');
+  await api.services.call('files', 'list', path.join(profile, 'Documents'));
+  assert.equal(state.pathRequests.length, 6, 'une seule demande par session');
+});
+
+test('explorateur : la page consulte un dossier réel par le service de fichiers, sans rien y changer', async () => {
+  const fake = await launch();
+  const profile = createProfile(fake.tempDir);
+  const documents = path.join(profile, 'Documents');
+  const before = snapshotOf(profile);
+  const api = loadPreload(fake, fake.window.webContents);
+
+  const listing = await api.services.call('files', 'list', documents);
+  assert.equal(listing.ok, true);
+  assert.equal(listing.value.path, documents);
+  assert.deepEqual(listing.value.root, { id: 'documents', kind: 'place', path: documents });
+  assert.deepEqual(
+    listing.value.entries.map((item) => [item.name, item.kind, item.size]).sort(),
+    [['Notes.txt', 'file', 7], ['Projets été', 'folder', null]],
+  );
+
+  // Refus codés, jamais d'exception.
+  const code = async (...args) => (await api.services.call('files', ...args)).code;
+  assert.equal(await code('list', '..'), 'invalid-path');
+  assert.equal(await code('list', `${documents}${path.sep}..${path.sep}..`), 'invalid-path');
+  assert.equal(await code('list', path.join(documents, 'Notes.txt')), 'not-a-directory');
+  assert.equal(await code('list', path.join(documents, 'Introuvable')), 'not-found');
+  assert.equal(await code('list'), 'invalid-path');
+  assert.equal(await code('list', { path: documents }), 'invalid-path');
+  assert.equal(await code('list', documents, 'en trop', 3, 4, 5, 6, 7, 8, 9), 'bad-arguments');
+
+  // Aucune opération d'écriture, de suppression ni d'ouverture n'existe.
+  for (const method of ['write', 'writeFile', 'create', 'mkdir', 'rename', 'move', 'copy', 'delete', 'remove', 'trash', 'open', 'read', 'status']) {
+    assert.equal(await code(method, path.join(documents, 'Notes.txt'), 'contenu'), 'unknown-method', method);
+  }
+
+  assert.deepEqual(snapshotOf(profile), before, 'le profil est resté tel quel');
+  assert.equal(readFileSync(path.join(documents, 'Notes.txt'), 'utf8'), 'bonjour');
+  fake.app.emit('will-quit');
+  assert.equal(readSettings(fake.settingsFile), null, 'consulter des dossiers n’enregistre aucun réglage');
+});
+
+test('explorateur : les événements d’une autre page n’atteignent pas le service de fichiers', async () => {
+  const fake = await launch();
+  const profile = createProfile(fake.tempDir);
+  const stranger = new fake.window.webContents.constructor();
+  const api = loadPreload(fake, stranger);
+  const reply = await api.services.call('files', 'list', path.join(profile, 'Documents'));
+  assert.equal(reply.ok, false);
+  assert.deepEqual(fake.state.pathRequests, [], 'aucun dossier n’a été recherché pour elle');
 });

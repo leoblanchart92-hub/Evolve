@@ -1,18 +1,12 @@
 /**
- * Arborescence d'exemple de l'explorateur de fichiers (aucun accès au disque).
+ * Arborescence d'exemple du menu Démarrer (aucun accès au disque) et, sur ces
+ * données, types de fichiers et tri (core/file-types.js).
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import {
-  createDemoFileSystem,
-  describeNode,
-  extensionOf,
-  FILE_TYPES,
-  isContainer,
-  sortNodes,
-  WALLPAPER_FILE,
-} from '../src/renderer/js/data/demo-files.js';
+import { describeNode, extensionOf, FILE_TYPES, isContainer, sortNodes } from '../src/renderer/js/core/file-types.js';
+import { createDemoFileSystem, WALLPAPER_FILE } from '../src/renderer/js/data/demo-files.js';
 
 const now = new Date(2026, 10, 10, 9, 0, 0);
 const files = createDemoFileSystem(now);
