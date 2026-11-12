@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -60,6 +60,23 @@ const PAINTED = "l'interface est réellement dessinée dans la fenêtre (capture
 /** Début de chaque code de page de l'auto-test des opérations : les outils de l'explorateur, puis ceux des opérations. */
 const OPERATION_PRELUDE = `(async () => { ${operationsTest.operationTools(explorerTest.PAGE_TOOLS)} `;
 
+/**
+ * Copie un fichier, ou un dossier avec tout son contenu, sans rien remplacer :
+ * un nom déjà pris est une erreur.
+ *
+ * `fs.cpSync` n'est pas employé : sous Windows, il décode les chemins dans la
+ * page de codes du système au lieu d'UTF-8, et arrête Node sans un message
+ * dès qu'un dossier à copier porte un accent (« Photos d'été »).
+ */
+function copyTree(source, target) {
+  if (!statSync(source).isDirectory()) {
+    copyFileSync(source, target, constants.COPYFILE_EXCL);
+    return;
+  }
+  mkdirSync(target);
+  for (const name of readdirSync(source)) copyTree(path.join(source, name), path.join(target, name));
+}
+
 /** Vrai pour un geste de l'auto-test des opérations : ni un état attendu, ni une demande directe à l'application. */
 const isGesture = (code) => code.startsWith(OPERATION_PRELUDE) && !code.includes('|| observed();') && !code.includes('window.evolve.files');
 
@@ -81,7 +98,6 @@ function simulateExplorer({ bin, after = () => {} }) {
   /** Dossier affiché, sélection, presse-papiers, fenêtre de dialogue ouverte, texte saisi. */
   const state = { folder: null, selection: [], clipboard: null, dialog: null, typed: '', bin };
   const here = (name) => path.join(state.folder, name);
-  const copyTo = (source, target) => cpSync(source, target, { recursive: true, force: false, errorOnExist: true });
   const keptName = (name) => `${name.slice(0, name.length - path.extname(name).length)} - Copie${path.extname(name)}`;
 
   const commands = {
@@ -93,7 +109,7 @@ function simulateExplorer({ bin, after = () => {} }) {
     paste: () => {
       if (state.clipboard.mode === 'cut') state.dialog = { kind: 'move' };
       else if (state.clipboard.items.some((item) => existsSync(here(path.basename(item))))) state.dialog = { kind: 'collision' };
-      else for (const item of state.clipboard.items) copyTo(item, here(path.basename(item)));
+      else for (const item of state.clipboard.items) copyTree(item, here(path.basename(item)));
     },
   };
   /** Réponses aux fenêtres de dialogue ; une saisie refusée laisse la fenêtre ouverte. */
@@ -102,8 +118,8 @@ function simulateExplorer({ bin, after = () => {} }) {
     rename: { confirm: () => (existsSync(here(state.typed)) ? 'open' : renameSync(here(state.selection[0]), here(state.typed))) },
     collision: {
       // « Ignorer » : seuls les éléments dont le nom est libre sont copiés ; « Conserver les deux » : les autres reçoivent un nouveau nom.
-      skip: () => state.clipboard.items.filter((item) => !existsSync(here(path.basename(item)))).forEach((item) => copyTo(item, here(path.basename(item)))),
-      'keep-both': () => state.clipboard.items.forEach((item) => copyTo(item, existsSync(here(path.basename(item))) ? here(keptName(path.basename(item))) : here(path.basename(item)))),
+      skip: () => state.clipboard.items.filter((item) => !existsSync(here(path.basename(item)))).forEach((item) => copyTree(item, here(path.basename(item)))),
+      'keep-both': () => state.clipboard.items.forEach((item) => copyTree(item, existsSync(here(path.basename(item))) ? here(keptName(path.basename(item))) : here(path.basename(item)))),
     },
     move: {
       confirm: () => {
@@ -1138,21 +1154,21 @@ test('opérations : un explorateur fautif fait échouer l’opération en cause 
     [
       '« Ignorer » remplace l’élément en place',
       (gesture) => gesture === 'dialogPress("skip")',
-      (state) => cpSync(state.clipboard.items[0], path.join(state.folder, ITEM.letter)),
+      (state) => copyFileSync(state.clipboard.items[0], path.join(state.folder, ITEM.letter)),
       OPERATIONS.collision,
       { etape: 'réponse « Ignorer »', disque: { manquants: [], inattendus: [], modifies: [`${ITEM.photos}/${ITEM.letter}`] } },
     ],
     [
       '« Ignorer » copie tout de même',
       (gesture) => gesture === 'dialogPress("skip")',
-      (state) => cpSync(state.clipboard.items[0], path.join(state.folder, ITEM.kept)),
+      (state) => copyFileSync(state.clipboard.items[0], path.join(state.folder, ITEM.kept)),
       OPERATIONS.collision,
       { etape: 'réponse « Ignorer »', disque: { manquants: [], inattendus: [`${ITEM.photos}/${ITEM.kept}`], modifies: [] } },
     ],
     [
       '« Conserver les deux » remplace l’élément en place',
       (gesture) => gesture === 'dialogPress("keep-both")',
-      (state) => cpSync(state.clipboard.items[0], path.join(state.folder, ITEM.letter)),
+      (state) => copyFileSync(state.clipboard.items[0], path.join(state.folder, ITEM.letter)),
       OPERATIONS.collision,
       { manquants: [], inattendus: [], modifies: [`${ITEM.photos}/${ITEM.letter}`] },
     ],
@@ -1166,7 +1182,7 @@ test('opérations : un explorateur fautif fait échouer l’opération en cause 
     [
       'renommer laisse l’ancien nom à côté du nouveau',
       (gesture, state, dialog) => dialog === 'rename' && state.typed === ITEM.renamed && gesture === 'dialogPress("confirm")',
-      (state) => cpSync(path.join(state.folder, ITEM.renamed), path.join(state.folder, ITEM.kept)),
+      (state) => copyFileSync(path.join(state.folder, ITEM.renamed), path.join(state.folder, ITEM.kept)),
       OPERATIONS.rename,
       { manquants: [], inattendus: [`${ITEM.photos}/${ITEM.kept}`], modifies: [] },
     ],
@@ -1187,7 +1203,7 @@ test('opérations : un explorateur fautif fait échouer l’opération en cause 
     [
       'le déplacement laisse l’original en place',
       (gesture, state, dialog) => dialog === 'move' && gesture === 'dialogPress("confirm")',
-      (state) => cpSync(path.join(state.folder, ITEM.picture), path.join(state.folder, '..', ITEM.photos, ITEM.picture)),
+      (state) => copyFileSync(path.join(state.folder, ITEM.picture), path.join(state.folder, '..', ITEM.photos, ITEM.picture)),
       OPERATIONS.move,
       { manquants: [], inattendus: [`${ITEM.photos}/${ITEM.picture}`], modifies: [] },
     ],
@@ -1433,13 +1449,16 @@ test('opérations sous Windows : chemins réseau et dossiers du système, « ren
   const refused = executed.filter((script) => script.includes('const ops = window.evolve.files;'))[1];
   const letter = path.join(work, 'Lettre à Zoé.txt');
   const relative = `${path.basename(path.dirname(work))}${path.sep}${WORKSHOP_NAME}${path.sep}Lettre à Zoé.txt`;
-  // Chacune de ces formes désigne la lettre de l'atelier, ou rien. (Ici, hors de Windows, l'atelier n'est
-  // pas sur un lecteur désigné par une lettre : « C » en tient lieu.)
+  // Chacune de ces formes désigne la lettre de l'atelier, ou rien. Sur une machine Windows, l'atelier est sur
+  // un lecteur désigné par une lettre (« C:\… ») ; ailleurs (« /tmp/… »), « C » en tient lieu.
+  const onDrive = /^[A-Za-z]:\\/.test(letter);
+  const drive = onDrive ? letter[0] : 'C';
+  const afterRoot = letter.slice(onDrive ? 3 : 1);
   for (const needle of [
-    `() => ops.rename(${JSON.stringify(`\\\\localhost\\C$\\${letter.slice(1)}`)}, 'x.txt'), "invalid-path"`,
+    `() => ops.rename(${JSON.stringify(`\\\\localhost\\${drive}$\\${afterRoot}`)}, 'x.txt'), "invalid-path"`,
     `() => ops.rename(${JSON.stringify(`\\\\?\\${letter}`)}, 'x.txt'), "invalid-path"`,
     `() => ops.trash([${JSON.stringify(`${letter}:flux`)}], { confirmed: true }), "invalid-path"`,
-    `() => ops.rename(${JSON.stringify(`C:${relative}`)}, 'x.txt'), "invalid-path"`,
+    `() => ops.rename(${JSON.stringify(`${drive}:${relative}`)}, 'x.txt'), "invalid-path"`,
     `() => ops.open(${JSON.stringify(`${work}\\NUL`)}), "invalid-path"`,
     // Chaque dossier du système présent sur la machine, par son emplacement réel et sous son propre nom.
     `await refusal("renommer le dossier du système %SystemRoot%", () => ops.rename(${JSON.stringify(realpathSync.native(folders.SystemRoot))}, "Windows"), "protected");`,

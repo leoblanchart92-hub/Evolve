@@ -449,6 +449,26 @@ test('chaque écriture sur le disque est inventoriée : les fichiers de l’util
   // (Le service de consultation ne retient du module de fichiers que quatre fonctions de lecture : voir tests/files.test.mjs.)
 });
 
+test('la copie récursive de Node (fs.cp, fs.cpSync) n’est employée nulle part : ni l’application, ni les scripts, ni les tests', () => {
+  // Sous Windows, cette fonction décode les chemins dans la page de codes du système au lieu d'UTF-8 : devant un
+  // dossier dont le nom porte un accent, elle arrête Node sur-le-champ, sans erreur ni message (nodejs/node#58768).
+  // Une copie se fait fichier par fichier (`copyFile`), dans des dossiers créés un à un (`mkdir`).
+  const uses = (code) => /\bcpSync\b|\b\w*[fF]s\s*(?:\.\s*promises\s*)?\.\s*cp\b|\bcp\s*(?:,|\}\s*(?:=|from))/.test(code);
+  assert.ok(uses("cpSync(a, b, { recursive: true })") && uses('await fs.promises.cp(a, b)') && uses("import { cp, rm } from 'node:fs/promises'") && uses('nodeFs.cp(a, b, done)'));
+  assert.ok(!uses("fs.copyFileSync(a, b); copyTree(a, b); const scp = 1; fs.cpus; 'cp returned EEXIST'"));
+
+  const sources = [
+    ...desktopFiles,
+    ...jsFiles,
+    ...listFiles(fromRoot('scripts'), ['.js', '.mjs', '.cjs']),
+    ...listFiles(fromRoot('tests'), ['.js', '.mjs', '.cjs']),
+  ];
+  assert.ok(sources.length >= 80, 'application, interface, scripts et tests');
+  // Ce fichier-ci est mis à part : il nomme la fonction pour la reconnaître.
+  const guilty = sources.filter((file) => relative(file) !== 'tests/project.test.mjs' && uses(stripComments(readFileSync(file, 'utf8')))).map(relative);
+  assert.deepEqual(guilty, []);
+});
+
 test('le moteur n’est interrogé que sur des emplacements qu’il ne crée pas, et n’écrit rien de lui-même', () => {
   const main = stripComments(readText('src/main/main.js'));
   // Emplacements demandés par leur nom : aucun dossier personnel (le moteur créerait « Documents »).
