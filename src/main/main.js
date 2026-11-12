@@ -14,7 +14,9 @@
  *     %APPDATA%\Evolve\settings.json, créé au premier réglage modifié ;
  *   - les dossiers de l'ordinateur sont consultés en lecture seule par
  *     l'explorateur de fichiers (service « files ») : Windows est seulement
- *     interrogé sur l'emplacement des dossiers personnels (Bureau, Documents…).
+ *     interrogé sur l'emplacement des dossiers personnels (Bureau, Documents…),
+ *     et aucun dossier n'est jamais créé — un dossier absent le reste
+ *     (voir personal-folders.js).
  *
  * Options de la ligne de commande : voir args.js.
  */
@@ -24,6 +26,7 @@ const path = require('node:path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
 
 const { parseArgs } = require('./args');
+const { personalFolders } = require('./personal-folders');
 const { createServices } = require('../services');
 const { settingsDir, settingsFile } = require('../services/platform');
 
@@ -105,19 +108,14 @@ function resolveSettingsFile() {
 /**
  * Dossiers personnels de l'utilisateur (Bureau, Documents, Téléchargements,
  * Images, Musique, Vidéos), tels que Windows les indique : ils peuvent avoir
- * été déplacés, vers OneDrive par exemple. Demandés une seule fois, à la
- * première ouverture de l'explorateur — jamais au démarrage.
+ * été déplacés, vers OneDrive par exemple. Demandés à la première ouverture
+ * de l'explorateur — jamais au démarrage — et sans que rien ne soit créé : un
+ * dossier absent est signalé comme introuvable. Il est seul redemandé aux
+ * recherches suivantes (`known` : emplacements déjà obtenus), au cas où il
+ * serait revenu.
  */
-function personalFolders() {
-  const folders = {};
-  for (const id of ['desktop', 'documents', 'downloads', 'pictures', 'music', 'videos']) {
-    try {
-      folders[id] = app.getPath(id);
-    } catch {
-      folders[id] = null; // dossier inconnu de Windows : signalé comme indisponible
-    }
-  }
-  return folders;
+function locatePersonalFolders(known) {
+  return personalFolders({ getPath: (name) => app.getPath(name), known });
 }
 
 /**
@@ -168,7 +166,7 @@ if (!hasLock) {
     settingsFile: resolveSettingsFile(),
     appVersion: app.getVersion(),
     // Explorateur de fichiers : dossiers personnels et lecteurs locaux, en lecture seule.
-    files: { places: personalFolders, drives: 'auto', fs: plainFileSystem() },
+    files: { places: locatePersonalFolders, drives: 'auto', fs: plainFileSystem() },
     log: (message) => console.warn(message),
   });
   // Événements des services : transmis à la fenêtre, sauf ceux qui découlent
@@ -333,6 +331,10 @@ async function start() {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     callback({ cancel: NETWORK_URL.test(details.url) });
   });
+
+  // Elle n'enregistre aucun fichier : un téléchargement, d'où qu'il vienne,
+  // est annulé avant que rien ne soit écrit sur le disque.
+  session.defaultSession.on('will-download', (event) => event.preventDefault());
 
   registerIpc();
   const win = createWindow();

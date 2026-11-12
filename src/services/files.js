@@ -184,10 +184,12 @@ function translate(error) {
 /**
  * @param {object} [options]
  * @param {string} [options.platform]  système visé (par défaut : celui en cours)
- * @param {Record<string, string|null> | (() => Record<string, string|null>)} [options.places]
+ * @param {Record<string, string|null> | ((known: Record<string, string|null>) => Record<string, string|null>)} [options.places]
  *        dossiers personnels connus de l'hôte : { desktop, documents, downloads,
- *        pictures, music, videos } — ou une fonction qui les renvoie, appelée à
- *        la première recherche des emplacements
+ *        pictures, music, videos } — ou une fonction qui les renvoie. Elle est
+ *        appelée à la première recherche des emplacements, puis à chaque
+ *        nouvelle recherche tant qu'un dossier reste sans emplacement : elle
+ *        reçoit ceux déjà obtenus, qui ne sont plus à redemander
  * @param {'auto'|string[]} [options.drives]  lecteurs autorisés. `'auto'` :
  *        les lecteurs locaux sont recherchés, et un dossier personnel n'est
  *        consulté que s'il se trouve sur l'un d'eux. Une liste les fixe.
@@ -210,7 +212,7 @@ function createFilesService({ platform = process.platform, places = {}, drives =
   /** Dernier état connu, pour les comptes rendus. */
   let known = { places: null, drives: null };
   let refreshing = null;
-  /** Dossiers personnels indiqués par l'hôte (demandés une seule fois). */
+  /** Dossiers personnels indiqués par l'hôte ; `null` tant qu'ils n'ont pas été demandés. */
   let givenPlaces = null;
 
   /** Lecteurs : dernière réponse de chacun (sa description, ou `null` s'il est absent). */
@@ -379,10 +381,34 @@ function createFilesService({ platform = process.platform, places = {}, drives =
     return pending;
   }
 
+  /** Vrai si l'hôte a indiqué un emplacement pour ce dossier personnel. */
+  const isLocated = (value) => typeof value === 'string' && value !== '';
+
+  /**
+   * Demande à l'hôte l'emplacement des dossiers personnels : tous à la
+   * première recherche ; ensuite, seulement ceux qu'il n'a pas su situer — un
+   * dossier absent peut être revenu (disque rebranché, dossier restauré). Un
+   * emplacement obtenu est conservé : il n'est plus redemandé de la session.
+   */
+  function askHost() {
+    const located = Object.fromEntries(PLACE_IDS.map((id) => [id, isLocated(givenPlaces?.[id]) ? givenPlaces[id] : null]));
+    if (givenPlaces && PLACE_IDS.every((id) => located[id] !== null)) return;
+    const found = { ...located };
+    try {
+      const answer = (typeof places === 'function' ? places({ ...located }) : places) ?? {};
+      for (const id of PLACE_IDS) {
+        if (found[id] === null && isLocated(answer[id])) found[id] = answer[id];
+      }
+    } catch {
+      /* hôte en panne : les dossiers non situés restent introuvables */
+    }
+    givenPlaces = found;
+  }
+
   /** Dossier personnel : chemin réel, ou `null` s'il est absent ou hors des lecteurs de cet ordinateur. */
   async function resolvePlace(id, driveList) {
     const given = givenPlaces?.[id];
-    if (typeof given !== 'string' || given === '') return { id, path: null };
+    if (!isLocated(given)) return { id, path: null };
     let candidate;
     try {
       candidate = checkPath(given);
@@ -400,13 +426,7 @@ function createFilesService({ platform = process.platform, places = {}, drives =
   /** Recherche les emplacements autorisés (dossiers personnels et lecteurs). */
   function refresh() {
     refreshing ??= (async () => {
-      if (givenPlaces === null) {
-        try {
-          givenPlaces = (typeof places === 'function' ? places() : places) ?? {};
-        } catch {
-          givenPlaces = {};
-        }
-      }
+      askHost();
       const driveList = await scanDrives();
       const placeList = await Promise.all(PLACE_IDS.map((id) => resolvePlace(id, driveList)));
       roots = [

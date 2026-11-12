@@ -158,6 +158,10 @@ test('un scénario particulier est nommé dans les titres ; le contrôle complet
   assert.match(found.annotation, /^Auto-test « réglages retrouvés » — node(\.exe)?$/);
   assert.equal(found.heading, "❌ Auto-test « réglages retrouvés » de l'exécutable : échec");
 
+  found = titles(['--self-test-scenario=documents-missing']);
+  assert.match(found.annotation, /^Auto-test « dossier Documents absent » — node(\.exe)?$/);
+  assert.equal(found.heading, "✅ Auto-test « dossier Documents absent » de l'exécutable : réussi");
+
   // Scénario inconnu de ce script : son nom est repris tel quel.
   assert.match(titles(['--self-test-scenario=autre']).annotation, /^Auto-test « autre » — node(\.exe)?$/);
   // Option répétée : la première compte, comme dans l'application.

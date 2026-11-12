@@ -191,6 +191,28 @@ test('aucune connexion réseau : seules les ressources locales sont chargées', 
   }
 });
 
+test('aucun fichier enregistré : tout téléchargement est annulé avant d’atteindre le disque', async () => {
+  const { state, window } = await launch();
+  assert.deepEqual([...state.sessionListeners.keys()], ['will-download'], 'seul événement de session écouté');
+
+  // Electron remet l'événement, le téléchargement et la page d'origine : il est annulé sans condition.
+  const item = {
+    saved: null,
+    setSavePath(target) {
+      this.saved = target;
+    },
+    setSaveDialogOptions() {
+      throw new Error('aucune boîte d’enregistrement ne doit être préparée');
+    },
+  };
+  for (const source of [window.webContents, new window.webContents.constructor(), undefined]) {
+    const event = cancellable();
+    state.sessionListeners.get('will-download')(event, item, source);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(item.saved, null, 'aucun emplacement d’enregistrement n’est choisi');
+  }
+});
+
 test('les données de travail vont dans le dossier temporaire ; sans réglage modifié, rien dans le profil', async () => {
   const { app, state, tempDir, window } = await launch();
   assert.equal(state.paths.userData, path.join(tempDir, 'Evolve'));
@@ -803,7 +825,8 @@ test('services : la fenêtre est prévenue des événements, sauf de ses propres
 /** Crée le faux profil de l'utilisateur : dossiers personnels et quelques fichiers. */
 function createProfile(tempDir, folders = ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Music', 'Videos']) {
   const profile = path.join(tempDir, 'profil');
-  for (const name of folders) mkdirSync(path.join(profile, name), { recursive: true });
+  mkdirSync(profile, { recursive: true });
+  for (const name of folders) mkdirSync(path.join(profile, name));
   if (folders.includes('Documents')) {
     mkdirSync(path.join(profile, 'Documents', 'Projets été'));
     writeFileSync(path.join(profile, 'Documents', 'Notes.txt'), 'bonjour');
@@ -826,20 +849,37 @@ function snapshotOf(folder) {
   return lines;
 }
 
-test('explorateur : les dossiers personnels ne sont demandés à Windows qu’à la première consultation, une seule fois', async () => {
+/**
+ * Ces tests exécutent le processus principal tel quel : le moteur imité suit
+ * donc le comportement du système de la machine qui les exécute (Windows sur
+ * la machine de compilation, un autre système en développement), et les
+ * attentes en dépendent. Les deux comportements sont aussi éprouvés côte à
+ * côte, quel que soit le système, par tests/personal-folders.test.mjs.
+ */
+const ON_WINDOWS = process.platform === 'win32';
+
+/**
+ * Emplacements que l'application demande au moteur pour situer les six dossiers
+ * personnels. Sous Windows, le système vérifie lui-même l'existence du dossier
+ * Documents ; ailleurs, le moteur le créerait : la question ne lui est pas
+ * posée (voir src/main/personal-folders.js).
+ */
+const ENGINE_REQUESTS = ON_WINDOWS ? ['desktop', 'documents', 'downloads', 'pictures', 'music', 'videos'] : ['desktop', 'home', 'downloads', 'pictures', 'music', 'videos'];
+
+test('explorateur : les dossiers personnels sont demandés au système à la première consultation ; ensuite, seuls ceux restés introuvables', async () => {
   const fake = await launch();
   const { state, tempDir } = fake;
   const profile = createProfile(tempDir, ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Music']);
   state.unknownFolders.push('music');
   const api = loadPreload(fake, fake.window.webContents);
 
-  // Démarrage, réglages : aucun dossier personnel n'est demandé (Electron peut en créer un au passage).
+  // Démarrage, réglages : aucun emplacement du compte n'est demandé au moteur.
   await api.services.call('settings', 'getAll');
   assert.deepEqual(state.pathRequests, []);
 
   const reply = await api.services.call('files', 'places');
   assert.equal(reply.ok, true);
-  assert.deepEqual(state.pathRequests, ['desktop', 'documents', 'downloads', 'pictures', 'music', 'videos']);
+  assert.deepEqual(state.pathRequests, ENGINE_REQUESTS);
   assert.deepEqual(reply.value.places, [
     { id: 'desktop', path: path.join(profile, 'Desktop'), available: true },
     { id: 'documents', path: path.join(profile, 'Documents'), available: true },
@@ -852,9 +892,132 @@ test('explorateur : les dossiers personnels ne sont demandés à Windows qu’à
   const { root } = path.parse(profile);
   assert.ok(reply.value.drives.some((drive) => drive.path.toLowerCase() === root.toLowerCase()), JSON.stringify(reply.value.drives));
 
-  await api.services.call('files', 'places');
+  // Consulter des dossiers ne demande rien de plus au moteur.
   await api.services.call('files', 'list', path.join(profile, 'Documents'));
-  assert.equal(state.pathRequests.length, 6, 'une seule demande par session');
+  await api.services.call('files', 'list', path.join(profile, 'Desktop'));
+  assert.equal(state.pathRequests.length, 6);
+
+  // Nouvelle recherche (« Actualiser ») : un emplacement obtenu n'est jamais redemandé ; seuls le sont les
+  // dossiers que le système n'a pas su situer. Sous Windows, un dossier absent du disque en fait partie.
+  const stillMissing = ON_WINDOWS ? ['music', 'videos'] : ['music'];
+  await api.services.call('files', 'places');
+  assert.deepEqual(state.pathRequests.slice(6), stillMissing);
+
+  // Le dossier Musique redevient connu du système : il est retrouvé à la recherche suivante, puis n'est plus demandé.
+  state.unknownFolders.length = 0;
+  const again = await api.services.call('files', 'places');
+  assert.deepEqual(again.value.places.find((place) => place.id === 'music'), { id: 'music', path: path.join(profile, 'Music'), available: true });
+  const before = state.pathRequests.length;
+  await api.services.call('files', 'places');
+  assert.deepEqual(state.pathRequests.slice(before), ON_WINDOWS ? ['videos'] : []);
+  assert.deepEqual(state.createdByEngine, [], 'le moteur n’a créé aucun dossier');
+});
+
+test('explorateur : un dossier Documents absent reste absent après son ouverture — rien n’est créé, nulle part', async () => {
+  const fake = await launch();
+  const { state, tempDir } = fake;
+  const profile = createProfile(tempDir, ['Desktop', 'Downloads', 'Pictures', 'Music', 'Videos']);
+  const documents = path.join(profile, 'Documents');
+  writeFileSync(path.join(profile, 'Desktop', 'Notes.txt'), 'bonjour');
+  // Tout ce que l'application peut atteindre ici : profil, dossier de configuration, dossier temporaire.
+  const before = snapshotOf(tempDir);
+  const api = loadPreload(fake, fake.window.webContents);
+
+  // Ouverture de l'explorateur : la page demande les emplacements. Documents est signalé absent.
+  const places = await api.services.call('files', 'places');
+  assert.equal(places.ok, true);
+  assert.deepEqual(
+    places.value.places.find((place) => place.id === 'documents'),
+    { id: 'documents', path: null, available: false },
+  );
+  assert.deepEqual(
+    places.value.places.filter((place) => place.available).map((place) => place.id),
+    ['desktop', 'downloads', 'pictures', 'music', 'videos'],
+  );
+  assert.equal(existsSync(documents), false, 'la recherche des emplacements n’a pas créé le dossier');
+
+  // Ouverture du dossier lui-même, désigné par son emplacement habituel : un refus, sans création.
+  for (const target of [documents, `${documents}${path.sep}`, path.join(documents, 'Projets')]) {
+    const reply = await api.services.call('files', 'list', target);
+    assert.deepEqual([reply.ok, reply.code], [false, 'not-found'], target);
+    assert.equal(existsSync(documents), false, target);
+  }
+
+  // La session continue : actualisations, consultation d'un autre dossier, fermeture.
+  await api.services.call('files', 'places');
+  const desktop = await api.services.call('files', 'list', path.join(profile, 'Desktop'));
+  assert.deepEqual(desktop.value.entries.map((item) => item.name), ['Notes.txt']);
+  await api.services.call('files', 'places');
+  fake.app.emit('will-quit');
+  await settle();
+
+  assert.equal(existsSync(documents), false, 'le dossier Documents est toujours absent');
+  assert.deepEqual(readdirSync(profile).sort(), ['Desktop', 'Downloads', 'Music', 'Pictures', 'Videos']);
+  assert.deepEqual(snapshotOf(tempDir), before, 'aucun fichier ni dossier créé, modifié ou supprimé');
+  assert.deepEqual(state.createdByEngine, [], 'le moteur n’a rien créé');
+  if (ON_WINDOWS) {
+    // Windows vérifie lui-même que le dossier existe : la question lui est posée à chaque recherche, sans effet.
+    assert.deepEqual(state.pathRequests, [...ENGINE_REQUESTS, 'documents', 'documents']);
+  } else {
+    // Ailleurs, le moteur créerait le dossier dès qu'on lui en demande l'emplacement : la question n'est jamais posée.
+    assert.deepEqual(state.pathRequests, ENGINE_REQUESTS);
+    assert.equal(state.pathRequests.includes('documents'), false);
+  }
+});
+
+test('explorateur : un dossier Documents absent, puis revenu, est retrouvé après une nouvelle recherche — sans avoir été créé par Evolve', async () => {
+  const fake = await launch();
+  const { state, tempDir } = fake;
+  const profile = createProfile(tempDir, ['Desktop', 'Downloads', 'Pictures', 'Music', 'Videos']);
+  const documents = path.join(profile, 'Documents');
+  const api = loadPreload(fake, fake.window.webContents);
+  const place = async () => (await api.services.call('files', 'places')).value.places.find((item) => item.id === 'documents');
+
+  assert.deepEqual(await place(), { id: 'documents', path: null, available: false });
+  assert.deepEqual(await place(), { id: 'documents', path: null, available: false });
+  assert.equal(existsSync(documents), false);
+  assert.deepEqual(state.createdByEngine, []);
+
+  // L'utilisateur remet lui-même son dossier en place (dossier restauré, disque rebranché).
+  mkdirSync(documents);
+  writeFileSync(path.join(documents, 'Notes.txt'), 'bonjour');
+  assert.deepEqual(await place(), { id: 'documents', path: documents, available: true });
+  const listing = await api.services.call('files', 'list', documents);
+  assert.deepEqual(listing.value.entries.map((item) => item.name), ['Notes.txt']);
+  assert.deepEqual(listing.value.root, { id: 'documents', kind: 'place', path: documents });
+
+  // Puis le retire de nouveau : signalé absent, et toujours pas recréé.
+  rmSync(documents, { recursive: true });
+  assert.deepEqual(await place(), { id: 'documents', path: null, available: false });
+  assert.equal((await api.services.call('files', 'list', documents)).code, 'not-found');
+  assert.equal(existsSync(documents), false);
+  assert.deepEqual(state.createdByEngine, [], 'le moteur n’a jamais rien créé');
+  assert.deepEqual(readdirSync(profile).sort(), ['Desktop', 'Downloads', 'Music', 'Pictures', 'Videos']);
+});
+
+test('explorateur : aucun dossier personnel sur l’ordinateur — tous signalés absents, aucun créé', async () => {
+  const fake = await launch();
+  const { state, tempDir } = fake;
+  const profile = createProfile(tempDir, []);
+  const before = snapshotOf(tempDir);
+  const api = loadPreload(fake, fake.window.webContents);
+
+  const places = await api.services.call('files', 'places');
+  assert.deepEqual(places.value.places.map((place) => [place.id, place.path, place.available]), [
+    ['desktop', null, false],
+    ['documents', null, false],
+    ['downloads', null, false],
+    ['pictures', null, false],
+    ['music', null, false],
+    ['videos', null, false],
+  ]);
+  for (const name of ['Desktop', 'Documents', 'Downloads', 'Pictures', 'Music', 'Videos']) {
+    const reply = await api.services.call('files', 'list', path.join(profile, name));
+    assert.deepEqual([reply.ok, reply.code], [false, 'not-found'], name);
+  }
+  assert.deepEqual(readdirSync(profile), [], 'le profil est resté vide');
+  assert.deepEqual(snapshotOf(tempDir), before);
+  assert.deepEqual(state.createdByEngine, []);
 });
 
 test('explorateur : la page consulte un dossier réel par le service de fichiers, sans rien y changer', async () => {

@@ -289,7 +289,7 @@ test('un dossier personnel déplacé est désigné par son emplacement réel (li
   assert.equal(places.find((place) => place.id === 'desktop').path, 'D:\\Jeux');
 });
 
-test('les dossiers personnels ne sont demandés à l’hôte qu’une fois, et seulement au premier besoin', async () => {
+test('les dossiers personnels ne sont demandés à l’hôte qu’au premier besoin, et une seule fois s’il les situe tous', async () => {
   let asked = 0;
   const { disk, service } = windowsService({
     places: () => {
@@ -310,8 +310,10 @@ test('les dossiers personnels ne sont demandés à l’hôte qu’une fois, et s
   assert.equal(asked, 1, 'une seule demande par session');
 
   // Hôte en panne : aucun dossier personnel, mais les lecteurs restent consultables.
+  let failures = 0;
   const broken = windowsService({
     places: () => {
+      failures += 1;
       throw new Error('Failed to get path');
     },
   });
@@ -319,6 +321,58 @@ test('les dossiers personnels ne sont demandés à l’hôte qu’une fois, et s
   assert.equal(found.places.filter((place) => place.available).length, 0);
   assert.equal(found.drives.length, 2);
   assert.equal((await broken.service.list('D:\\')).path, 'D:\\');
+  // Il est sollicité de nouveau à la recherche suivante — jamais par la simple consultation d'un dossier.
+  assert.equal(failures, 1);
+  await broken.service.places();
+  assert.equal(failures, 2);
+});
+
+test('un dossier personnel que l’hôte n’a pas su situer lui est redemandé à chaque nouvelle recherche, et lui seul', async () => {
+  // L'hôte ne situe pas « Documents » (absent du PC) ni « Musique », puis finit par situer « Documents ».
+  const answers = [
+    { ...WINDOWS_PLACES, documents: null, music: '' },
+    { documents: null, music: undefined, desktop: 'D:\\Jeux' }, // « desktop », déjà situé, n'est pas remplacé
+    { documents: WINDOWS_PLACES.documents, music: 42 },
+    { music: null },
+  ];
+  const received = [];
+  const { service } = windowsService({
+    places: (known) => {
+      received.push(known);
+      return answers[received.length - 1];
+    },
+  });
+  const state = async () => Object.fromEntries((await service.places()).places.map((place) => [place.id, place.path]));
+  const located = { desktop: WINDOWS_PLACES.desktop, downloads: WINDOWS_PLACES.downloads, pictures: WINDOWS_PLACES.pictures, videos: WINDOWS_PLACES.videos };
+
+  // Première recherche : rien n'est encore connu.
+  const first = await state();
+  assert.deepEqual(received[0], { desktop: null, documents: null, downloads: null, pictures: null, music: null, videos: null });
+  assert.deepEqual([first.documents, first.music, first.desktop], [null, null, WINDOWS_PLACES.desktop]);
+
+  // Consulter des dossiers ne redemande rien.
+  await service.list('C:\\Users');
+  await service.list(WINDOWS_PLACES.desktop);
+  assert.equal(received.length, 1);
+
+  // Deuxième recherche : l'hôte reçoit les emplacements déjà obtenus — « videos » compris, bien qu'absent du disque.
+  const second = await state();
+  assert.deepEqual(received[1], { ...located, documents: null, music: null });
+  assert.deepEqual([second.documents, second.desktop], [null, WINDOWS_PLACES.desktop]);
+
+  // Troisième recherche : « Documents » est revenu ; il devient consultable.
+  const third = await state();
+  assert.equal(third.documents, WINDOWS_PLACES.documents);
+  assert.equal(third.music, null, 'une réponse qui n’est pas un chemin est ignorée');
+  assert.equal((await service.list(WINDOWS_PLACES.documents)).root.id, 'documents');
+
+  // Quatrième recherche : seul « Musique » reste à situer.
+  await state();
+  assert.deepEqual(received[3], { ...located, documents: WINDOWS_PLACES.documents, music: null });
+  // Ce que l'hôte reçoit est une copie : la modifier ne change rien pour le service.
+  received[3].desktop = 'Z:\\Films';
+  assert.equal((await state()).desktop, WINDOWS_PLACES.desktop);
+  assert.equal(received.length, 5);
 });
 
 test('sans lecteur autorisé, seuls les dossiers personnels sont consultables', async () => {

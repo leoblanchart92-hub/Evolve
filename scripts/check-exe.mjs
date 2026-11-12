@@ -56,7 +56,7 @@ const fatalFile = path.join(outDir, 'fatal-error.log');
  * particulier est nommé dans les titres : plusieurs auto-tests du même
  * exécutable ne se confondent pas sur la page de la compilation.
  */
-const SCENARIO_NAMES = { 'settings-write': 'réglages modifiés', 'settings-read': 'réglages retrouvés' };
+const SCENARIO_NAMES = { 'settings-write': 'réglages modifiés', 'settings-read': 'réglages retrouvés', 'documents-missing': 'dossier Documents absent' };
 const SCENARIO_FLAG = '--self-test-scenario=';
 // Comme l'application : si l'option est répétée, la première compte.
 const scenario = (extraArgs.find((arg) => arg.startsWith(SCENARIO_FLAG)) ?? '').slice(SCENARIO_FLAG.length).trim();

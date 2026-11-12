@@ -18,6 +18,7 @@ import { fromRoot } from './helpers.mjs';
 const require = createRequire(import.meta.url);
 const { runSelfTest, countColors, DEFAULT_TIMINGS, DEFAULT_SCENARIO, MIN_CAPTURE_COLORS, WALLPAPER } = require('../src/main/selftest.js');
 const { CHANGED_SETTINGS, EXPECTED_SETTINGS } = require('../src/main/selftest-settings.js');
+const documentsTest = require('../src/main/selftest-documents.js');
 const explorerTest = require('../src/main/selftest-explorer.js');
 const { SETTINGS, defaultsOf } = require('../src/services/settings-schema.js');
 
@@ -906,3 +907,146 @@ test('scénarios des réglages : un réglage non retrouvé fait échouer le test
   assert.equal(second.code, 1);
   assert.deepEqual(failed(second.report), ['les réglages sont enregistrés dans un fichier']);
 });
+
+// ---------------------------------------------------------------------------------
+// Scénario « documents-missing » : un dossier Documents absent est annoncé, jamais créé
+// ---------------------------------------------------------------------------------
+
+/** Emplacements d'une machine dont le dossier Documents n'existe pas. */
+const WITHOUT_DOCUMENTS = Object.freeze({
+  places: [
+    { id: 'desktop', path: '/home/lea/Bureau', available: true },
+    { id: 'documents', path: null, available: false },
+    { id: 'downloads', path: '/home/lea/Téléchargements', available: true },
+    { id: 'pictures', path: null, available: false },
+    { id: 'music', path: '/home/lea/Musique', available: true },
+    { id: 'videos', path: null, available: false },
+  ],
+  drives: ['/'],
+});
+
+/** Vrai pour la première question du scénario : la liste des emplacements. */
+const asksPlaces = (script) => script.includes('reply.value.drives.map((drive) => drive.id)');
+
+/** Fausse fenêtre dont le service de fichiers répond `places` ; tout le reste est conforme, sauf `answer`. */
+const documentsWindow = (places = WITHOUT_DOCUMENTS, answer = () => true) =>
+  createWindow((script, webContents) => (asksPlaces(script) ? (typeof places === 'function' ? places() : places) : answer(script, webContents)));
+
+const DOCUMENTS_CHECKS = ["l'interface a démarré", ...Object.values(documentsTest.CHECKS)];
+
+test('scénario « documents-missing » : le dossier absent est ouvert par trois chemins, et le message attendu à chaque fois', async () => {
+  assert.equal(documentsTest.SCENARIO, 'documents-missing');
+  const win = documentsWindow();
+  const { code, report, outDir } = await run(win, FAST, { scenario: 'documents-missing' });
+  assert.equal(code, 0, JSON.stringify(report.checks));
+  assert.equal(report.scenario, 'documents-missing');
+  assert.deepEqual(report.checks.map((item) => item.name), DOCUMENTS_CHECKS);
+  assert.equal(new Set(DOCUMENTS_CHECKS).size, 9, 'intitulés tous différents');
+  assert.deepEqual(failed(report), []);
+  assert.deepEqual([report.errors, report.warnings], [[], []]);
+  assert.deepEqual(report.captures, ['01-documents-absent.png']);
+  // Les emplacements trouvés sont joints au rapport ; aucun dossier d'essai n'est créé pour ce scénario.
+  assert.deepEqual(report.explorer, { places: ['desktop', 'downloads', 'music'], drives: ['/'] });
+  assert.deepEqual(readdirSync(outDir).sort(), ['01-documents-absent.png', 'result.json']);
+
+  const { executed } = win.webContents;
+  for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
+
+  // Les gestes d'un utilisateur, dans l'ordre : explorateur, tuile, précédent, volet, « Ce PC », icône du bureau, actualiser, autre dossier.
+  const gestures = executed
+    .map((script) => script.slice(script.indexOf(documentsTest.NOTHING_CREATED) + 1 || 0))
+    .map((script) => {
+      if (script.includes(`.tb-app[data-app="explorer"]').click()`)) return 'explorateur';
+      if (script.includes(`exOpen('place:documents')`)) return 'tuile';
+      if (script.includes(`exButton('Précédent').click()`)) return 'précédent';
+      if (script.includes(`.ex-side[data-id="place:documents"]').click()`)) return 'volet';
+      if (script.includes(`.ex-side[data-id="pc"]').click()`)) return 'ce pc';
+      if (script.includes(`.desktop-icon[data-id="documents"]').dispatchEvent(new MouseEvent('dblclick'`)) return 'bureau';
+      if (script.includes(`exButton('Actualiser').click()`)) return 'actualiser';
+      if (script.includes(`.ex-side[data-id="place:desktop"]').click()`)) return 'autre dossier';
+      return null;
+    })
+    .filter(Boolean);
+  assert.deepEqual(gestures, ['explorateur', 'tuile', 'précédent', 'volet', 'ce pc', 'bureau', 'actualiser', 'autre dossier']);
+
+  // Le message attendu est contrôlé après chacun des trois chemins, puis après l'actualisation.
+  const expectations = executed.filter((script) => script.includes('return missing();') || script.includes('const shown = missing();'));
+  assert.ok(expectations.length >= 4, String(expectations.length));
+  for (const script of expectations) {
+    assert.ok(script.includes(JSON.stringify(documentsTest.MESSAGE_TITLE)) && script.includes(JSON.stringify(documentsTest.NOTHING_CREATED)));
+    assert.match(script, /state\.code === 'place-unavailable'/);
+    assert.match(script, /exItems\(\)\.length === 0/);
+  }
+
+  // Le scénario lui-même n'écrit rien : il ne demande au service que des emplacements et le contenu des autres dossiers.
+  const calls = executed.flatMap((script) => [...script.matchAll(/\bfiles\('(\w+)'|services\.call\('files', '(\w+)'/g)].map((match) => match[1] ?? match[2]));
+  assert.deepEqual([...new Set(calls)].sort(), ['list', 'places']);
+  assert.ok(!executed.some((script) => /services\.call\('settings'/.test(script)), 'aucun réglage touché');
+  // Seuls les dossiers présents sont consultés — jamais l'emplacement du dossier absent.
+  const listed = executed.find((script) => script.includes("files('list', place.path)"));
+  assert.ok(listed.includes('"/home/lea/Bureau"') && listed.includes('"/home/lea/Musique"') && !/documents/i.test(listed.slice(listed.indexOf('for (const place of'), listed.indexOf("files('list'"))));
+});
+
+test('scénario « documents-missing » : un dossier Documents présent — non mis de côté, ou recréé — fait échouer', async () => {
+  const present = { ...WITHOUT_DOCUMENTS, places: WITHOUT_DOCUMENTS.places.map((place) => (place.id === 'documents' ? { id: 'documents', path: '/home/lea/Documents', available: true } : place)) };
+  const win = documentsWindow(present);
+  const { code, report } = await run(win, FAST, { scenario: 'documents-missing' });
+  assert.equal(code, 1);
+  assert.deepEqual(failed(report), [documentsTest.CHECKS.absent]);
+  assert.deepEqual(report.checks.at(-1).value, { dossier: '/home/lea/Documents' });
+  assert.equal(report.errors.length, 1);
+  assert.match(report.errors[0], /^le dossier Documents existe sur cette machine \(\/home\/lea\/Documents\) : s'il avait été mis de côté avant ce lancement .* c'est qu'il vient d'être recréé/);
+  // Le scénario s'arrête là : aucun geste dans l'interface.
+  assert.ok(!win.webContents.executed.some((script) => /\.click\(\)|dispatchEvent/.test(script)));
+  assert.deepEqual(report.captures, []);
+});
+
+test('scénario « documents-missing » : seule une réponse sans emplacement pour Documents est admise', async () => {
+  const withPlace = (documents) => ({ ...WITHOUT_DOCUMENTS, places: WITHOUT_DOCUMENTS.places.map((place) => (place.id === 'documents' ? documents : place)) });
+  const unusable = [
+    true,
+    null,
+    'texte',
+    { refus: 'forbidden' },
+    { places: [], drives: [] },
+    { places: WITHOUT_DOCUMENTS.places.filter((place) => place.id !== 'documents'), drives: ['/'] },
+    withPlace({ id: 'documents', path: '/home/lea/Documents', available: false }), // chemin connu, bien que signalé indisponible
+    withPlace({ id: 'documents', path: null }),
+    withPlace({ id: 'documents', path: null, available: 'non' }),
+    () => {
+      throw new Error('panne');
+    },
+  ];
+  for (const answer of unusable) {
+    const win = documentsWindow(answer);
+    const { code, report } = await run(win, FAST, { scenario: 'documents-missing' });
+    assert.equal(code, 1, JSON.stringify(answer));
+    assert.deepEqual(failed(report), [documentsTest.CHECKS.absent], JSON.stringify(answer));
+    assert.equal(report.checks.length, 2, 'le scénario s’arrête à ce constat');
+    assert.ok(!win.webContents.executed.some((script) => /\.click\(\)|dispatchEvent/.test(script)));
+  }
+});
+
+test('scénario « documents-missing » : un dossier affiché à la place du message fait échouer, valeur observée à l’appui', async () => {
+  // L'explorateur affiche un dossier (vide) au lieu du message : exactement ce que donnerait un dossier recréé.
+  const observed = { page: 'folder', path: '/home/lea/Documents', message: 'Ce dossier est vide', elements: [], texte: null, fil: ['Ce PC', 'Documents'] };
+  const win = documentsWindow(WITHOUT_DOCUMENTS, (script) => (script.includes('return missing();') || script.includes('const shown = missing();') ? observed : true));
+  const { code, report } = await run(win, FAST, { scenario: 'documents-missing' });
+  assert.equal(code, 1);
+  assert.deepEqual(failed(report), [documentsTest.CHECKS.tile, documentsTest.CHECKS.sidebar, documentsTest.CHECKS.desktop, documentsTest.CHECKS.refresh]);
+  assert.deepEqual(report.checks.find((item) => !item.ok).value, observed);
+  // Les autres contrôles ont tout de même été menés.
+  assert.equal(report.checks.length, DOCUMENTS_CHECKS.length);
+});
+
+test('scénario « documents-missing » : sans autre dossier personnel, un avertissement remplace le dernier contrôle', async () => {
+  const alone = { places: WITHOUT_DOCUMENTS.places.map((place) => ({ id: place.id, path: null, available: false })), drives: [] };
+  const win = documentsWindow(alone);
+  const { code, report } = await run(win, FAST, { scenario: 'documents-missing' });
+  assert.equal(code, 0, JSON.stringify(report.checks));
+  assert.deepEqual(report.checks.map((item) => item.name), DOCUMENTS_CHECKS.slice(0, -1));
+  assert.deepEqual(report.warnings, ['aucun autre dossier personnel sur cette machine : leur consultation n’a pas été vérifiée']);
+  assert.ok(!win.webContents.executed.some((script) => script.includes("files('list'")));
+  assert.deepEqual(report.explorer, { places: [], drives: [] });
+});
+

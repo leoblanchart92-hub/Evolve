@@ -4,12 +4,16 @@
  * service de fichiers.
  */
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 import { LOCATION_IDS, Navigator, PLACES, driveName, locationKey, toLocation, visibleNodes } from '../src/renderer/js/apps/explorer-nav.js';
 import { FILE_TYPES, describeNode, extensionOf, isContainer, sortNodes } from '../src/renderer/js/core/file-types.js';
 import { ICON_NAMES } from '../src/renderer/js/core/icons.data.js';
 import { readText, stripComments } from './helpers.mjs';
+
+// Message que l'auto-test de la compilation attend devant un dossier Documents absent.
+const documentsTest = createRequire(import.meta.url)('../src/main/selftest-documents.js');
 
 const PROFILE = 'C:\\Users\\Léo';
 const DOCUMENTS = `${PROFILE}\\Documents`;
@@ -248,6 +252,91 @@ test('dossier personnel : désigné par son chemin réel, présenté sous son no
   assert.deepEqual([nav.page.kind, nav.page.code, nav.page.title, nav.page.active], ['error', 'place-unavailable', 'Musique', 'place:music']);
   assert.deepEqual(labels(nav.page), ['Ce PC', 'Musique']);
   assert.equal(files.calls.filter(([name]) => name === 'list').length, 1);
+});
+
+test('dossier personnel absent : un message le nomme et précise que rien n’est créé — aucune demande au service', async () => {
+  // Aucun des six dossiers n'existe sur cet ordinateur.
+  const known = { places: PLACES.map((place) => ({ id: place.id, path: null, available: false })), drives: KNOWN.drives };
+  const { nav, files } = createNavigator({ known });
+
+  for (const place of PLACES) {
+    await nav.open(place.id);
+    const { page } = nav;
+    assert.deepEqual([page.kind, page.code, page.title, page.active], ['error', 'place-unavailable', place.name, `place:${place.id}`]);
+    assert.deepEqual(labels(page), ['Ce PC', place.name]);
+    assert.deepEqual(page.sections, []);
+    assert.equal(page.location, undefined, 'aucun dossier réel n’est affiché');
+    assert.deepEqual(page.up, { type: 'page', id: 'pc' });
+
+    // Le message nomme le dossier, dit pourquoi il peut manquer, et que rien n'a été créé.
+    assert.equal(page.message.title, `Dossier « ${place.name} » introuvable`);
+    assert.ok(page.message.text.startsWith(`Windows n'indique aucun dossier « ${place.name} » sur cet ordinateur`), page.message.text);
+    assert.match(page.message.text, /supprimé ou déplacé/);
+    assert.match(page.message.text, /lecteur débranché ou sur le réseau/);
+    assert.match(page.message.text, /Evolve ne crée jamais de dossier à votre place : rien n'a été modifié\.$/);
+    assert.ok(ICON_NAMES.includes(page.message.glyph), page.message.glyph);
+    // C'est ce message que la compilation attend de l'exécutable lancé sans dossier Documents (scripts/check-documents.mjs).
+    if (place.id === 'documents') assert.equal(page.message.title, documentsTest.MESSAGE_TITLE);
+    assert.ok(page.message.text.includes(documentsTest.NOTHING_CREATED), page.message.text);
+  }
+  // L'interface n'a rien demandé d'autre au service que la liste des emplacements.
+  assert.deepEqual([...new Set(files.calls.map(([name]) => name))], ['places']);
+
+  // La navigation continue : précédent, dossier parent, puis l'accueil, où le dossier figure comme absent.
+  await nav.goBack();
+  assert.equal(nav.page.title, 'Téléchargements');
+  await nav.goUp();
+  assert.equal(nav.page.title, 'Ce PC');
+  await nav.open('home');
+  assert.deepEqual(nav.page.sections[0].nodes.map((node) => node.available), [false, false, false, false, false, false]);
+  // Actualiser l'accueil relance la recherche des emplacements — sans jamais rien demander d'autre.
+  await nav.refresh();
+  assert.deepEqual([...new Set(files.calls.map(([name]) => name))], ['places']);
+});
+
+test('dossier personnel disparu pendant la session : « Dossier introuvable », puis signalé absent après actualisation', async () => {
+  const { nav, files } = createNavigator();
+  await nav.open('documents');
+  assert.equal(nav.page.kind, 'folder');
+
+  // Le dossier est supprimé : sa lecture échoue, la recherche des emplacements ne le trouve plus.
+  files.failures[DOCUMENTS] = 'not-found';
+  await nav.refresh();
+  assert.deepEqual([nav.page.kind, nav.page.code, nav.page.message.title], ['error', 'not-found', 'Dossier introuvable']);
+
+  files.known = { ...KNOWN, places: KNOWN.places.map((place) => (place.id === 'documents' ? { id: 'documents', path: null, available: false } : place)) };
+  await nav.open('home');
+  await nav.open('documents');
+  assert.deepEqual([nav.page.kind, nav.page.code, nav.page.message.title], ['error', 'place-unavailable', 'Dossier « Documents » introuvable']);
+  // Aucune lecture n'est tentée pour un dossier que le système ne connaît plus.
+  assert.equal(files.calls.filter(([name, target]) => name === 'list' && target === DOCUMENTS).length, 2);
+});
+
+test('dossier personnel absent puis revenu : « Actualiser » l’affiche, et l’historique mène à son contenu', async () => {
+  const absent = { ...KNOWN, places: KNOWN.places.map((place) => (place.id === 'documents' ? { id: 'documents', path: null, available: false } : place)) };
+  const { nav, files } = createNavigator({ known: absent });
+  await nav.open('home');
+  assert.equal(nav.page.sections[0].nodes.find((node) => node.id === 'place:documents').available, false);
+  await nav.open('documents');
+  assert.deepEqual([nav.page.kind, nav.page.code], ['error', 'place-unavailable']);
+  // Actualiser tant qu'il est absent : le même message, sans aucune tentative de lecture.
+  await nav.refresh();
+  assert.deepEqual([nav.page.kind, nav.page.code], ['error', 'place-unavailable']);
+  assert.equal(files.calls.filter(([name]) => name === 'list').length, 0);
+
+  // Le dossier revient (dossier restauré, disque rebranché) : l'actualisation le trouve et affiche son contenu.
+  files.known = KNOWN;
+  await nav.refresh();
+  assert.deepEqual([nav.page.kind, nav.page.title, nav.page.location.path], ['folder', 'Documents', DOCUMENTS]);
+  assert.deepEqual(labels(nav.page), ['Ce PC', 'Documents']);
+  assert.ok(names(nav.page).includes('Projets'));
+
+  // « Précédent » ramène à l'accueil, où il n'est plus estompé ; « Suivant » revient à son contenu.
+  await nav.goBack();
+  assert.equal(nav.page.kind, 'home');
+  assert.equal(nav.page.sections[0].nodes.find((node) => node.id === 'place:documents').available, true);
+  await nav.goForward();
+  assert.deepEqual([nav.page.kind, nav.page.location.path], ['folder', DOCUMENTS]);
 });
 
 test('éléments d’un dossier : identifiant, nature, extension, taille, date, et destination des dossiers et des liens', async () => {

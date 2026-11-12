@@ -99,17 +99,27 @@ const ERRORS = Object.freeze({
     title: 'Emplacement indisponible',
     text: "Le lecteur n'est pas prêt ou n'a pas pu être lu. Vérifiez qu'il est branché, puis actualisez.",
   },
-  'place-unavailable': {
-    glyph: 'folder-open',
-    title: 'Dossier indisponible',
-    text: "Ce dossier personnel est introuvable sur cet ordinateur, ou il se trouve sur un emplacement réseau qu'Evolve ne consulte pas.",
-  },
   failed: {
     glyph: 'warning-circle',
     title: 'Lecture impossible',
     text: "Une erreur est survenue pendant la lecture de cet emplacement. Réessayez avec le bouton Actualiser.",
   },
 });
+
+/**
+ * Dossier personnel absent (Bureau, Documents…) : le message le nomme, explique
+ * pourquoi il peut manquer, et précise qu'Evolve ne l'a pas créé — l'explorateur
+ * est en lecture seule, un dossier absent le reste.
+ */
+function missingPlaceMessage(name) {
+  return {
+    glyph: 'folder-open',
+    title: `Dossier « ${name} » introuvable`,
+    text:
+      `Windows n'indique aucun dossier « ${name} » sur cet ordinateur : il a peut-être été supprimé ou déplacé, ` +
+      "ou il se trouve sur un lecteur débranché ou sur le réseau. Evolve ne crée jamais de dossier à votre place : rien n'a été modifié.",
+  };
+}
 
 const pageLocation = (id) => ({ type: 'page', id });
 const placeLocation = (id) => ({ type: 'place', id });
@@ -376,8 +386,8 @@ export class Navigator {
   async #read(location) {
     if (location.type === 'page') return this.#virtualPage(location);
     if (location.type === 'place') {
-      // Dossier personnel sans chemin connu : absent, ou hors de cet ordinateur.
-      return messagePage('error', location, ERRORS['place-unavailable'], { code: 'place-unavailable' });
+      // Dossier personnel sans chemin connu : absent, ou hors de cet ordinateur. Rien n'est créé.
+      return messagePage('error', location, missingPlaceMessage(PLACE_BY_ID.get(location.id).name), { code: 'place-unavailable' });
     }
     return this.#folderPage(await this.#files.list(location.path));
   }

@@ -16,13 +16,17 @@
  *   full             contrôle complet de l'interface (par défaut) ;
  *   settings-write   modifie des réglages depuis l'interface ;
  *   settings-read    vérifie, après un nouveau lancement, que l'interface les
- *                    a retrouvés (voir selftest-settings.js).
+ *                    a retrouvés (voir selftest-settings.js) ;
+ *   documents-missing  sur une machine dont le dossier Documents a été mis de
+ *                    côté : l'explorateur l'annonce comme introuvable, sans
+ *                    rien créer (voir selftest-documents.js).
  */
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { documentsScenarios } = require('./selftest-documents');
 const { checkExplorer } = require('./selftest-explorer');
 const { settingsScenarios } = require('./selftest-settings');
 
@@ -434,7 +438,11 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     }, t.total);
   });
 
-  const scenarios = { [DEFAULT_SCENARIO]: scenario, ...settingsScenarios({ begin, check, act, capture }) };
+  const scenarios = {
+    [DEFAULT_SCENARIO]: scenario,
+    ...settingsScenarios({ begin, check, act, capture }),
+    ...documentsScenarios({ begin, check, act, until, evaluate, record, capture, report }),
+  };
   // Un scénario inconnu est un échec : un test qui ne contrôle rien ne doit jamais réussir.
   const selected = Object.hasOwn(scenarios, scenarioName) ? scenarios[scenarioName] : null;
   if (!selected) report.errors.push(`scénario d'auto-test inconnu : ${scenarioName}`);

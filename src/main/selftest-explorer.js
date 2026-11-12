@@ -539,4 +539,4 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
   await until(`${PAGE_TOOLS} return exContent().dataset.page === 'pc' || exState();`);
 }
 
-module.exports = { checkExplorer, checkProtectedFolder, createFixture, snapshot, stepsTo, FIXTURE_DIR, FOLDER_NAME, VISIBLE_NAMES, DETAILED_FILE, ADDED_NAME, REMOVED_NAME, WRITE_METHODS };
+module.exports = { checkExplorer, checkProtectedFolder, createFixture, snapshot, stepsTo, PAGE_TOOLS, FIXTURE_DIR, FOLDER_NAME, VISIBLE_NAMES, DETAILED_FILE, ADDED_NAME, REMOVED_NAME, WRITE_METHODS };

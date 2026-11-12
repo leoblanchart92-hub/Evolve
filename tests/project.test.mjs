@@ -258,7 +258,7 @@ test('les textes affichés n’utilisent que des caractères présents dans les 
 
 test('les scripts de l’application de bureau existent', () => {
   assert.equal(pkg.main, 'src/main/main.js');
-  for (const file of ['main.js', 'preload.js', 'args.js', 'selftest.js', 'selftest-explorer.js', 'selftest-settings.js', 'status.js']) {
+  for (const file of ['main.js', 'preload.js', 'args.js', 'personal-folders.js', 'selftest.js', 'selftest-explorer.js', 'selftest-settings.js', 'selftest-documents.js', 'status.js']) {
     assert.ok(existsSync(fromRoot('src', 'main', file)), `src/main/${file}`);
   }
   const main = readText('src/main/main.js');
@@ -359,6 +359,97 @@ test('la fenêtre de l’application est isolée du système', () => {
     const code = stripComments(readText(source));
     assert.doesNotMatch(code, /\b(?:child_process|shell\.openExternal|shell\.openPath|registry|regedit|powerShell|exec\(|spawn\()/i, source);
   }
+});
+
+// --- Lecture seule : inventaire de ce qui peut écrire sur le disque --------------------
+
+/** Fonctions du module de fichiers de Node qui créent, modifient ou suppriment — nom sans ambiguïté. */
+const FS_WRITERS = [
+  'appendFile', 'appendFileSync', 'writeFile', 'writeFileSync', 'writeSync', 'writev', 'writevSync', 'createWriteStream',
+  'mkdirSync', 'mkdtemp', 'mkdtempSync', 'rmSync', 'rmdir', 'rmdirSync', 'unlink', 'unlinkSync', 'renameSync',
+  'copyFile', 'copyFileSync', 'cpSync', 'truncateSync', 'ftruncate', 'ftruncateSync',
+  'symlink', 'symlinkSync', 'linkSync', 'chmod', 'chmodSync', 'fchmod', 'fchmodSync', 'lchmod', 'lchmodSync',
+  'chown', 'chownSync', 'fchown', 'fchownSync', 'lchown', 'lchownSync', 'utimes', 'utimesSync', 'futimes', 'futimesSync',
+  'lutimes', 'lutimesSync', 'fsync', 'fsyncSync', 'fdatasync', 'fdatasyncSync', 'openSync',
+];
+/** Mêmes fonctions, au nom courant : reconnues seulement appelées sur un module de fichiers (`fs.mkdir`, `nodeFs.rm`…). */
+const FS_WRITERS_SHORT = ['mkdir', 'rm', 'cp', 'rename', 'link', 'open', 'write', 'truncate'];
+
+/** Fonctions d'écriture du module de fichiers employées par un texte de programme, triées. */
+function writersIn(code) {
+  const plain = [...code.matchAll(new RegExp(`\\b(${FS_WRITERS.join('|')})\\b`, 'g'))].map((match) => match[1]);
+  const short = [...code.matchAll(new RegExp(`\\b\\w*[fF]s\\s*(?:\\.\\s*promises\\s*)?\\.\\s*(${FS_WRITERS_SHORT.join('|')})\\b`, 'g'))].map((match) => match[1]);
+  return [...new Set([...plain, ...short])].sort();
+}
+
+test('lecture seule : chaque écriture sur le disque est inventoriée — aucune dans l’explorateur ni dans la recherche des dossiers', () => {
+  // La détection reconnaît bien les formes d'appel, sans se méprendre sur des mots voisins.
+  assert.deepEqual(
+    writersIn("fs.mkdir(dir); nodeFs.promises.rm(x); fs.writeFileSync(a, b); io.fs.rename(a, b); original_fs.open(f, 'w'); fs.truncate(f)"),
+    ['mkdir', 'open', 'rename', 'rm', 'truncate', 'writeFileSync'],
+  );
+  assert.deepEqual(writersIn("nav.open('documents'); const truncated = list.truncate; ['write', 'mkdir', 'rename']; el.querySelector('.truncate'); window.open(); fs.opendir(dir); fs.lstat(a)"), []);
+
+  // Fichier → fonctions d'écriture qu'il emploie. Tout autre fichier n'en emploie aucune.
+  const EXPECTED = {
+    // Journal d'erreur de l'auto-test (option --self-test) ; dossier de travail du moteur, dans le dossier temporaire.
+    'src/main/main.js': ['appendFileSync', 'mkdirSync'],
+    // Auto-test (option --self-test) : rapport et captures, dans le dossier de résultats.
+    'src/main/selftest.js': ['mkdirSync', 'writeFileSync'],
+    // Auto-test : dossier d'essai de l'explorateur, créé dans le dossier de résultats.
+    'src/main/selftest-explorer.js': ['mkdirSync', 'mkdtempSync', 'rmdirSync', 'utimesSync', 'writeFileSync'],
+    // Compte rendu de démarrage (option --status-file), pour la vérification du lancement.
+    'src/main/status.js': ['mkdirSync', 'renameSync', 'writeFileSync'],
+    // Fichier des réglages (%APPDATA%\Evolve\settings.json), écrit seulement après un réglage modifié.
+    'src/services/json-file.js': ['fsyncSync', 'mkdirSync', 'openSync', 'renameSync', 'rmSync', 'writeFileSync'],
+  };
+  const found = {};
+  for (const file of desktopFiles) {
+    const code = stripComments(readFileSync(file, 'utf8'));
+    // Le module de fichiers est toujours désigné en entier : ses fonctions ne sont ni extraites ni renommées.
+    assert.doesNotMatch(code, /\{[^}]*\}\s*=\s*require\(\s*'(?:node:)?fs(?:\/promises)?'\s*\)/, relative(file));
+    assert.doesNotMatch(code, /require\(\s*'(?:node:)?fs\/promises'\s*\)|\bfs\s*\[/i, relative(file));
+    const writers = writersIn(code);
+    if (writers.length) found[relative(file)] = writers;
+  }
+  assert.deepEqual(found, EXPECTED);
+
+  // En particulier : ni le service de fichiers, ni la recherche des dossiers personnels, ni le point d'accès aux services.
+  for (const name of ['src/services/files.js', 'src/main/personal-folders.js', 'src/main/selftest-documents.js', 'src/services/hub.js', 'src/services/index.js', 'src/main/preload.js']) {
+    assert.ok(desktopFiles.map(relative).includes(name) && !Object.hasOwn(found, name), name);
+  }
+  // (Le service de fichiers ne retient du module de fichiers que quatre fonctions de lecture : voir tests/files.test.mjs.)
+});
+
+test('lecture seule : le moteur n’est interrogé que sur des emplacements qu’il ne crée pas', () => {
+  const main = stripComments(readText('src/main/main.js'));
+  // Emplacements demandés par leur nom : aucun dossier personnel (le moteur créerait « Documents »).
+  const named = [...main.matchAll(/\bgetPath\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]).sort();
+  assert.deepEqual(named, ['appData', 'temp', 'userData']);
+  // Une seule autre demande : celle des dossiers personnels, confiée au module qui sait lesquels demander.
+  const others = [...main.matchAll(/\bgetPath\(\s*(?!')([^)]*)\)/g)].map((match) => match[1].trim());
+  assert.deepEqual(others, ['name']);
+  assert.match(main, /function locatePersonalFolders\(known\) \{\s*return personalFolders\(\{ getPath: \(name\) => app\.getPath\(name\), known \}\);\s*\}/);
+  assert.match(main, /files: \{ places: locatePersonalFolders,/);
+
+  // Aucun autre fichier ne s'adresse au moteur pour un emplacement.
+  const askers = desktopFiles.filter((file) => /\bgetPath\b/.test(stripComments(readFileSync(file, 'utf8')))).map(relative);
+  assert.deepEqual(askers, ['src/main/main.js', 'src/main/personal-folders.js']);
+  // Ni ne modifie un emplacement, hormis le dossier de travail du moteur, placé dans le dossier temporaire.
+  assert.deepEqual([...main.matchAll(/\bsetPath\(\s*'([^']+)'/g)].map((match) => match[1]), ['userData']);
+  assert.match(main, /const userData = path\.join\(app\.getPath\('temp'\),/);
+
+  // Fonctions d'Electron qui écrivent sur le disque ou dans Windows : aucune n'est employée.
+  for (const source of ['src/main/main.js', 'src/main/preload.js', 'src/main/personal-folders.js']) {
+    const code = stripComments(readText(source));
+    assert.doesNotMatch(
+      code,
+      /\b(?:shell|clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|trashItem|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath)\b/,
+      source,
+    );
+  }
+  // Et tout téléchargement est annulé.
+  assert.match(main, /session\.defaultSession\.on\('will-download', \(event\) => event\.preventDefault\(\)\);/);
 });
 
 test('la passerelle expose exactement ce que l’interface utilise', () => {
@@ -514,6 +605,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
     'check-exe.mjs --out=self-test-output/executable',
     'check-launch.mjs --out=self-test-output/lancement',
     'check-settings.mjs --out=self-test-output/reglages',
+    'check-documents.mjs --out=self-test-output/documents-absent',
     'path: dist/Evolve-*-portable.exe',
   ].map((needle) => {
     const index = workflowCode.indexOf(needle);
@@ -529,11 +621,18 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const lenient = steps.filter((step) => step.includes('continue-on-error: true'));
   assert.equal(lenient.length, 1);
   assert.match(lenient[0], /^Régler l'écran/);
-  assert.ok(!/check-exe|check-launch|check-settings|build:win|check:manifest|npm test/.test(lenient[0]));
+  assert.ok(!/check-exe|check-launch|check-settings|check-documents|build:win|check:manifest|npm test/.test(lenient[0]));
 
   // Les réglages sont éprouvés là où ils seront réellement rangés : %APPDATA%\Evolve.
   const settingsStep = steps.find((step) => step.includes('check-settings.mjs'));
   assert.match(settingsStep, /--settings-dir="\$APPDATA\/Evolve"/);
+
+  // Le dossier Documents absent est éprouvé sur l'exécutable produit, avec le véritable dossier du compte
+  // (aucun dossier d'essai) : la preuve porte sur le fichier distribué, tel que Windows le fait fonctionner.
+  const documentsStep = steps.find((step) => step.includes('check-documents.mjs'));
+  assert.match(documentsStep, /^Dossier Documents absent jamais recréé par l'exécutable portable\n/);
+  assert.ok(!/--folder|electron|continue-on-error|\bif:/.test(documentsStep), documentsStep);
+  assert.match(documentsStep, /timeout-minutes: \d+/);
 
   // La publication du .exe n'a pas de condition : elle n'a lieu que si tout a réussi.
   const publish = steps.find((step) => step.includes('path: dist/Evolve-*-portable.exe'));

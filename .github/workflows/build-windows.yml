@@ -108,6 +108,15 @@ jobs:
         timeout-minutes: 12
         run: bash scripts/ci-run.sh reglages-redemarrage node scripts/check-settings.mjs --out=self-test-output/reglages --settings-dir="$APPDATA/Evolve"
 
+      # L'explorateur est en lecture seule : il ne doit rien créer. Le dossier
+      # Documents du compte de cette machine est mis de côté (renommé) le
+      # temps d'un lancement : l'exécutable doit l'annoncer comme introuvable,
+      # et le script constate lui-même, sur le disque, que le dossier est
+      # toujours absent — avant de le remettre en place.
+      - name: Dossier Documents absent jamais recréé par l'exécutable portable
+        timeout-minutes: 8
+        run: bash scripts/ci-run.sh documents-absent node scripts/check-documents.mjs --out=self-test-output/documents-absent
+
       - name: Publier les rapports et les captures d'écran des vérifications
         if: always()
         uses: actions/upload-artifact@v7
