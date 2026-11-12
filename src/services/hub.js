@@ -33,6 +33,27 @@ class ServiceError extends Error {
 const failure = (code, message) => ({ ok: false, code, message });
 
 /**
+ * Exécute `task` et renvoie son résultat sous la forme commune à tous les
+ * services : `{ ok: true, value }`, ou `{ ok: false, code, message }` si le
+ * service refuse (`ServiceError`) ou rencontre une erreur imprévue — dont le
+ * détail est consigné, jamais transmis. Ne lève jamais d'exception.
+ * @param {() => any} task
+ * @param {object} [options]
+ * @param {(message: string) => void} [options.log]
+ * @param {string} [options.label]  ce qui est appelé, pour le journal
+ */
+async function reply(task, { log = () => {}, label = 'service' } = {}) {
+  try {
+    const value = await task();
+    return { ok: true, value: value === undefined ? null : value };
+  } catch (error) {
+    if (error instanceof ServiceError) return failure(error.code, error.message);
+    log(`Erreur du service ${label} : ${error?.stack ?? error}`);
+    return failure('failed', 'Le service a rencontré une erreur.');
+  }
+}
+
+/**
  * Vrai si `value` n'est faite que de données simples (nul, booléens, nombres
  * finis, textes, listes et objets ordinaires), dans les limites fixées.
  */
@@ -122,14 +143,7 @@ function createHub({ log = () => {} } = {}) {
       if (!Array.isArray(args) || args.length > LIMITS.args || !isPlainData(args)) {
         return failure('bad-arguments', 'Arguments refusés : seules des données simples, de taille raisonnable, sont admises.');
       }
-      try {
-        const value = await handler({ origin }, ...args);
-        return { ok: true, value: value === undefined ? null : value };
-      } catch (error) {
-        if (error instanceof ServiceError) return failure(error.code, error.message);
-        log(`Erreur du service ${name}.${method} : ${error?.stack ?? error}`);
-        return failure('failed', 'Le service a rencontré une erreur.');
-      }
+      return reply(() => handler({ origin }, ...args), { log, label: `${name}.${method}` });
     },
 
     /**
@@ -158,4 +172,4 @@ function createHub({ log = () => {} } = {}) {
   };
 }
 
-module.exports = { createHub, ServiceError, isPlainData, LIMITS };
+module.exports = { createHub, ServiceError, isPlainData, reply, LIMITS };

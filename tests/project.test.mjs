@@ -69,7 +69,7 @@ test('la page ne contient ni script en ligne ni gestionnaire d’événement en 
 
 test('la page est en français et déclare les calques attendus', () => {
   assert.match(html, /<html lang="fr">/);
-  for (const id of ['wallpaper', 'desktop', 'widgets', 'windows', 'flyouts', 'taskbar', 'menus', 'toasts', 'tooltip', 'screen-fx', 'boot']) {
+  for (const id of ['wallpaper', 'desktop', 'widgets', 'windows', 'flyouts', 'taskbar', 'dialogs', 'menus', 'toasts', 'tooltip', 'screen-fx', 'boot']) {
     assert.equal([...html.matchAll(new RegExp(`\\bid="${id}"`, 'g'))].length, 1, `élément #${id}`);
   }
 });
@@ -310,7 +310,7 @@ test('chaque module requis par l’application de bureau existe et est embarqué
     }
   }
   // La couche de services est bien reliée à l'application.
-  for (const name of ['src/services/index.js', 'src/services/settings.js', 'src/services/platform.js', 'src/services/files.js', 'src/main/selftest-explorer.js']) {
+  for (const name of ['src/services/index.js', 'src/services/settings.js', 'src/services/platform.js', 'src/services/files.js', 'src/services/file-operations.js', 'src/main/selftest-explorer.js']) {
     assert.ok(required.has(name), name);
   }
 });
@@ -354,14 +354,36 @@ test('la fenêtre de l’application est isolée du système', () => {
   assert.match(main, /webSecurity:\s*true/);
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
   assert.match(main, /'will-navigate'/);
-  // Aucune API d'accès au système n'est utilisée par l'application.
+  // Aucune API d'accès au système n'est utilisée par l'application : ni lancement de programme, ni registre,
+  // ni ouverture d'une adresse. (Seules exceptions, contrôlées plus bas : la Corbeille et l'ouverture d'un fichier.)
   for (const source of ['src/main/main.js', 'src/main/preload.js']) {
     const code = stripComments(readText(source));
-    assert.doesNotMatch(code, /\b(?:child_process|shell\.openExternal|shell\.openPath|registry|regedit|powerShell|exec\(|spawn\()/i, source);
+    assert.doesNotMatch(code, /\b(?:child_process|shell\.openExternal|registry|regedit|powerShell|exec\(|spawn\()/i, source);
+  }
+  // Le script de préchargement, lui, n'a accès à rien d'autre qu'aux canaux de communication.
+  assert.doesNotMatch(stripComments(readText('src/main/preload.js')), /\bshell\b|\bopenPath\b|\btrashItem\b/);
+});
+
+test('Windows n’est sollicité que pour deux gestes : envoyer à la Corbeille et ouvrir un fichier', () => {
+  const main = stripComments(readText('src/main/main.js'));
+  // Deux fonctions du module « shell », chacune appelée à un seul endroit.
+  assert.deepEqual([...main.matchAll(/\bshell\.(\w+)/g)].map((match) => match[1]).sort(), ['openPath', 'trashItem']);
+  assert.equal([...main.matchAll(/\bshell\b/g)].length, 3, 'une importation, deux appels');
+  // Chacune est enveloppée dans une fonction qui ne fait rien d'autre : ni option, ni repli.
+  assert.match(main, /function sendToRecycleBin\(location\) \{\s*return shell\.trashItem\(location\);\s*\}/);
+  assert.match(main, /function openWithAssociatedApp\(location\) \{\s*return shell\.openPath\(location\);\s*\}/);
+  // Ces deux fonctions ne sont remises qu'aux opérations sur les fichiers, qui contrôlent chaque chemin avant de s'en servir.
+  assert.equal([...main.matchAll(/\bsendToRecycleBin\b/g)].length, 2, 'une définition, un usage');
+  assert.equal([...main.matchAll(/\bopenWithAssociatedApp\b/g)].length, 2, 'une définition, un usage');
+  assert.match(main, /operations: \{ trash: sendToRecycleBin, openPath: openWithAssociatedApp \},/);
+  // Aucun autre fichier de l'application de bureau ne touche au module « shell ».
+  for (const file of desktopFiles) {
+    if (file.endsWith(path.join('main', 'main.js'))) continue;
+    assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /\bshell\b|\btrashItem\b|\bopenExternal\b|\bshowItemInFolder\b/, relative(file));
   }
 });
 
-// --- Lecture seule : inventaire de ce qui peut écrire sur le disque --------------------
+// --- Inventaire de ce qui peut écrire sur le disque ------------------------------------
 
 /** Fonctions du module de fichiers de Node qui créent, modifient ou suppriment — nom sans ambiguïté. */
 const FS_WRITERS = [
@@ -382,7 +404,7 @@ function writersIn(code) {
   return [...new Set([...plain, ...short])].sort();
 }
 
-test('lecture seule : chaque écriture sur le disque est inventoriée — aucune dans l’explorateur ni dans la recherche des dossiers', () => {
+test('chaque écriture sur le disque est inventoriée : les fichiers de l’utilisateur ne sont modifiés que par les opérations sur les fichiers', () => {
   // La détection reconnaît bien les formes d'appel, sans se méprendre sur des mots voisins.
   assert.deepEqual(
     writersIn("fs.mkdir(dir); nodeFs.promises.rm(x); fs.writeFileSync(a, b); io.fs.rename(a, b); original_fs.open(f, 'w'); fs.truncate(f)"),
@@ -398,8 +420,14 @@ test('lecture seule : chaque écriture sur le disque est inventoriée — aucune
     'src/main/selftest.js': ['mkdirSync', 'writeFileSync'],
     // Auto-test : dossier d'essai de l'explorateur, créé dans le dossier de résultats.
     'src/main/selftest-explorer.js': ['mkdirSync', 'mkdtempSync', 'rmdirSync', 'utimesSync', 'writeFileSync'],
+    // Auto-test : atelier des opérations, créé lui aussi dans le dossier de résultats — des dossiers, des fichiers,
+    // un lien. Rien qui déplace, remplace ou supprime : les opérations elles-mêmes sont demandées à l'application.
+    'src/main/selftest-operations.js': ['mkdirSync', 'symlinkSync', 'writeFileSync'],
     // Compte rendu de démarrage (option --status-file), pour la vérification du lancement.
     'src/main/status.js': ['mkdirSync', 'renameSync', 'writeFileSync'],
+    // Opérations sur les fichiers de l'utilisateur, à sa demande : créer un dossier, renommer ou déplacer, copier.
+    // Trois fonctions, dont aucune ne supprime ni ne remplace (voir tests/file-operations.test.mjs).
+    'src/services/file-operations.js': ['copyFile', 'mkdir', 'rename'],
     // Fichier des réglages (%APPDATA%\Evolve\settings.json), écrit seulement après un réglage modifié.
     'src/services/json-file.js': ['fsyncSync', 'mkdirSync', 'openSync', 'renameSync', 'rmSync', 'writeFileSync'],
   };
@@ -414,14 +442,14 @@ test('lecture seule : chaque écriture sur le disque est inventoriée — aucune
   }
   assert.deepEqual(found, EXPECTED);
 
-  // En particulier : ni le service de fichiers, ni la recherche des dossiers personnels, ni le point d'accès aux services.
+  // En particulier : ni le service de consultation, ni la recherche des dossiers personnels, ni le point d'accès aux services.
   for (const name of ['src/services/files.js', 'src/main/personal-folders.js', 'src/main/selftest-documents.js', 'src/services/hub.js', 'src/services/index.js', 'src/main/preload.js']) {
     assert.ok(desktopFiles.map(relative).includes(name) && !Object.hasOwn(found, name), name);
   }
-  // (Le service de fichiers ne retient du module de fichiers que quatre fonctions de lecture : voir tests/files.test.mjs.)
+  // (Le service de consultation ne retient du module de fichiers que quatre fonctions de lecture : voir tests/files.test.mjs.)
 });
 
-test('lecture seule : le moteur n’est interrogé que sur des emplacements qu’il ne crée pas', () => {
+test('le moteur n’est interrogé que sur des emplacements qu’il ne crée pas, et n’écrit rien de lui-même', () => {
   const main = stripComments(readText('src/main/main.js'));
   // Emplacements demandés par leur nom : aucun dossier personnel (le moteur créerait « Documents »).
   const named = [...main.matchAll(/\bgetPath\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]).sort();
@@ -439,14 +467,16 @@ test('lecture seule : le moteur n’est interrogé que sur des emplacements qu�
   assert.deepEqual([...main.matchAll(/\bsetPath\(\s*'([^']+)'/g)].map((match) => match[1]), ['userData']);
   assert.match(main, /const userData = path\.join\(app\.getPath\('temp'\),/);
 
-  // Fonctions d'Electron qui écrivent sur le disque ou dans Windows : aucune n'est employée.
+  // Fonctions d'Electron qui écrivent sur le disque ou dans Windows : aucune n'est employée — hormis l'envoi à la
+  // Corbeille et l'ouverture d'un fichier, deux appels du processus principal contrôlés par le test précédent.
   for (const source of ['src/main/main.js', 'src/main/preload.js', 'src/main/personal-folders.js']) {
     const code = stripComments(readText(source));
     assert.doesNotMatch(
       code,
-      /\b(?:shell|clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|trashItem|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath)\b/,
+      /\b(?:clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath|openExternal|showItemInFolder|beep)\b/,
       source,
     );
+    if (source !== 'src/main/main.js') assert.doesNotMatch(code, /\b(?:shell|trashItem|openPath)\b/, source);
   }
   // Et tout téléchargement est annulé.
   assert.match(main, /session\.defaultSession\.on\('will-download', \(event\) => event\.preventDefault\(\)\);/);
@@ -459,7 +489,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
 
   // Méthodes appelées par l'interface sur `window.evolve`.
   const used = new Set([...platform.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
-  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
+  assert.deepEqual([...used].sort(), ['files', 'isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
   for (const name of used) assert.match(preload, new RegExp(`\\b${name}:`), `preload.js n'expose pas ${name}`);
   assert.match(preload, /exposeInMainWorld\('evolve'/);
   assert.match(platform, /globalThis\.evolve/);
@@ -468,9 +498,20 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   const client = stripComments(readText('src/renderer/js/core/services.js'));
   const serviceUses = new Set([...client.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
   assert.deepEqual([...serviceUses].sort(), ['call', 'on']);
-  const exposedServices = preload.match(/\bservices: \{([\s\S]*)\n {2}\},\n\}\);/)?.[1];
+  const exposedServices = preload.match(/\bservices: \{([\s\S]*?)\n {2}\},\n/)?.[1];
   assert.ok(exposedServices, 'entrée « services » de preload.js non reconnue');
   assert.deepEqual([...exposedServices.matchAll(/^ {4}([A-Za-z]+): /gm)].map((match) => match[1]), ['call', 'on']);
+
+  // Opérations sur les fichiers : l'interface n'appelle que les huit fonctions exposées — dernière entrée de la passerelle.
+  const operationsClient = stripComments(readText('src/renderer/js/core/file-operations.js'));
+  const operationUses = new Set([...operationsClient.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
+  const FILE_FUNCTIONS = ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel', 'onProgress'];
+  assert.deepEqual([...operationUses].sort(), [...FILE_FUNCTIONS].sort());
+  const exposedFiles = preload.match(/\bfiles: \{([\s\S]*)\n {2}\},\n\}\);/)?.[1];
+  assert.ok(exposedFiles, 'entrée « files » de preload.js non reconnue');
+  assert.deepEqual([...exposedFiles.matchAll(/^ {4}([A-Za-z]+): /gm)].map((match) => match[1]), FILE_FUNCTIONS);
+  // Aucune de ces fonctions ne supprime définitivement, ne remplace, ne lit ni n'écrit un contenu.
+  assert.doesNotMatch(exposedFiles, /\b(?:delete|remove|unlink|erase|replace|overwrite|write|read|exec|run)[A-Za-z]*: /i);
 
   // Aucun autre module de l'interface ne touche à la passerelle.
   for (const file of jsFiles) {
@@ -482,6 +523,14 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   const channels = (code) => new Set([...code.matchAll(/'(evolve:[a-z-]+)'/g)].map((match) => match[1]));
   assert.deepEqual([...channels(preload)].sort(), [...channels(main)].sort());
   assert.deepEqual([...channels(preload)].sort(), [
+    'evolve:files-cancel',
+    'evolve:files-copy',
+    'evolve:files-create-folder',
+    'evolve:files-move',
+    'evolve:files-open',
+    'evolve:files-progress',
+    'evolve:files-rename',
+    'evolve:files-trash',
     'evolve:fullscreen-changed',
     'evolve:is-fullscreen',
     'evolve:quit',
@@ -489,7 +538,23 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
     'evolve:service-event',
     'evolve:toggle-fullscreen',
   ]);
-  // Aucun service n'ouvre son propre canal : tout passe par le point d'accès.
+  // Opérations sur les fichiers : un canal par opération, écrit en toutes lettres des deux côtés, une seule fois.
+  // La page ne choisit jamais un canal : aucun nom de canal n'est calculé.
+  for (const channel of [...channels(preload)].filter((name) => name.startsWith('evolve:files-'))) {
+    assert.equal(preload.split(`'${channel}'`).length - 1, channel === 'evolve:files-progress' ? 2 : 1, `preload.js : ${channel}`);
+    assert.equal(main.split(`'${channel}'`).length - 1, 1, `main.js : ${channel}`);
+  }
+  const requested = [...preload.matchAll(/\bipcRenderer\.(?:invoke|send|on|removeListener)\(\s*([^,)]+)/g)].map((match) => match[1].trim());
+  assert.ok(requested.length >= 14);
+  for (const name of requested) assert.match(name, /^'evolve:[a-z-]+'$/, `canal calculé : ${name}`);
+  const handled = [...main.matchAll(/\bipcMain\.(?:handle|on)\(\s*([^,)]+)/g)].map((match) => match[1].trim());
+  assert.equal(handled.length, 11);
+  for (const name of handled) assert.match(name, /^'evolve:[a-z-]+'$/, `canal calculé : ${name}`);
+  // Chaque demande d'opération est refusée si elle ne vient pas de la fenêtre de l'application.
+  const guarded = [...main.matchAll(/ipcMain\.handle\('evolve:files-[a-z-]+', \(event(?:, [a-z, ]+)?\) => \(trusted\(event\) \? services\.fileOperations\.(\w+)\(/g)].map((match) => match[1]);
+  assert.deepEqual(guarded, ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel']);
+  assert.match(main, /const trusted = \(event\) => fromMainWindow\(event\) && Boolean\(services\);/);
+  // Aucun service n'ouvre son propre canal : la communication avec la page n'appartient qu'au processus principal.
   for (const file of desktopFiles) {
     if (/[\\/]main[\\/](?:main|preload)\.js$/.test(file)) continue;
     assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /'evolve:[a-z-]+'|\bipc(?:Main|Renderer)\b/, relative(file));

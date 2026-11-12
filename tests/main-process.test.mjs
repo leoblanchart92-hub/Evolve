@@ -2,11 +2,12 @@
  * Processus principal de l'application de bureau (src/main/main.js) et script
  * de préchargement, exécutés avec un faux module « electron »
  * (tests/fixtures/fake-electron.cjs) : fenêtre, sécurité, raccourcis, canaux
- * de communication, instance unique, auto-test, services, réglages et
- * consultation des dossiers.
+ * de communication, instance unique, auto-test, services, réglages,
+ * consultation des dossiers et opérations sur les fichiers.
  */
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -343,14 +344,18 @@ test('F12 : outils de développement seulement sur demande (--devtools) ou en d�
 // Passerelle entre l'interface et l'application
 // ---------------------------------------------------------------------------------
 
-test('passerelle : seules six entrées sont exposées à la page', async () => {
+test('passerelle : seules sept entrées sont exposées à la page', async () => {
   const fake = await launch();
   const api = loadPreload(fake, fake.window.webContents);
   assert.deepEqual(Object.keys(fake.state.exposed), ['evolve']);
-  assert.deepEqual(Object.keys(api).sort(), ['isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
+  assert.deepEqual(Object.keys(api).sort(), ['files', 'isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
   assert.equal(api.isDesktopApp, true);
   // Les services ne sont joignables que par leur nom : appeler une méthode, écouter un événement.
   assert.deepEqual(Object.keys(api.services).sort(), ['call', 'on']);
+  // Les opérations sur les fichiers : six demandes, l'arrêt d'une opération et son avancement. Rien d'autre —
+  // ni suppression définitive, ni remplacement, ni lecture ou écriture du contenu d'un fichier.
+  assert.deepEqual(Object.keys(api.files), ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel', 'onProgress']);
+  for (const entry of Object.values(api.files)) assert.equal(typeof entry, 'function');
 });
 
 test('passerelle : plein écran et fermeture', async () => {
@@ -397,7 +402,18 @@ test('passerelle : les messages d’une autre page sont ignorés', async () => {
   assert.deepEqual(await api.services.call('settings', 'get', 'quick.volume'), { ok: true, value: 64 });
 
   assert.deepEqual([...state.ipcListeners.keys()], ['evolve:quit']);
-  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:service-call', 'evolve:toggle-fullscreen']);
+  assert.deepEqual([...state.ipcHandlers.keys()].sort(), [
+    'evolve:files-cancel',
+    'evolve:files-copy',
+    'evolve:files-create-folder',
+    'evolve:files-move',
+    'evolve:files-open',
+    'evolve:files-rename',
+    'evolve:files-trash',
+    'evolve:is-fullscreen',
+    'evolve:service-call',
+    'evolve:toggle-fullscreen',
+  ]);
 });
 
 // ---------------------------------------------------------------------------------
@@ -1065,4 +1081,598 @@ test('explorateur : les événements d’une autre page n’atteignent pas le se
   const reply = await api.services.call('files', 'list', path.join(profile, 'Documents'));
   assert.equal(reply.ok, false);
   assert.deepEqual(fake.state.pathRequests, [], 'aucun dossier n’a été recherché pour elle');
+});
+
+// ---------------------------------------------------------------------------------
+// Explorateur : opérations sur les fichiers
+// ---------------------------------------------------------------------------------
+
+/** Empreinte du contenu d'un fichier. */
+const digestOf = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+
+/**
+ * Lance l'application pour un essai d'opérations sur de vrais fichiers, dans
+ * un faux profil placé dans le dossier temporaire.
+ *
+ * Sous Windows, le dossier temporaire se trouve dans « AppData », que les
+ * opérations préservent (dossier du système) : le temps de l'essai, les
+ * variables qui le désignent pointent vers le « AppData » du faux profil.
+ */
+async function launchForOperations(options = {}) {
+  const tempDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'evolve-main-')));
+  const appData = path.join(tempDir, 'profil', 'AppData');
+  const fake = await launch({ ...options, tempDir, env: { APPDATA: path.join(appData, 'Roaming'), LOCALAPPDATA: path.join(appData, 'Local'), ...options.env } });
+  const profile = createProfile(tempDir);
+  const documents = path.join(profile, 'Documents');
+  const api = loadPreload(fake, fake.window.webContents);
+  return { fake, state: fake.state, tempDir, profile, documents, api, files: api.files };
+}
+
+test('opérations : la page crée, renomme, copie, déplace, ouvre et envoie à la Corbeille de vrais fichiers', async () => {
+  const { state, profile, documents, files } = await launchForOperations();
+  const notes = path.join(documents, 'Notes.txt');
+  const original = digestOf(notes);
+
+  // Nouveau dossier.
+  const created = await files.createFolder(documents, 'Factures été 2026');
+  assert.deepEqual(created, { ok: true, value: { path: path.join(documents, 'Factures été 2026'), name: 'Factures été 2026' } });
+  assert.ok(statSync(created.value.path).isDirectory());
+  assert.deepEqual(readdirSync(created.value.path), []);
+
+  // Renommer.
+  const renamed = await files.rename(notes, "Notes de l'été.txt");
+  assert.deepEqual(renamed, { ok: true, value: { path: path.join(documents, "Notes de l'été.txt"), name: "Notes de l'été.txt" } });
+  assert.equal(existsSync(notes), false);
+  assert.equal(digestOf(renamed.value.path), original, 'contenu inchangé');
+
+  // Copier dans un autre dossier : l'original reste, la copie est identique.
+  const copied = await files.copy([renamed.value.path], created.value.path, { operation: 'essai-copie' });
+  assert.equal(copied.ok, true);
+  assert.deepEqual(copied.value.done, [{ source: renamed.value.path, name: "Notes de l'été.txt", path: path.join(created.value.path, "Notes de l'été.txt") }]);
+  assert.deepEqual([copied.value.status, copied.value.failed, copied.value.skipped, copied.value.cancelled], ['done', [], [], false]);
+  assert.equal(digestOf(copied.value.done[0].path), original);
+  assert.equal(digestOf(renamed.value.path), original);
+
+  // Déplacer : confirmation exigée, puis l'élément change de dossier.
+  const desktop = path.join(profile, 'Desktop');
+  const unconfirmed = await files.move([renamed.value.path], desktop);
+  assert.deepEqual([unconfirmed.ok, unconfirmed.code], [false, 'needs-confirmation']);
+  assert.equal(existsSync(renamed.value.path), true, 'rien n’a bougé sans confirmation');
+  const moved = await files.move([renamed.value.path], desktop, { confirmed: true });
+  assert.equal(moved.ok, true);
+  assert.equal(moved.value.done[0].path, path.join(desktop, "Notes de l'été.txt"));
+  assert.equal(existsSync(renamed.value.path), false);
+  assert.equal(digestOf(moved.value.done[0].path), original);
+
+  // Ouvrir : le fichier est confié à l'application associée — par son chemin réel, et rien d'autre.
+  const opened = await files.open(moved.value.done[0].path);
+  assert.deepEqual(opened, { ok: true, value: { opened: true, path: moved.value.done[0].path, name: "Notes de l'été.txt" } });
+  assert.deepEqual(state.opened, [moved.value.done[0].path]);
+
+  // Envoyer à la Corbeille : confirmation exigée ; l'élément quitte son dossier pour la Corbeille, il n'est pas détruit.
+  const refused = await files.trash([moved.value.done[0].path]);
+  assert.deepEqual([refused.ok, refused.code], [false, 'needs-confirmation']);
+  assert.deepEqual(state.trashed, []);
+  const trashed = await files.trash([moved.value.done[0].path, created.value.path], { confirmed: true });
+  assert.equal(trashed.ok, true);
+  assert.deepEqual(trashed.value.done.map((item) => item.name), ["Notes de l'été.txt", 'Factures été 2026']);
+  assert.deepEqual(state.trashed.map((item) => item.from), [moved.value.done[0].path, created.value.path]);
+  assert.equal(existsSync(moved.value.done[0].path), false);
+  assert.equal(existsSync(created.value.path), false);
+  assert.equal(digestOf(state.trashed[0].to), original, 'le fichier est intact dans la Corbeille');
+  assert.equal(digestOf(path.join(state.trashed[1].to, "Notes de l'été.txt")), original, 'le dossier y est avec son contenu');
+
+  // À la fin : Documents ne contient plus que son dossier d'origine, le Bureau est vide.
+  assert.deepEqual(readdirSync(documents), ['Projets été']);
+  assert.deepEqual(readdirSync(desktop), []);
+});
+
+test('opérations : rien n’est jamais remplacé — nom déjà pris à la création, au renommage, à la copie et au déplacement', async () => {
+  const { profile, documents, files } = await launchForOperations();
+  const notes = path.join(documents, 'Notes.txt');
+  const desktop = path.join(profile, 'Desktop');
+  writeFileSync(path.join(desktop, 'Notes.txt'), 'AUTRE contenu, à ne jamais remplacer');
+  writeFileSync(path.join(documents, 'Rapport.txt'), 'rapport');
+  const before = snapshotOf(profile);
+  const other = digestOf(path.join(desktop, 'Notes.txt'));
+
+  assert.equal((await files.createFolder(documents, 'Projets été')).code, 'collision');
+  assert.equal((await files.createFolder(documents, 'Notes.txt')).code, 'collision');
+  assert.equal((await files.rename(notes, 'Rapport.txt')).code, 'collision');
+
+  // Copie et déplacement : sans choix de l'utilisateur, la question est renvoyée et rien n'est modifié.
+  for (const [kind, choices] of [['copy', {}], ['move', { confirmed: true }]]) {
+    const asked = await files[kind]([notes], desktop, choices);
+    assert.equal(asked.ok, true, kind);
+    assert.deepEqual([asked.value.status, asked.value.collisions, asked.value.count], ['collisions', [{ source: notes, name: 'Notes.txt' }], 1], kind);
+    // « Remplacer » n'est pas un choix possible.
+    for (const onCollision of ['replace', 'overwrite', 'force', true]) {
+      assert.equal((await files[kind]([notes], desktop, { ...choices, onCollision })).code, 'bad-arguments', `${kind} ${onCollision}`);
+    }
+    // « Ignorer » : l'élément est laissé de côté.
+    const skipped = await files[kind]([notes], desktop, { ...choices, onCollision: 'skip' });
+    assert.deepEqual([skipped.value.done, skipped.value.skipped], [[], [{ source: notes, name: 'Notes.txt', reason: 'collision' }]], kind);
+  }
+  assert.deepEqual(snapshotOf(profile), before, 'rien n’a été créé, modifié ni supprimé');
+
+  // « Conserver les deux » : la copie reçoit un nouveau nom, l'élément en place est intact.
+  const kept = await files.copy([notes], desktop, { onCollision: 'keep-both' });
+  assert.equal(kept.value.done[0].path, path.join(desktop, 'Notes - Copie.txt'));
+  assert.equal(digestOf(path.join(desktop, 'Notes.txt')), other);
+  assert.equal(readFileSync(path.join(desktop, 'Notes - Copie.txt'), 'utf8'), 'bonjour');
+  assert.equal(readFileSync(notes, 'utf8'), 'bonjour');
+});
+
+test('opérations : si la Corbeille ne peut pas recevoir un élément, il reste à sa place — aucune suppression définitive', async () => {
+  const { state, profile, documents, files } = await launchForOperations();
+  const notes = path.join(documents, 'Notes.txt');
+  const before = snapshotOf(profile);
+  // Windows abandonne l'opération (lecteur sans Corbeille, élément trop volumineux…).
+  state.recycleBin = false;
+
+  const reply = await files.trash([notes, path.join(documents, 'Projets été')], { confirmed: true });
+  assert.equal(reply.ok, true);
+  assert.deepEqual(reply.value.done, []);
+  assert.deepEqual(reply.value.failed.map((item) => [item.name, item.code]), [['Notes.txt', 'trash-failed'], ['Projets été', 'trash-failed']]);
+  assert.match(reply.value.failed[0].message, /n'a pas été supprimé et reste à sa place/);
+  assert.deepEqual(snapshotOf(profile), before);
+  assert.equal(readFileSync(notes, 'utf8'), 'bonjour');
+  assert.deepEqual(state.trashed, []);
+
+  // Un déplacement, lui, ne passe jamais par la Corbeille quand il reste sur le même lecteur.
+  const moved = await files.move([notes], path.join(profile, 'Desktop'), { confirmed: true });
+  assert.equal(moved.value.done.length, 1);
+  assert.equal(readFileSync(path.join(profile, 'Desktop', 'Notes.txt'), 'utf8'), 'bonjour');
+});
+
+test('opérations : un programme ou un script n’est ouvert qu’après confirmation ; un échec de Windows est signalé', async () => {
+  const { state, documents, files } = await launchForOperations();
+  const script = path.join(documents, 'Installer.cmd');
+  writeFileSync(script, '@echo off\r\n');
+  const notes = path.join(documents, 'Notes.txt');
+
+  const asked = await files.open(script);
+  assert.deepEqual([asked.ok, asked.code], [false, 'needs-confirmation']);
+  assert.match(asked.message, /exécute du code sur cet ordinateur/);
+  assert.equal((await files.open(script, { confirmed: false })).code, 'needs-confirmation');
+  assert.deepEqual(state.opened, [], 'rien n’a été confié à Windows');
+  assert.equal((await files.open(script, { confirmed: true })).ok, true);
+  assert.deepEqual(state.opened, [script]);
+
+  // Sûr par défaut : un type de fichier inconnu, un fichier sans extension et un script nommé « .cmd »
+  // ne sont pas ouverts sans confirmation non plus.
+  for (const [name, wording] of [['Données.xyz', /ne connaît pas ce type de fichier/], ['SANS EXTENSION', /ne connaît pas ce type de fichier/], ['.cmd', /exécute du code sur cet ordinateur/]]) {
+    writeFileSync(path.join(documents, name), 'essai');
+    const reply = await files.open(path.join(documents, name));
+    assert.deepEqual([reply.ok, reply.code], [false, 'needs-confirmation'], name);
+    assert.match(reply.message, wording, name);
+  }
+  assert.deepEqual(state.opened, [script], 'rien d’autre n’a été confié à Windows');
+
+  // Un dossier ne s'ouvre pas ainsi ; un élément absent non plus.
+  assert.equal((await files.open(path.join(documents, 'Projets été'))).code, 'not-a-file');
+  assert.equal((await files.open(path.join(documents, 'Introuvable.txt'))).code, 'not-found');
+  // Windows ne sait pas ouvrir ce fichier : l'échec est rapporté, sans détail du système.
+  state.openResult = 'Failed to open path';
+  assert.deepEqual(await files.open(notes), { ok: false, code: 'open-failed', message: "Windows n'a pas pu ouvrir ce fichier : aucune application ne lui est peut-être associée." });
+  assert.deepEqual(state.opened, [script, notes]);
+});
+
+test('opérations : les emplacements de base, les chemins hors de l’ordinateur et les noms interdits sont refusés avant tout accès', async () => {
+  const { state, profile, documents, files, tempDir } = await launchForOperations();
+  const notes = path.join(documents, 'Notes.txt');
+  const projects = path.join(documents, 'Projets été');
+  mkdirSync(path.join(projects, 'Sous-dossier'));
+  // « AppData » du faux profil : désigné par les variables APPDATA et LOCALAPPDATA le temps de l'essai.
+  const appData = path.join(profile, 'AppData');
+  mkdirSync(path.join(appData, 'Local', 'Programme'), { recursive: true });
+  // Lien vers le dossier du profil (jonction sous Windows : aucun droit particulier n'est nécessaire).
+  symlinkSync(profile, path.join(profile, 'Détour'), 'junction');
+  const before = snapshotOf(tempDir);
+  const code = async (pending) => {
+    const reply = await pending;
+    return reply.ok ? 'accepté' : reply.code;
+  };
+  const { root } = path.parse(profile);
+
+  // Un dossier personnel et un lecteur ne se renomment pas, ne se déplacent pas, ne se suppriment pas.
+  assert.equal(await code(files.rename(documents, 'Mes documents')), 'protected');
+  assert.equal(await code(files.trash([documents], { confirmed: true })), 'protected');
+  assert.equal(await code(files.move([documents], path.join(profile, 'Desktop'), { confirmed: true })), 'protected');
+  assert.equal(await code(files.trash([root], { confirmed: true })), 'protected');
+  assert.equal(await code(files.rename(root, 'Disque')), 'protected');
+  // Ni le dossier qui les contient.
+  assert.equal(await code(files.trash([profile], { confirmed: true })), 'protected');
+  assert.equal(await code(files.rename(profile, 'profil 2')), 'protected');
+  // Désigné par un autre chemin — à travers un lien —, un dossier personnel reste intouchable : c'est
+  // l'emplacement réel qui compte. Le lien lui-même n'est pas modifié non plus.
+  const detour = path.join(profile, 'Détour', 'Documents');
+  assert.equal(await code(files.trash([detour], { confirmed: true })), 'protected');
+  assert.equal(await code(files.rename(detour, 'Mes documents')), 'protected');
+  assert.equal(await code(files.move([detour], path.join(profile, 'Desktop'), { confirmed: true })), 'protected');
+  // Et le refus dit ce qu'il est — un dossier personnel —, par un chemin comme par l'autre.
+  assert.match((await files.rename(detour, 'Mes documents')).message, /^Cet emplacement est un lecteur ou un dossier personnel/);
+  assert.equal((await files.rename(detour, 'Mes documents')).message, (await files.rename(documents, 'Mes documents')).message);
+  assert.match((await files.rename(profile, 'profil 2')).message, /^Ce dossier contient un dossier personnel/);
+  assert.equal(await code(files.trash([path.join(profile, 'Détour')], { confirmed: true })), 'link-not-supported');
+  assert.equal(await code(files.rename(path.join(profile, 'Détour'), 'Autre')), 'link-not-supported');
+
+  // Chemins relatifs, remontées, noms réservés : refusés sur leur seule forme.
+  for (const target of ['Notes.txt', '..', '', `${documents}${path.sep}..${path.sep}..`, `${documents}${path.sep}.${path.sep}Notes.txt`]) {
+    assert.equal(await code(files.createFolder(target, 'Dossier')), 'invalid-path', JSON.stringify(target));
+    assert.equal(await code(files.trash([target], { confirmed: true })), 'invalid-path', JSON.stringify(target));
+    assert.equal(await code(files.copy([notes], target)), 'invalid-path', JSON.stringify(target));
+    assert.equal(await code(files.open(target)), 'invalid-path', JSON.stringify(target));
+  }
+  for (const name of ['', '   ', '.', '..', 'a/b', 'a\\b', 'CON', 'nul.txt', 'COM1', 'nom.', 'nom ', ' nom', 'a:b', 'a*b', 'a?b', 'a"b', 'a<b', 'a|b', 'x'.repeat(256)]) {
+    assert.equal(await code(files.createFolder(documents, name)), 'invalid-name', JSON.stringify(name));
+    assert.equal(await code(files.rename(notes, name)), 'invalid-name', JSON.stringify(name));
+  }
+  // Arguments d'une autre nature : refusés, jamais d'exception.
+  for (const value of [null, undefined, 42, {}, ['x'], true]) {
+    assert.equal(await code(files.createFolder(value, 'Dossier')), 'bad-arguments', String(value));
+    assert.equal(await code(files.rename(value, 'Nom')), 'bad-arguments', String(value));
+    assert.equal(await code(files.open(value)), 'bad-arguments', String(value));
+  }
+  assert.equal(await code(files.trash(notes, { confirmed: true })), 'bad-arguments', 'une liste est attendue');
+  assert.equal(await code(files.trash([], { confirmed: true })), 'bad-arguments');
+  assert.equal(await code(files.trash([notes], { confirmed: true, force: true })), 'bad-arguments', 'option inconnue');
+  assert.equal(await code(files.trash([notes], { confirmed: 'oui' })), 'bad-arguments');
+  assert.equal(await code(files.copy([notes], documents, { operation: '../x' })), 'bad-arguments');
+  assert.equal(await code(files.copy(new Array(1001).fill(notes), documents)), 'bad-arguments', 'mille éléments au plus');
+  // Une demande impossible à transmettre (ici, une fonction) : réponse d'échec, jamais d'exception.
+  assert.deepEqual(await files.createFolder(documents, () => 'nom'), { ok: false, code: 'failed', message: "La demande n'a pas pu être transmise." });
+
+  // Un dossier ne se copie ni ne se déplace dans lui-même, ni dans l'un de ses sous-dossiers.
+  assert.equal(await code(files.copy([projects], path.join(projects, 'Sous-dossier'))), 'into-itself');
+  assert.equal(await code(files.move([projects], path.join(projects, 'Sous-dossier'), { confirmed: true })), 'into-itself');
+  assert.equal(await code(files.move([projects], projects, { confirmed: true })), 'into-itself');
+  // Une sélection ne peut pas contenir un dossier et l'un de ses éléments.
+  assert.equal(await code(files.trash([projects, path.join(projects, 'Sous-dossier')], { confirmed: true })), 'invalid-selection');
+
+  if (ON_WINDOWS) {
+    // Partage réseau, espace de noms, flux, périphérique : jamais atteints.
+    for (const target of ['\\\\localhost\\C$', '\\\\?\\C:\\', '\\\\.\\C:\\', 'C:', 'C:Users', `${notes}:flux`, `${documents}\\NUL`]) {
+      assert.equal(await code(files.createFolder(target, 'Dossier')), 'invalid-path', target);
+      assert.equal(await code(files.trash([target], { confirmed: true })), 'invalid-path', target);
+    }
+    // Dossier de Windows : rien n'y est créé (la demande est refusée sur l'emplacement, sans aucune tentative d'écriture).
+    const windows = process.env.SystemRoot;
+    assert.equal(await code(files.createFolder(windows, 'Evolve-essai')), 'protected');
+    assert.equal(existsSync(path.join(windows, 'Evolve-essai')), false);
+    // Le dossier « AppData » du compte (ici, celui du faux profil) est préservé : rien n'y est créé, renommé,
+    // déplacé ni supprimé — mais un élément peut y être lu pour être copié ailleurs.
+    const program = path.join(appData, 'Local', 'Programme');
+    assert.equal(await code(files.createFolder(path.join(appData, 'Local'), 'Evolve-essai')), 'protected');
+    assert.equal(await code(files.rename(program, 'Autre nom')), 'protected');
+    assert.equal(await code(files.trash([program], { confirmed: true })), 'protected');
+    assert.equal(await code(files.move([program], documents, { confirmed: true })), 'protected');
+    assert.equal(await code(files.copy([notes], program)), 'protected');
+    assert.equal(await code(files.trash([appData], { confirmed: true })), 'protected');
+  }
+
+  assert.deepEqual(snapshotOf(tempDir), before, 'aucune de ces demandes n’a modifié quoi que ce soit');
+  assert.deepEqual(state.trashed, []);
+  assert.deepEqual(state.opened, []);
+});
+
+test('opérations : elles ne sont pas des méthodes de service — le canal des services ne les atteint pas', async () => {
+  const { state, documents, api, tempDir } = await launchForOperations();
+  const notes = path.join(documents, 'Notes.txt');
+  const before = snapshotOf(tempDir);
+  const code = async (...args) => (await api.services.call(...args)).code;
+
+  for (const method of ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel', 'onProgress', 'delete', 'remove', 'write', 'guard']) {
+    assert.equal(await code('files', method, notes, 'Nom'), 'unknown-method', method);
+  }
+  for (const service of ['file-operations', 'fileOperations', 'operations', 'files.operations']) {
+    assert.equal(await code(service, 'trash', [notes], { confirmed: true }), 'unknown-service', service);
+  }
+  assert.deepEqual(snapshotOf(tempDir), before);
+  assert.deepEqual(state.trashed, []);
+});
+
+test('opérations : les demandes d’une autre page sont refusées, sur chacun des sept canaux', async () => {
+  const { fake, state, documents, tempDir } = await launchForOperations();
+  const notes = path.join(documents, 'Notes.txt');
+  const before = snapshotOf(tempDir);
+  // Une autre page (cadre, fenêtre ou contenu inattendu) : ses messages ne viennent pas de la fenêtre de l'application.
+  const intruder = fake.rendererFor(new fake.window.webContents.constructor());
+  const refused = { ok: false, code: 'forbidden', message: 'Appel refusé.' };
+
+  const attempts = [
+    ['evolve:files-create-folder', documents, 'Intrus'],
+    ['evolve:files-rename', notes, 'Intrus.txt'],
+    ['evolve:files-copy', [notes], path.join(documents, 'Projets été'), null],
+    ['evolve:files-move', [notes], path.join(documents, 'Projets été'), { confirmed: true }],
+    ['evolve:files-trash', [notes], { confirmed: true }],
+    ['evolve:files-open', notes, { confirmed: true }],
+    ['evolve:files-cancel', 'operation-1'],
+  ];
+  for (const [channel, ...args] of attempts) {
+    assert.deepEqual(await intruder.invoke(channel, ...args), refused, channel);
+  }
+  // Les sept canaux des opérations ont tous été éprouvés.
+  assert.deepEqual(attempts.map(([channel]) => channel).sort(), [...state.ipcHandlers.keys()].filter((name) => name.startsWith('evolve:files-')).sort());
+  assert.deepEqual(snapshotOf(tempDir), before, 'rien n’a été créé, renommé, copié, déplacé ni supprimé');
+  assert.deepEqual(state.trashed, []);
+  assert.deepEqual(state.opened, []);
+});
+
+test('opérations : l’avancement est transmis à la fenêtre, et une opération peut être interrompue', async () => {
+  const { fake, state, documents, files } = await launchForOperations();
+  const source = path.join(documents, 'Gros dossier');
+  mkdirSync(source);
+  for (let index = 1; index <= 40; index += 1) writeFileSync(path.join(source, `fichier ${String(index).padStart(2, '0')}.txt`), `contenu ${index}`);
+  const target = path.join(documents, 'Projets été');
+
+  const seen = [];
+  const unsubscribe = files.onProgress((progress) => seen.push(progress));
+  assert.equal(typeof files.onProgress('pas une fonction'), 'function');
+
+  const reply = await files.copy([source], target, { operation: 'copie-suivie' });
+  assert.equal(reply.ok, true);
+  assert.equal(readdirSync(path.join(target, 'Gros dossier')).length, 40);
+  // Au moins l'annonce de fin ; chaque annonce désigne l'opération par l'identifiant fourni.
+  assert.ok(seen.length >= 1);
+  assert.deepEqual(seen.at(-1), { operation: 'copie-suivie', kind: 'copy', state: 'finished' });
+  for (const progress of seen) assert.equal(progress.operation, 'copie-suivie');
+  for (const progress of seen.filter((item) => item.state === 'running')) {
+    assert.deepEqual([progress.kind, progress.total], ['copy', 41]);
+    assert.ok(progress.done >= 1 && progress.done <= 41 && typeof progress.current === 'string');
+  }
+  // Tout est passé par le canal de l'avancement, vers la fenêtre de l'application.
+  const sent = fake.window.webContents.sent.filter(([channel]) => channel === 'evolve:files-progress');
+  assert.deepEqual(sent.map(([, progress]) => progress), seen);
+
+  // Interruption : demandée dès la première annonce, l'opération s'arrête ; ce qui a été copié reste, sous un nom qui le dit.
+  seen.length = 0;
+  let asked = null;
+  const stop = files.onProgress((progress) => {
+    if (progress.state === 'running' && asked === null) asked = files.cancel('copie-interrompue');
+  });
+  const interrupted = await files.copy([source], documents, { operation: 'copie-interrompue' });
+  stop();
+  // La première étape d'une opération est toujours annoncée : l'arrêt a donc été demandé dès le dossier créé.
+  assert.notEqual(asked, null);
+  assert.deepEqual(await asked, { ok: true, value: true });
+  assert.equal(interrupted.ok, true);
+  assert.equal(interrupted.value.cancelled, true);
+  assert.deepEqual(interrupted.value.done, []);
+  assert.deepEqual(interrupted.value.failed, []);
+  // Ce qui a été copié reste sur le disque, sous un nom qui dit que la copie est incomplète.
+  const partial = 'Gros dossier - Copie (copie incomplète)';
+  assert.deepEqual(interrupted.value.skipped, [{ source, name: 'Gros dossier', reason: 'cancelled', partial }]);
+  assert.ok(readdirSync(path.join(documents, partial)).length < 40);
+  assert.deepEqual(readdirSync(documents).sort(), ['Gros dossier', partial, 'Notes.txt', 'Projets été'].sort());
+  assert.equal(readdirSync(source).length, 40, 'le dossier d’origine est intact');
+
+  // Aucune opération en cours : il n'y a rien à interrompre.
+  assert.deepEqual(await files.cancel('copie-interrompue'), { ok: true, value: false });
+  assert.deepEqual(await files.cancel(42), { ok: true, value: false });
+
+  // Après désabonnement, l'abonné n'est plus appelé — la fenêtre, elle, reçoit toujours l'annonce.
+  unsubscribe();
+  const count = seen.length;
+  const sentBefore = fake.window.webContents.sent.length;
+  assert.equal((await files.createFolder(documents, 'Après désabonnement')).ok, true);
+  assert.equal(seen.length, count);
+  assert.deepEqual(fake.window.webContents.sent.slice(sentBefore).map(([channel, progress]) => [channel, progress.kind, progress.state]), [['evolve:files-progress', 'create-folder', 'finished']]);
+
+  // Fenêtre fermée : plus aucune demande n'est acceptée, plus rien ne lui est envoyé.
+  const sentAtClose = fake.window.webContents.sent.length;
+  fake.window.close();
+  const late = await state.ipcHandlers.get('evolve:files-create-folder')({ sender: fake.window.webContents }, documents, 'Fenêtre fermée');
+  assert.deepEqual(late, { ok: false, code: 'forbidden', message: 'Appel refusé.' });
+  assert.equal(existsSync(path.join(documents, 'Fenêtre fermée')), false);
+  assert.equal(fake.window.webContents.sent.length, sentAtClose);
+});
+
+test('opérations : l’inventaire des services les décrit — Corbeille seulement, aucun remplacement', async () => {
+  let describe;
+  const fake = await launch({
+    argv: [`--self-test=${path.join(tmpdir(), 'evolve-inutilise')}`],
+    runSelfTest: async (_win, options) => {
+      describe = options.describeServices;
+      return 0;
+    },
+  });
+  assert.deepEqual(describe()['file-operations'], {
+    state: 'available',
+    access: 'dedicated-functions',
+    busy: false,
+    trash: true,
+    open: true,
+    deletion: 'recycle-bin-only',
+    replace: 'never',
+    methods: ['createFolder', 'rename', 'copy', 'move', 'trash', 'open'],
+    events: ['progress'],
+  });
+  // Le service de consultation, lui, reste en lecture seule.
+  assert.deepEqual([describe().files.access, describe().files.methods], ['read-only', ['places', 'list']]);
+  assert.deepEqual(fake.state.exitCodes, [0]);
+});
+
+test('opérations : de la commande de l’explorateur jusqu’au disque — navigation, presse-papiers, questions et demandes réelles', async () => {
+  const { state, profile, documents, api } = await launchForOperations();
+  const { Navigator } = await import('../src/renderer/js/apps/explorer-nav.js');
+  const { FileActions, createFileClipboard } = await import('../src/renderer/js/apps/explorer-actions.js');
+  const { createFileOperationsClient } = await import('../src/renderer/js/core/file-operations.js');
+  const { createServiceClient } = await import('../src/renderer/js/core/services.js');
+
+  // L'explorateur tel qu'il est assemblé dans la fenêtre (apps/explorer.js) : seuls l'affichage et les fenêtres
+  // de dialogue sont remplacés. Navigation, commandes, passerelle, processus principal, services et disque sont réels.
+  const services = createServiceClient(api.services);
+  const nav = new Navigator({
+    files: { available: services.available, places: () => services.call('files', 'places'), list: (target) => services.call('files', 'list', target) },
+  });
+  const answers = { prompt: [], confirm: [], choose: [] };
+  const asked = [];
+  const toasts = [];
+  const informed = [];
+  let selected = [];
+  const take = (kind, title) => {
+    asked.push(`${kind} : ${title}`);
+    assert.ok(answers[kind].length > 0, `question inattendue (${kind}) : ${title}`);
+    return answers[kind].shift();
+  };
+  const clipboard = createFileClipboard();
+  const actions = new FileActions({
+    operations: createFileOperationsClient(api.files),
+    dialogs: {
+      async prompt(options) {
+        for (;;) {
+          const typed = take('prompt', options.title);
+          if (typed === null) return null;
+          const problem = await options.onSubmit(typed);
+          if (problem === null) return typed;
+          asked.push(`refus : ${problem}`);
+        }
+      },
+      confirm: async (options) => take('confirm', options.title),
+      choose: async (options) => take('choose', options.title),
+      inform: async (options) => void informed.push([options.title, options.message, options.details]),
+      progress: () => ({ update() {}, close() {} }),
+    },
+    toasts: { show: (toast) => toasts.push([toast.title, toast.message]) },
+    clipboard,
+    view: {
+      page: () => (nav.loading ? null : nav.page),
+      reload: () => nav.reload(),
+      select: (paths) => (selected = paths),
+      changed: () => {},
+    },
+  });
+  /** Éléments affichés, par nom. */
+  const shown = () => Object.fromEntries(nav.page.sections.flatMap((section) => section.nodes).map((node) => [node.name, node]));
+  const names = () => Object.keys(shown()).sort();
+  const desktop = path.join(profile, 'Desktop');
+
+  // Accueil : rien n'y est créé ni collé, et un dossier personnel n'est l'objet d'aucune opération.
+  await nav.open('home');
+  assert.deepEqual(actions.commands([]), { open: false, cut: false, copy: false, rename: false, trash: false, paste: false, newFolder: false });
+  const browseOnly = { open: true, cut: false, copy: false, rename: false, trash: false, paste: false, newFolder: false };
+  assert.deepEqual(actions.commands([shown().Documents]), browseOnly);
+  await actions.trash([shown().Documents]);
+  await actions.rename(shown().Documents);
+  // Le même dossier personnel, vu dans le dossier qui le contient : il se parcourt, sans plus.
+  await nav.open({ type: 'folder', path: profile, name: 'profil' });
+  const personal = shown().Documents;
+  assert.deepEqual([personal.path, personal.place], [documents, 'documents']);
+  assert.deepEqual(actions.commands([personal]), { ...browseOnly, newFolder: true });
+  await actions.trash([personal]);
+  await actions.rename(personal);
+  actions.cut([personal]);
+  assert.deepEqual([asked, state.trashed, clipboard.size], [[], [], 0]);
+
+  // Documents : nouveau dossier — un nom refusé par l'application de bureau, puis un nom admis.
+  await nav.open('documents');
+  assert.deepEqual(names(), ['Notes.txt', 'Projets été']);
+  answers.prompt.push('Projets été', 'Factures 2026');
+  await actions.newFolder();
+  assert.deepEqual(asked, ['prompt : Nouveau dossier', 'refus : Un élément porte déjà ce nom à cet endroit. Rien n’a été remplacé.', 'prompt : Nouveau dossier']);
+  assert.ok(statSync(path.join(documents, 'Factures 2026')).isDirectory());
+  assert.deepEqual(names(), ['Factures 2026', 'Notes.txt', 'Projets été'], 'le dossier affiché a été relu');
+  assert.deepEqual(selected, [path.join(documents, 'Factures 2026')]);
+  assert.deepEqual(toasts.at(-1), ['Dossier créé', '« Factures 2026 » a été créé dans « Documents ».']);
+
+  // Renommer le fichier.
+  asked.length = 0;
+  answers.prompt.push('Notes de réunion.txt');
+  await actions.rename(shown()['Notes.txt']);
+  assert.deepEqual(names(), ['Factures 2026', 'Notes de réunion.txt', 'Projets été']);
+  assert.equal(readFileSync(path.join(documents, 'Notes de réunion.txt'), 'utf8'), 'bonjour');
+  assert.deepEqual(selected, [path.join(documents, 'Notes de réunion.txt')]);
+  assert.deepEqual(toasts.at(-1), ['Élément renommé', "« Notes.txt » s'appelle maintenant « Notes de réunion.txt »."]);
+
+  // Copier, puis coller dans le nouveau dossier : aucune question, l'original reste.
+  asked.length = 0;
+  actions.copy([shown()['Notes de réunion.txt']]);
+  assert.deepEqual(readdirSync(documents).sort(), ['Factures 2026', 'Notes de réunion.txt', 'Projets été'], 'copier ne modifie rien');
+  await nav.open(shown()['Factures 2026'].location);
+  assert.deepEqual(names(), []);
+  await actions.paste();
+  assert.deepEqual(names(), ['Notes de réunion.txt']);
+  assert.deepEqual(selected, [path.join(documents, 'Factures 2026', 'Notes de réunion.txt')]);
+  assert.deepEqual(toasts.at(-1), ['Copie terminée', '« Notes de réunion.txt » a été copié dans « Factures 2026 ».']);
+  assert.deepEqual(asked, []);
+
+  // Coller de nouveau : le nom est pris. « Ignorer » ne change rien ; « Conserver les deux » crée une copie à côté.
+  const before = digestOf(path.join(documents, 'Factures 2026', 'Notes de réunion.txt'));
+  answers.choose.push('skip');
+  await actions.paste();
+  assert.deepEqual(asked, ['choose : « Notes de réunion.txt » existe déjà']);
+  assert.deepEqual(names(), ['Notes de réunion.txt']);
+  assert.deepEqual(toasts.at(-1), ['Aucun élément copié', 'Un élément a été ignoré : son nom était déjà pris.']);
+  answers.choose.push(null);
+  await actions.paste();
+  assert.deepEqual(names(), ['Notes de réunion.txt'], 'question abandonnée : rien');
+  answers.choose.push('keep-both');
+  await actions.paste();
+  assert.deepEqual(names(), ['Notes de réunion - Copie.txt', 'Notes de réunion.txt']);
+  assert.equal(digestOf(path.join(documents, 'Factures 2026', 'Notes de réunion.txt')), before, 'l’élément en place est intact');
+  assert.deepEqual(selected, [path.join(documents, 'Factures 2026', 'Notes de réunion - Copie.txt')]);
+  assert.deepEqual(toasts.at(-1), ['Copie terminée', '« Notes de réunion - Copie.txt » a été créé dans « Factures 2026 ».']);
+
+  // Couper, puis coller sur le Bureau : confirmation refusée, puis donnée.
+  asked.length = 0;
+  actions.cut([shown()['Notes de réunion - Copie.txt']]);
+  assert.equal(clipboard.isCut(path.join(documents, 'Factures 2026', 'Notes de réunion - Copie.txt')), true);
+  await nav.open('desktop');
+  answers.confirm.push(false);
+  await actions.paste();
+  assert.deepEqual([names(), readdirSync(path.join(documents, 'Factures 2026')).sort()], [[], ['Notes de réunion - Copie.txt', 'Notes de réunion.txt']], 'sans confirmation, rien ne bouge');
+  answers.confirm.push(true);
+  await actions.paste();
+  assert.deepEqual(asked, ['confirm : Déplacer « Notes de réunion - Copie.txt » ?', 'confirm : Déplacer « Notes de réunion - Copie.txt » ?']);
+  assert.deepEqual(names(), ['Notes de réunion - Copie.txt']);
+  assert.deepEqual(readdirSync(path.join(documents, 'Factures 2026')), ['Notes de réunion.txt']);
+  assert.deepEqual(toasts.at(-1), ['Déplacement terminé', '« Notes de réunion - Copie.txt » a été déplacé vers « Bureau ».']);
+  assert.equal(clipboard.size, 0);
+
+  // Envoyer à la Corbeille : confirmation refusée, puis donnée.
+  asked.length = 0;
+  answers.confirm.push(false);
+  await actions.trash([shown()['Notes de réunion - Copie.txt']]);
+  assert.deepEqual([readdirSync(desktop), state.trashed], [['Notes de réunion - Copie.txt'], []]);
+  answers.confirm.push(true);
+  await actions.trash([shown()['Notes de réunion - Copie.txt']]);
+  assert.deepEqual(asked, ['confirm : Envoyer « Notes de réunion - Copie.txt » à la Corbeille ?', 'confirm : Envoyer « Notes de réunion - Copie.txt » à la Corbeille ?']);
+  assert.deepEqual([names(), readdirSync(desktop)], [[], []]);
+  assert.deepEqual(state.trashed.map((item) => item.from), [path.join(desktop, 'Notes de réunion - Copie.txt')]);
+  assert.equal(readFileSync(state.trashed[0].to, 'utf8'), 'bonjour', 'l’élément est dans la Corbeille, intact');
+  assert.deepEqual(toasts.at(-1), ['Envoyé à la Corbeille', '« Notes de réunion - Copie.txt » a été envoyé à la Corbeille de Windows.']);
+
+  // Ouvrir : un document est confié à Windows ; un script, seulement après confirmation.
+  asked.length = 0;
+  writeFileSync(path.join(desktop, 'Lancer.cmd'), '@echo off\r\n');
+  await nav.open('documents');
+  await actions.open(shown()['Notes de réunion.txt']);
+  assert.deepEqual([state.opened, asked], [[path.join(documents, 'Notes de réunion.txt')], []]);
+  await nav.open('desktop');
+  answers.confirm.push(false);
+  await actions.open(shown()['Lancer.cmd']);
+  assert.equal(state.opened.length, 1, 'sans confirmation, le script n’est pas confié à Windows');
+  answers.confirm.push(true);
+  await actions.open(shown()['Lancer.cmd']);
+  assert.deepEqual(asked, ['confirm : Ouvrir « Lancer.cmd » ?', 'confirm : Ouvrir « Lancer.cmd » ?']);
+  assert.deepEqual(state.opened, [path.join(documents, 'Notes de réunion.txt'), path.join(desktop, 'Lancer.cmd')]);
+
+  // La Corbeille refuse : l'élément reste, et une fenêtre le dit.
+  state.recycleBin = false;
+  answers.confirm.push(true);
+  await actions.trash([shown()['Lancer.cmd']]);
+  assert.deepEqual(names(), ['Lancer.cmd']);
+  assert.deepEqual(informed.at(-1), [
+    'Envoi à la Corbeille impossible',
+    "Un élément n'a pas pu être traité :",
+    ["« Lancer.cmd » : Windows n'a pas pu envoyer cet élément à la Corbeille : il n'a pas été supprimé et reste à sa place."],
+  ]);
+
+  // État final du disque : exactement ce que l'utilisateur a demandé, rien de plus.
+  assert.deepEqual(readdirSync(documents).sort(), ['Factures 2026', 'Notes de réunion.txt', 'Projets été']);
+  assert.deepEqual(readdirSync(path.join(documents, 'Factures 2026')), ['Notes de réunion.txt']);
+  assert.deepEqual(readdirSync(path.join(documents, 'Projets été')), []);
+  assert.deepEqual(readdirSync(desktop), ['Lancer.cmd']);
+  assert.deepEqual(answers, { prompt: [], confirm: [], choose: [] }, 'chaque réponse préparée a servi');
 });

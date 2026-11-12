@@ -7,7 +7,8 @@
  * un vrai Windows, que l'exécutable démarre et que l'interface répond :
  * chargement sans erreur, fond d'écran officiel, barre des tâches, menu
  * Démarrer, panneaux, fenêtres, explorateur de fichiers — qui parcourt de
- * vrais dossiers, en lecture seule (voir selftest-explorer.js).
+ * vrais dossiers (voir selftest-explorer.js) et y mène de vraies opérations,
+ * dans un dossier d'essai créé pour l'occasion (voir selftest-operations.js).
  *
  * Il écrit un rapport (result.json) et des captures d'écran dans DOSSIER,
  * puis renvoie 0 (tout est conforme) ou 1 (au moins un contrôle en échec).
@@ -113,9 +114,11 @@ function withTimeout(promise, ms, message) {
  * @param {string} [options.scenario]  scénario à exécuter (voir l'en-tête)
  * @param {() => object} [options.describeServices]  état des services d'Evolve, joint au rapport
  * @param {string} [options.platform]  système sur lequel l'application s'exécute
+ * @param {string|null} [options.recycleBin]  dossier de la Corbeille du lecteur où se trouve `outDir` ;
+ *        par défaut, celui de Windows (« X:\$RECYCLE.BIN »), et aucun sur un autre système
  * @returns {Promise<number>} code de sortie : 0 = réussite, 1 = échec
  */
-async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, platform = process.platform }) {
+async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, platform = process.platform, recycleBin }) {
   const started = Date.now();
   const { webContents } = win;
   const t = { ...DEFAULT_TIMINGS, ...timings };
@@ -143,6 +146,8 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     services: null,
     /** Dossiers personnels et lecteurs que l'explorateur a trouvés sur cette machine. */
     explorer: null,
+    /** Dossier d'essai envoyé à la Corbeille, tel que retrouvé dans la Corbeille de Windows. */
+    recycled: null,
   };
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -398,8 +403,8 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        return Boolean(win) && win.classList.contains('is-focused') && inView(win) && win.querySelectorAll('.ex-item').length > 0
          && document.querySelector('.tb-app[data-app="explorer"]').classList.contains('is-active');`,
     );
-    // Vrais dossiers, navigation, refus du service, lecture seule (capture 06 comprise).
-    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, platform });
+    // Vrais dossiers, navigation, opérations réelles sur les fichiers, refus (captures 06 à 08 comprises).
+    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, platform, recycleBin, timings: t });
     await act(`document.querySelector('.window[data-app="explorer"] .window__control--max').click();`);
     await check(
       "la fenêtre s'agrandit sur tout l'espace de travail",
@@ -419,7 +424,7 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        return wins.length === 2 && document.querySelector('.window[data-app="settings"]').classList.contains('is-focused')
          && !document.querySelector('.window[data-app="explorer"]').classList.contains('is-focused');`,
     );
-    await capture('07-fenetres');
+    await capture('09-fenetres');
     await act(`document.querySelector('.window[data-app="settings"] .window__control--min').click();`);
     await check(
       'une fenêtre se réduit dans la barre des tâches',

@@ -36,8 +36,8 @@ export function createDemoNotifications(now = new Date()) {
     {
       id: 'explorer',
       app: 'explorer',
-      title: 'Explorateur en lecture seule',
-      body: "Dans l'application Windows, l'explorateur affiche vos vrais dossiers sans rien modifier. Les fichiers recommandés du menu Démarrer restent fictifs.",
+      title: 'Explorateur : vos vrais fichiers',
+      body: "Dans l'application Windows, l'explorateur agit sur vos vrais dossiers : rien n'est remplacé, et « supprimer » envoie à la Corbeille. Les fichiers recommandés du menu Démarrer restent fictifs.",
       time: at(27),
     },
     {

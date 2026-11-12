@@ -4,8 +4,9 @@
  * couche vis-à-vis de l'interface et d'Electron.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
@@ -15,7 +16,7 @@ const require = createRequire(import.meta.url);
 const { createHub, ServiceError, isPlainData, LIMITS } = require('../src/services/hub.js');
 const { settingsDir, settingsFile, userConfigRoot, SETTINGS_FILE } = require('../src/services/platform.js');
 const { SETTINGS, SCHEMA_VERSION, MIGRATIONS, normalize, defaultsOf } = require('../src/services/settings-schema.js');
-const { createServices } = require('../src/services/index.js');
+const { createServices, FILE_OPERATIONS } = require('../src/services/index.js');
 
 // ---------------------------------------------------------------------------------
 // Indépendance de la couche
@@ -44,10 +45,141 @@ test('la couche de services ne dépend ni d’Electron, ni de l’interface, ni 
 
 test('la couche de services se charge avec Node seul', () => {
   const services = createServices();
-  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files']);
+  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'file-operations']);
   // Le service de fichiers ne sait que consulter : deux méthodes, aucun événement.
   assert.deepEqual(services.describe().files, { state: 'available', access: 'read-only', places: null, drives: null, methods: ['places', 'list'], events: [] });
+  // Les opérations sur les fichiers ne sont pas un service : six fonctions distinctes. Sans hôte pour fournir la
+  // Corbeille et l'ouverture, ni l'une ni l'autre n'est disponible — et rien ne les remplace.
+  assert.deepEqual(services.describe()['file-operations'], {
+    state: 'available',
+    access: 'dedicated-functions',
+    busy: false,
+    trash: false,
+    open: false,
+    deletion: 'recycle-bin-only',
+    replace: 'never',
+    methods: ['createFolder', 'rename', 'copy', 'move', 'trash', 'open'],
+    events: ['progress'],
+  });
+  assert.deepEqual(FILE_OPERATIONS, ['createFolder', 'rename', 'copy', 'move', 'trash', 'open']);
+  assert.ok(Object.isFrozen(FILE_OPERATIONS) && Object.isFrozen(services.fileOperations));
   assert.equal(services.flushSync(), true);
+});
+
+test('opérations sur les fichiers : hors du point d’accès, une fonction par opération, des réponses toujours de la même forme', async () => {
+  const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'evolve-services-')));
+  try {
+    const documents = path.join(base, 'Documents');
+    mkdirSync(documents);
+    writeFileSync(path.join(documents, 'Lettre.txt'), 'bonjour');
+    const sent = [];
+    const opened = [];
+    const logs = [];
+    const services = createServices({
+      files: { places: { documents }, drives: [], env: {} },
+      operations: {
+        trash: async (location) => {
+          sent.push(location);
+          throw new Error(`détail interne ${location}`);
+        },
+        openPath: async (location) => (opened.push(location), ''),
+      },
+      log: (message) => logs.push(message),
+    });
+    const { fileOperations } = services;
+
+    // Huit fonctions, et pas une de plus : six opérations, l'arrêt et l'avancement.
+    assert.deepEqual(Object.keys(fileOperations), ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel', 'onProgress']);
+    assert.deepEqual(services.describe()['file-operations'].trash, true);
+    assert.deepEqual(services.describe()['file-operations'].open, true);
+    // Le point d'accès aux services ne les connaît pas, sous aucun nom.
+    assert.deepEqual(Object.keys(services.hub.describe()), ['settings', 'files']);
+    for (const method of ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel']) {
+      assert.equal((await services.hub.call('files', method, [documents, 'x'])).code, 'unknown-method', method);
+      assert.equal((await services.hub.call('file-operations', method, [documents, 'x'])).code, 'unknown-service', method);
+    }
+
+    // Réussite : { ok: true, value }.
+    const created = await fileOperations.createFolder(documents, 'Factures');
+    assert.deepEqual(created, { ok: true, value: { path: path.join(documents, 'Factures'), name: 'Factures' } });
+    const renamed = await fileOperations.rename(path.join(documents, 'Lettre.txt'), 'Courrier.txt');
+    assert.deepEqual(renamed, { ok: true, value: { path: path.join(documents, 'Courrier.txt'), name: 'Courrier.txt' } });
+    const copied = await fileOperations.copy([renamed.value.path], created.value.path);
+    assert.deepEqual([copied.ok, copied.value.done.length], [true, 1]);
+    const moved = await fileOperations.move([path.join(created.value.path, 'Courrier.txt')], documents, { confirmed: true, onCollision: 'keep-both' });
+    assert.deepEqual([moved.ok, moved.value.done[0].name], [true, 'Courrier - Copie.txt']);
+    assert.deepEqual(await fileOperations.open(renamed.value.path), { ok: true, value: { opened: true, path: renamed.value.path, name: 'Courrier.txt' } });
+    assert.deepEqual(opened, [renamed.value.path]);
+
+    // Refus : { ok: false, code, message } — jamais d'exception, jamais de détail interne.
+    const refusal = await fileOperations.createFolder(documents, 'Factures');
+    assert.deepEqual(refusal, { ok: false, code: 'collision', message: 'Un élément porte déjà ce nom à cet endroit. Rien n’a été remplacé.' });
+    assert.equal((await fileOperations.rename(documents, 'Autre')).code, 'protected');
+    assert.equal((await fileOperations.move([renamed.value.path], created.value.path)).code, 'needs-confirmation');
+    assert.equal((await fileOperations.trash([renamed.value.path])).code, 'needs-confirmation');
+    assert.equal((await fileOperations.copy([path.join(base, 'ailleurs.txt')], documents)).code, 'outside-allowed');
+    for (const call of [
+      () => fileOperations.createFolder(),
+      () => fileOperations.rename(null, null),
+      () => fileOperations.copy('pas une liste', documents),
+      () => fileOperations.move([renamed.value.path], documents, 'oui'),
+      () => fileOperations.trash([renamed.value.path], { confirmed: true, force: true }),
+      () => fileOperations.open({ path: renamed.value.path }),
+      () => fileOperations.copy([renamed.value.path], documents, { onCollision: 'replace' }),
+      // Données qui ne sont pas de simples données, ou démesurées.
+      () => fileOperations.createFolder(documents, () => 'nom'),
+      () => fileOperations.copy([renamed.value.path], documents, new Date()),
+      () => fileOperations.copy(new Array(2000).fill(renamed.value.path), documents),
+      () => fileOperations.createFolder(documents, 'x'.repeat(1_000_001)),
+    ]) {
+      const reply = await call();
+      assert.deepEqual([reply.ok, reply.code, typeof reply.message], [false, 'bad-arguments', 'string'], String(call));
+    }
+
+    // La Corbeille de l'hôte échoue : l'élément reste, l'échec est signalé sans le détail (qui va au journal).
+    const trashed = await fileOperations.trash([renamed.value.path], { confirmed: true });
+    assert.equal(trashed.ok, true);
+    assert.deepEqual(trashed.value.failed.map((item) => [item.name, item.code]), [['Courrier.txt', 'trash-failed']]);
+    assert.deepEqual(sent, [renamed.value.path]);
+    assert.equal(readFileSync(renamed.value.path, 'utf8'), 'bonjour');
+    assert.doesNotMatch(JSON.stringify(trashed), /détail interne/);
+    assert.ok(logs.some((line) => line.includes('détail interne')));
+
+    // Arrêt : rien n'est en cours. Avancement : chaque opération annonce au moins sa fin.
+    assert.deepEqual(await fileOperations.cancel('operation-1'), { ok: true, value: false });
+    assert.deepEqual(await fileOperations.cancel({ id: 1 }), { ok: true, value: false });
+    const seen = [];
+    const unsubscribe = fileOperations.onProgress((progress) => seen.push(progress));
+    await fileOperations.createFolder(documents, 'Suivi');
+    assert.deepEqual(seen.map((progress) => [progress.kind, progress.state]), [['create-folder', 'finished']]);
+    unsubscribe();
+    await fileOperations.createFolder(documents, 'Sans suivi');
+    assert.equal(seen.length, 1);
+
+    assert.deepEqual(readdirSync(documents).sort(), ['Courrier - Copie.txt', 'Courrier.txt', 'Factures', 'Sans suivi', 'Suivi']);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('opérations sur les fichiers : sans Corbeille ni ouverture fournies par l’hôte, rien n’est supprimé ni ouvert', async () => {
+  const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'evolve-services-')));
+  try {
+    const documents = path.join(base, 'Documents');
+    mkdirSync(documents);
+    writeFileSync(path.join(documents, 'Lettre.txt'), 'bonjour');
+    const { fileOperations } = createServices({ files: { places: { documents }, drives: [], env: {} }, operations: { trash: 'rm -rf', openPath: null } });
+    assert.equal((await fileOperations.trash([path.join(documents, 'Lettre.txt')], { confirmed: true })).code, 'trash-unavailable');
+    assert.equal((await fileOperations.open(path.join(documents, 'Lettre.txt'))).code, 'open-unavailable');
+    assert.deepEqual(readdirSync(documents), ['Lettre.txt']);
+    // Aucun emplacement autorisé : aucune opération n'est possible, nulle part.
+    const closed = createServices().fileOperations;
+    assert.equal((await closed.createFolder(documents, 'Dossier')).code, 'outside-allowed');
+    assert.equal((await closed.rename(path.join(documents, 'Lettre.txt'), 'x.txt')).code, 'outside-allowed');
+    assert.deepEqual(readdirSync(documents), ['Lettre.txt']);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------------

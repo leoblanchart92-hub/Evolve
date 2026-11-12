@@ -6,13 +6,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import vm from 'node:vm';
 
+import { recycle } from './fixtures/recycle-bin.mjs';
 import { fromRoot } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
@@ -20,6 +21,7 @@ const { runSelfTest, countColors, DEFAULT_TIMINGS, DEFAULT_SCENARIO, MIN_CAPTURE
 const { CHANGED_SETTINGS, EXPECTED_SETTINGS } = require('../src/main/selftest-settings.js');
 const documentsTest = require('../src/main/selftest-documents.js');
 const explorerTest = require('../src/main/selftest-explorer.js');
+const operationsTest = require('../src/main/selftest-operations.js');
 const { SETTINGS, defaultsOf } = require('../src/services/settings-schema.js');
 
 const workDir = mkdtempSync(path.join(tmpdir(), 'evolve-selftest-'));
@@ -55,19 +57,115 @@ function fakeImage({ tones = 300, width = 80, height = 45, scaleFactor = 1 } = {
 /** Intitulé du contrôle portant sur la capture d'écran du bureau. */
 const PAINTED = "l'interface est réellement dessinée dans la fenêtre (capture d'écran non unie)";
 
+/** Début de chaque code de page de l'auto-test des opérations : les outils de l'explorateur, puis ceux des opérations. */
+const OPERATION_PRELUDE = `(async () => { ${operationsTest.operationTools(explorerTest.PAGE_TOOLS)} `;
+
+/** Vrai pour un geste de l'auto-test des opérations : ni un état attendu, ni une demande directe à l'application. */
+const isGesture = (code) => code.startsWith(OPERATION_PRELUDE) && !code.includes('|| observed();') && !code.includes('window.evolve.files');
+
 /**
- * Fausse fenêtre d'application.
- * @param {(code: string, webContents: EventEmitter) => unknown} [answer]  réponse de la page au code exécuté
+ * Imite, sur le disque, ce qu'un explorateur conforme fait des gestes de
+ * l'auto-test (voir selftest-operations.js). La fausse page répond « oui » à
+ * tout, mais l'auto-test relit lui-même le disque après chaque opération :
+ * sans cette imitation, aucun de ces contrôles ne pourrait réussir.
+ *
+ * @param {object} options
+ * @param {string} options.bin  fausse Corbeille (voir fixtures/recycle-bin.mjs)
+ * @param {(gesture: string, state: object, dialog: string|null) => void} [options.after]  appelée après chaque
+ *        geste — par exemple `dialogPress("skip")` —, avec la nature de la fenêtre de dialogue qui était ouverte :
+ *        un test y altère le disque pour imiter un explorateur fautif
+ * @returns {(code: string) => void}
  */
-function createWindow(answer = () => true, { capturePage } = {}) {
+function simulateExplorer({ bin, after = () => {} }) {
+  const { NAMES } = operationsTest;
+  /** Dossier affiché, sélection, presse-papiers, fenêtre de dialogue ouverte, texte saisi. */
+  const state = { folder: null, selection: [], clipboard: null, dialog: null, typed: '', bin };
+  const here = (name) => path.join(state.folder, name);
+  const copyTo = (source, target) => cpSync(source, target, { recursive: true, force: false, errorOnExist: true });
+  const keptName = (name) => `${name.slice(0, name.length - path.extname(name).length)} - Copie${path.extname(name)}`;
+
+  const commands = {
+    'new-folder': () => (state.dialog = { kind: 'new-folder' }),
+    rename: () => (state.dialog = { kind: 'rename' }),
+    delete: () => (state.dialog = { kind: 'trash' }),
+    copy: () => (state.clipboard = { mode: 'copy', items: state.selection.map(here) }),
+    cut: () => (state.clipboard = { mode: 'cut', items: state.selection.map(here) }),
+    paste: () => {
+      if (state.clipboard.mode === 'cut') state.dialog = { kind: 'move' };
+      else if (state.clipboard.items.some((item) => existsSync(here(path.basename(item))))) state.dialog = { kind: 'collision' };
+      else for (const item of state.clipboard.items) copyTo(item, here(path.basename(item)));
+    },
+  };
+  /** Réponses aux fenêtres de dialogue ; une saisie refusée laisse la fenêtre ouverte. */
+  const answers = {
+    'new-folder': { confirm: () => (state.typed === 'CON' ? 'open' : mkdirSync(here(state.typed))) },
+    rename: { confirm: () => (existsSync(here(state.typed)) ? 'open' : renameSync(here(state.selection[0]), here(state.typed))) },
+    collision: {
+      // « Ignorer » : seuls les éléments dont le nom est libre sont copiés ; « Conserver les deux » : les autres reçoivent un nouveau nom.
+      skip: () => state.clipboard.items.filter((item) => !existsSync(here(path.basename(item)))).forEach((item) => copyTo(item, here(path.basename(item)))),
+      'keep-both': () => state.clipboard.items.forEach((item) => copyTo(item, existsSync(here(path.basename(item))) ? here(keptName(path.basename(item))) : here(path.basename(item)))),
+    },
+    move: {
+      confirm: () => {
+        for (const item of state.clipboard.items) renameSync(item, here(path.basename(item)));
+        state.clipboard = null;
+      },
+    },
+    trash: { confirm: () => state.selection.forEach((name) => recycle(state.bin, here(name))) },
+    // Windows exécute le script, qui laisse son fichier témoin à côté de lui.
+    open: { confirm: () => writeFileSync(path.join(path.dirname(state.dialog.target), NAMES.marker), 'execute\r\n') },
+  };
+  const gestures = {
+    exOpen: ([location]) => {
+      if (statSync(location).isDirectory()) state.folder = location;
+      else state.dialog = { kind: 'open', target: location };
+    },
+    exButton: ([label]) => {
+      if (label === 'Dossier parent') state.folder = path.dirname(state.folder);
+    },
+    exSelect: (names) => (state.selection = names),
+    exCommand: ([name]) => commands[name](),
+    dialogType: ([text]) => (state.typed = text),
+    dialogPress: ([action]) => {
+      const stays = answers[state.dialog.kind][action]?.() === 'open';
+      if (!stays) state.dialog = null;
+    },
+  };
+
+  return (code) => {
+    if (!isGesture(code)) return;
+    for (const [, name, args] of code.slice(OPERATION_PRELUDE.length).matchAll(/\b(exOpen|exButton|exSelect|exCommand|dialogType|dialogPress)\(([^)]*)\)/g)) {
+      const dialog = state.dialog?.kind ?? null;
+      gestures[name](JSON.parse(`[${args}]`));
+      after(`${name}(${args})`, state, dialog);
+    }
+  };
+}
+
+let windows = 0;
+
+/**
+ * Fausse fenêtre d'application. Les gestes de l'auto-test des opérations y ont
+ * leur effet sur le disque (voir `simulateExplorer`) ; le reste dépend de `answer`.
+ * @param {(code: string, webContents: EventEmitter) => unknown} [answer]  réponse de la page au code exécuté
+ * @param {object} [options]
+ * @param {(gesture: string, state: object, dialog: string|null) => void} [options.after]  voir `simulateExplorer`
+ */
+function createWindow(answer = () => true, { capturePage, after } = {}) {
   const webContents = new EventEmitter();
+  /** Fausse Corbeille de cette fenêtre : celle que l'auto-test examine quand il se croit sous Windows. */
+  const recycleBin = path.join(workDir, `corbeille-${(windows += 1)}`);
+  mkdirSync(recycleBin);
+  const simulate = simulateExplorer({ bin: recycleBin, after });
   webContents.executed = [];
   webContents.executeJavaScript = async (code) => {
     webContents.executed.push(code);
+    simulate(code);
     return answer(code, webContents);
   };
   return {
     webContents,
+    recycleBin,
     showCalls: 0,
     show() {
       this.showCalls += 1;
@@ -84,17 +182,34 @@ function createWindow(answer = () => true, { capturePage } = {}) {
  */
 async function run(win, timings = FAST, options = {}) {
   const outDir = options.outDir ?? freshDir();
-  const code = await runSelfTest(win, { timings, platform: 'linux', ...options, outDir });
+  // Sous Windows, l'auto-test examine la Corbeille : ici, celle de la fausse fenêtre.
+  const recycleBin = Object.hasOwn(options, 'recycleBin') ? options.recycleBin : options.platform === 'win32' ? win.recycleBin : undefined;
+  const code = await runSelfTest(win, { timings, platform: 'linux', ...options, recycleBin, outDir });
   const report = JSON.parse(readFileSync(path.join(outDir, 'result.json'), 'utf8'));
   return { code, report, outDir };
 }
 
-/** Nombre de contrôles du scénario complet ; un de plus sous Windows (dossier protégé). */
-const FULL_CHECKS = 43;
+/** Nombre de contrôles du scénario complet. */
+const FULL_CHECKS = 53;
+/** Sous Windows, trois de plus : dossier protégé, contenu de la Corbeille, script réellement exécuté. */
+const WINDOWS_CHECKS = FULL_CHECKS + 3;
+
+/** Captures d'écran du scénario complet. */
+const CAPTURES = [
+  '01-bureau.png',
+  '02-menu-demarrer.png',
+  '03-recherche.png',
+  '04-parametres-rapides.png',
+  '05-notifications.png',
+  '06-explorateur.png',
+  '07-nom-deja-pris.png',
+  '08-corbeille.png',
+  '09-fenetres.png',
+];
 
 const failed = (report) => report.checks.filter((item) => !item.ok).map((item) => item.name);
 
-test('tout est conforme : code 0, rapport complet, sept captures', async () => {
+test('tout est conforme : code 0, rapport complet, neuf captures', async () => {
   const win = createWindow();
   const { code, report, outDir } = await run(win);
 
@@ -105,6 +220,7 @@ test('tout est conforme : code 0, rapport complet, sept captures', async () => {
   assert.equal(report.services, null, "sans état des services fourni, le rapport n'en invente pas");
   assert.equal(report.checks.length, FULL_CHECKS);
   assert.equal(report.explorer, null, "sans réponse du service de fichiers, le rapport n'invente aucun emplacement");
+  assert.equal(report.recycled, null, 'hors de Windows, la Corbeille n’est pas examinée');
   assert.deepEqual(failed(report), []);
   assert.deepEqual(report.errors, []);
   assert.deepEqual(report.warnings, []);
@@ -114,16 +230,8 @@ test('tout est conforme : code 0, rapport complet, sept captures', async () => {
   assert.ok(report.durationMs >= 0);
   assert.equal(new Set(report.checks.map((item) => item.name)).size, FULL_CHECKS, 'intitulés tous différents');
 
-  assert.deepEqual(report.captures, [
-    '01-bureau.png',
-    '02-menu-demarrer.png',
-    '03-recherche.png',
-    '04-parametres-rapides.png',
-    '05-notifications.png',
-    '06-explorateur.png',
-    '07-fenetres.png',
-  ]);
-  // À côté du rapport et des captures : le dossier d'essai parcouru par l'explorateur.
+  assert.deepEqual(report.captures, CAPTURES);
+  // À côté du rapport et des captures : les dossiers d'essai de l'explorateur.
   assert.deepEqual(readdirSync(outDir).sort(), [...report.captures, explorerTest.FIXTURE_DIR, 'result.json'].sort());
   assert.deepEqual(
     report.images,
@@ -165,7 +273,7 @@ test('un contrôle en échec : code 1, valeur observée consignée, les autres c
   assert.equal(report.checks.length, FULL_CHECKS);
   assert.deepEqual(failed(report), ["fond d'écran officiel affiché sans déformation ni filtre"]);
   assert.deepEqual(report.checks.find((item) => !item.ok).value, observed);
-  assert.equal(report.captures.length, 7);
+  assert.equal(report.captures.length, CAPTURES.length);
 });
 
 test('seule la valeur `true` est une réussite', async () => {
@@ -338,7 +446,7 @@ test('fenêtre restée vide (capture du bureau unie) : échec', async () => {
   assert.equal(code, 1);
   assert.deepEqual(failed(report), [PAINTED]);
   assert.deepEqual(report.checks.find((item) => !item.ok).value, { file: '01-bureau.png', width: 80, height: 45, colors: 1 });
-  assert.equal(report.captures.length, 7, 'les captures sont tout de même enregistrées');
+  assert.equal(report.captures.length, CAPTURES.length, 'les captures sont tout de même enregistrées');
 
   // Seuil : en dessous, la capture est considérée comme vide.
   const below = await run(createWindow(() => true, { capturePage: async () => fakeImage({ tones: MIN_CAPTURE_COLORS - 1 }) }));
@@ -380,7 +488,7 @@ test('capture non mesurable : le contrôle correspondant est simplement omis', a
     assert.equal(report.checks.length, FULL_CHECKS - 1);
     assert.ok(!report.checks.some((item) => item.name === PAINTED));
     assert.deepEqual(report.images, []);
-    assert.equal(report.captures.length, 7);
+    assert.equal(report.captures.length, CAPTURES.length);
     assert.deepEqual(report.warnings, []);
   }
 });
@@ -391,7 +499,7 @@ test('captures impossibles ou vides : simples avertissements, le test reste vala
   assert.equal(first.code, 0);
   assert.equal(first.report.checks.length, FULL_CHECKS - 1);
   assert.deepEqual(first.report.captures, []);
-  assert.equal(first.report.warnings.length, 7);
+  assert.equal(first.report.warnings.length, CAPTURES.length);
   assert.match(first.report.warnings[0], /capture « 01-bureau » impossible : fenêtre masquée/);
 
   const empty = createWindow(() => true, { capturePage: async () => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) }) });
@@ -440,12 +548,18 @@ test('les durées de production laissent le temps à une machine lente', () => {
 });
 
 // ---------------------------------------------------------------------------------
-// Explorateur de fichiers : vrais dossiers, lecture seule
+// Explorateur de fichiers : vrais dossiers, consultation
 // ---------------------------------------------------------------------------------
+
+/** Intitulés des contrôles des opérations sur les fichiers (voir la section qui leur est consacrée, plus bas). */
+const OPERATIONS = operationsTest.CHECKS;
+const READ_ONLY_CHECK =
+  "le service de consultation n'offre aucune opération d'écriture : chaque opération passe par une fonction distincte, sans suppression définitive ni remplacement";
+const UNCHANGED_CHECK = "parcourir un dossier n'y modifie rien : le dossier seulement consulté est resté identique (contenu, tailles et dates)";
 
 /** Intitulés des contrôles de l'explorateur, dans l'ordre du scénario. */
 const EXPLORER_CHECKS = [
-  "l'explorateur consulte les vrais dossiers, en lecture seule (aucun contenu d'exemple)",
+  "l'explorateur présente les vrais dossiers, sans contenu d'exemple ; à l'accueil, aucune opération sur les fichiers n'est proposée",
   '« Ce PC » présente les dossiers personnels et les lecteurs de cet ordinateur',
   "chaque dossier personnel disponible s'ouvre (Bureau, Documents, Téléchargements, Images, Musique, Vidéos)",
   null, // navigation au double-clic : l'intitulé cite le nombre de niveaux
@@ -460,14 +574,24 @@ const EXPLORER_CHECKS = [
   'un dossier vide est annoncé comme tel',
   'la recherche filtre le dossier affiché, sans tenir compte de la casse ni des accents',
   '« Actualiser » fait apparaître un fichier ajouté entre-temps',
+  // Opérations menées dans l'interface, chacune contrôlée sur le disque.
+  OPERATIONS.create,
+  OPERATIONS.collision,
+  OPERATIONS.rename,
+  OPERATIONS.move,
+  OPERATIONS.copy,
+  OPERATIONS.trash,
+  OPERATIONS.open,
   '« Réseau » et « Corbeille » sont annoncés comme non disponibles, sans contenu fictif',
   'le service de fichiers refuse les chemins relatifs, réseau ou spéciaux, et distingue dossier introuvable et fichier',
-  "le service de fichiers n'offre que la consultation : aucune opération d'écriture n'existe",
-  "l'explorateur n'a rien modifié dans le dossier parcouru (contenu, tailles et dates identiques)",
+  READ_ONLY_CHECK,
+  // Demandes refusées, puis état final des deux dossiers d'essai.
+  OPERATIONS.unconfirmed,
+  OPERATIONS.refused,
+  UNCHANGED_CHECK,
+  OPERATIONS.state,
 ];
 const PROTECTED_CHECK = 'un dossier protégé de Windows affiche « Accès refusé », sans bloquer la navigation';
-const UNCHANGED_CHECK = EXPLORER_CHECKS.at(-1);
-const READ_ONLY_CHECK = EXPLORER_CHECKS.at(-2);
 
 /**
  * Dossier d'essai créé par l'auto-test dans son dossier de sortie, désigné
@@ -614,18 +738,57 @@ test('explorateur : la moindre modification du dossier parcouru fait échouer l�
   }
 });
 
-test('explorateur : un service de fichiers qui sait écrire fait échouer l’auto-test', async () => {
-  const described = (methods) => () => ({ settings: {}, files: { state: 'available', access: 'read-only', methods, events: [] } });
+/** Ce que l'application annonce de ses opérations sur les fichiers (voir src/services/index.js). */
+const SOUND_OPERATIONS = Object.freeze({
+  state: 'available',
+  access: 'dedicated-functions',
+  busy: false,
+  trash: true,
+  open: true,
+  deletion: 'recycle-bin-only',
+  replace: 'never',
+  methods: ['createFolder', 'rename', 'copy', 'move', 'trash', 'open'],
+  events: ['progress'],
+});
+
+test('explorateur : un service de consultation qui sait écrire fait échouer l’auto-test', async () => {
+  const described = (methods, operations = SOUND_OPERATIONS) => () => ({
+    settings: {},
+    files: { state: 'available', access: 'read-only', methods, events: [] },
+    ...(operations ? { 'file-operations': operations } : {}),
+  });
 
   const sound = await run(createWindow(), FAST, { describeServices: described(['places', 'list']) });
   assert.equal(sound.code, 0);
+  // Ce que l'application réelle annonce satisfait le contrôle (à la Corbeille et à l'ouverture près, fournies par Windows).
+  const { createServices } = require('../src/services/index.js');
+  assert.deepEqual(createServices({ operations: { trash: async () => {}, openPath: async () => '' } }).describe()['file-operations'], SOUND_OPERATIONS);
 
   // Méthode supplémentaire annoncée par le service.
   for (const methods of [['places', 'list', 'write'], ['list', 'places'], ['places'], [], undefined]) {
     const { code, report } = await run(createWindow(), FAST, { describeServices: described(methods) });
     assert.equal(code, 1, JSON.stringify(methods));
     assert.deepEqual(failed(report), [READ_ONLY_CHECK]);
-    assert.deepEqual(report.checks.find((item) => !item.ok).value, { methodes: methods ?? [], demandes: true });
+    assert.deepEqual(report.checks.find((item) => !item.ok).value, { methodes: methods ?? [], operations: SOUND_OPERATIONS, demandes: true });
+  }
+
+  // Opérations annoncées autrement : une fonction de plus, une suppression définitive, un remplacement possible,
+  // pas de Corbeille ou pas d'ouverture fournie par Windows, ou aucune annonce.
+  const unsound = [
+    { ...SOUND_OPERATIONS, methods: [...SOUND_OPERATIONS.methods, 'delete'] },
+    { ...SOUND_OPERATIONS, methods: ['createFolder', 'rename', 'copy', 'move', 'trash'] },
+    { ...SOUND_OPERATIONS, deletion: 'permanent' },
+    { ...SOUND_OPERATIONS, replace: 'ask' },
+    { ...SOUND_OPERATIONS, trash: false },
+    { ...SOUND_OPERATIONS, open: false },
+    { ...SOUND_OPERATIONS, methods: undefined },
+    null,
+  ];
+  for (const operations of unsound) {
+    const { code, report } = await run(createWindow(), FAST, { describeServices: described(['places', 'list'], operations) });
+    assert.equal(code, 1, JSON.stringify(operations));
+    assert.deepEqual(failed(report), [READ_ONLY_CHECK]);
+    assert.deepEqual(report.checks.find((item) => !item.ok).value, { methodes: ['places', 'list'], operations: JSON.parse(JSON.stringify(operations ?? {})), demandes: true });
   }
 
   // Demande d'écriture acceptée par la page.
@@ -634,7 +797,7 @@ test('explorateur : un service de fichiers qui sait écrire fait échouer l’au
   const { code, report } = await run(win, FAST, { describeServices: described(['places', 'list']) });
   assert.equal(code, 1);
   assert.deepEqual(failed(report), [READ_ONLY_CHECK]);
-  assert.deepEqual(report.checks.find((item) => !item.ok).value, { methodes: ['places', 'list'], demandes: accepted });
+  assert.deepEqual(report.checks.find((item) => !item.ok).value, { methodes: ['places', 'list'], operations: SOUND_OPERATIONS, demandes: accepted });
 
   // Chaque opération d'écriture, de suppression ou d'ouverture est tentée depuis la page.
   const attempts = win.webContents.executed.find((script) => script.includes("code !== 'unknown-method'"));
@@ -667,7 +830,7 @@ test('explorateur sous Windows : un dossier protégé est contrôlé ; si aucun 
   const win = createWindow();
   const { code, report } = await run(win, FAST, { platform: 'win32' });
   assert.equal(code, 0);
-  assert.equal(report.checks.length, FULL_CHECKS + 1);
+  assert.equal(report.checks.length, WINDOWS_CHECKS);
   const names = report.checks.map((item) => item.name);
   assert.equal(names.indexOf(PROTECTED_CHECK), names.indexOf(EXPLORER_CHECKS[5]) + 1, 'après le contrôle du dossier supprimé');
   assert.deepEqual(report.warnings, []);
@@ -689,7 +852,7 @@ test('explorateur sous Windows : un dossier protégé est contrôlé ; si aucun 
   const nested = createWindow((item) => (item.includes("reply.code === 'access-denied'") ? { index: 1, tried: { svi: 'lisible' } } : true));
   const second = await run(nested, FAST, { platform: 'win32' });
   assert.equal(second.code, 0);
-  assert.equal(second.report.checks.length, FULL_CHECKS + 1);
+  assert.equal(second.report.checks.length, WINDOWS_CHECKS);
   assert.deepEqual(second.report.warnings, []);
   const { executed } = nested.webContents;
   const walk = executed.findIndex((item) => /exOpen\("[A-Z]:\\\\Program Files"\)/.test(item) && /dataset\.path === "[A-Z]:\\\\Program Files"/.test(item));
@@ -719,7 +882,7 @@ test('explorateur sous Windows : un dossier protégé est contrôlé ; si aucun 
     });
     const skipped = await run(probing, FAST, { platform: 'win32' });
     assert.equal(skipped.code, 0, JSON.stringify(answer));
-    assert.equal(skipped.report.checks.length, FULL_CHECKS);
+    assert.equal(skipped.report.checks.length, WINDOWS_CHECKS - 1);
     assert.ok(!skipped.report.checks.some((item) => item.name === PROTECTED_CHECK));
     assert.equal(skipped.report.warnings.length, 1);
     assert.match(skipped.report.warnings[0], warning);
@@ -777,6 +940,650 @@ test('explorateur : chaque exécution reçoit un dossier d’essai neuf ; un anc
 });
 
 // ---------------------------------------------------------------------------------
+// Explorateur de fichiers : opérations réelles, menées dans l'interface et contrôlées sur le disque
+// ---------------------------------------------------------------------------------
+
+const { NAMES: ITEM, WORKSHOP_NAME } = operationsTest;
+
+/** L'atelier — le dossier des opérations — créé par l'auto-test à côté du dossier parcouru. */
+const workshopOf = (outDir) => path.join(path.dirname(fixtureOf(outDir)), WORKSHOP_NAME);
+
+/** Raison donnée aux opérations qui ne sont pas menées après un échec. */
+const notRun = (operation) => ({ 'non mené': `l'opération précédente n'a pas abouti (${operation})` });
+
+test('opérations : l’atelier est créé par l’auto-test, dans son dossier de sortie, à côté du dossier parcouru', () => {
+  const run = mkdtempSync(path.join(workDir, 'atelier-'));
+  const target = path.join(run, 'cible');
+  mkdirSync(target);
+  const workshop = operationsTest.createWorkshop(run, { linkTarget: target });
+  assert.equal(workshop.folder, path.join(run, "Atelier d'essai été 2026"));
+  assert.equal(workshop.link, path.join(workshop.folder, 'Lien vers le dossier parcouru'));
+  const content = operationsTest.contentOf(workshop.folder);
+  assert.deepEqual(Object.keys(content).sort(), [
+    'Lancer.cmd',
+    'Lettre à Zoé.txt',
+    'Lien vers le dossier parcouru',
+    "Photos d'été",
+    "Photos d'été/Lettre à Zoé.txt",
+    "Photos d'été/plage.jpg",
+    'À jeter',
+    'À jeter/brouillon.txt',
+  ].sort());
+  assert.deepEqual([content['Lien vers le dossier parcouru'], content["Photos d'été"], content['À jeter']], ['lien', 'dossier', 'dossier']);
+  // Deux lettres du même nom, de contenus différents : un remplacement se verrait.
+  assert.notEqual(content['Lettre à Zoé.txt'], content["Photos d'été/Lettre à Zoé.txt"]);
+
+  // Le script ne fait qu'une chose : laisser un fichier témoin à côté de lui. Son texte est en ASCII, fins de ligne de Windows.
+  const script = readFileSync(path.join(workshop.folder, 'Lancer.cmd'), 'latin1');
+  assert.equal(script, '@echo off\r\n> "%~dp0script-execute.txt" echo execute\r\n');
+  assert.match(script, /^[\x20-\x7e\r\n]+$/);
+
+  // Sans dossier vers lequel mener, aucun lien n'est créé.
+  const plain = operationsTest.createWorkshop(mkdtempSync(path.join(workDir, 'atelier-')));
+  assert.equal(plain.link, null);
+  assert.equal(existsSync(path.join(plain.folder, 'Lien vers le dossier parcouru')), false);
+});
+
+test('opérations : chaque opération est menée par des gestes — commandes, sélection, fenêtres de dialogue —, jamais par une demande directe', async () => {
+  const win = createWindow();
+  const { code, report, outDir } = await run(win);
+  assert.equal(code, 0);
+  const work = workshopOf(outDir);
+  const quoted = (...parts) => JSON.stringify(path.join(work, ...parts));
+
+  // Les gestes, dans l'ordre où l'utilisateur les ferait.
+  const gestures = win.webContents.executed.filter(isGesture).map((script) => script.slice(OPERATION_PRELUDE.length, -' })()'.length));
+  assert.deepEqual(gestures, [
+    // Nouveau dossier : un nom réservé, puis le bon.
+    `exOpen(${quoted()});`,
+    'exCommand("new-folder").click();',
+    'dialogType("CON"); dialogPress("confirm");',
+    `dialogType("Reçus d'août"); dialogPress("confirm");`,
+    // Coller devant un nom déjà pris : ignorer, puis conserver les deux.
+    'exSelect("Lettre à Zoé.txt");',
+    'exCommand("copy").click();',
+    `exOpen(${quoted("Photos d'été")});`,
+    'exCommand("paste").click();',
+    'dialogPress("skip");',
+    'exCommand("paste").click();',
+    'dialogPress("keep-both");',
+    // Renommer : un nom déjà pris, puis le bon.
+    'exSelect("Lettre à Zoé - Copie.txt");',
+    'exCommand("rename").click();',
+    'dialogType("plage.jpg"); dialogPress("confirm");',
+    'dialogType("Lettre relue.txt"); dialogPress("confirm");',
+    // Couper, coller : annuler, puis confirmer.
+    'exSelect("plage.jpg");',
+    'exCommand("cut").click();',
+    'exButton("Dossier parent").click();',
+    `exOpen(${quoted("Reçus d'août")});`,
+    'exCommand("paste").click();',
+    'dialogPress("cancel");',
+    'exCommand("paste").click();',
+    'dialogPress("confirm");',
+    // Copier un fichier et un dossier, coller.
+    'exButton("Dossier parent").click();',
+    `exSelect("Lettre à Zoé.txt", "Photos d'été");`,
+    'exCommand("copy").click();',
+    `exOpen(${quoted("Reçus d'août")});`,
+    'exCommand("paste").click();',
+    // Corbeille : annuler, puis confirmer.
+    'exButton("Dossier parent").click();',
+    'exSelect("À jeter");',
+    'exCommand("delete").click();',
+    'dialogPress("cancel");',
+    'exSelect("À jeter"); exCommand("delete").click();',
+    'dialogPress("confirm");',
+    // Ouvrir le script : annuler. (Hors de Windows, rien n'est jamais confié au système.)
+    `exOpen(${quoted('Lancer.cmd')});`,
+    'dialogPress("cancel");',
+  ]);
+  // Chaque geste est suivi de l'attente de l'état qui doit en résulter, observé dans la page.
+  const { executed } = win.webContents;
+  for (const [index, script] of executed.entries()) {
+    if (isGesture(script)) assert.ok(executed[index + 1].startsWith(OPERATION_PRELUDE) && executed[index + 1].endsWith('|| observed(); })()'), script.slice(-80));
+  }
+
+  // L'accès direct aux opérations ne sert qu'à constater des refus : deux pages, après les gestes.
+  const direct = executed.filter((script) => /window\.evolve\.files|\bops\./.test(script));
+  assert.equal(direct.length, 2);
+  for (const script of direct) {
+    assert.ok(executed.indexOf(script) > executed.findLastIndex(isGesture));
+    assert.match(script, /const ops = window\.evolve\.files;/);
+    assert.match(script, /return wrong\.length === 0 \|\| wrong; \}\)\(\)$/);
+    // Chaque demande y est attendue comme refusée, ou comme simple question « nom déjà pris ».
+    const requests = script.slice(script.indexOf('const question = async')).match(/\bops\.\w+\(/g).length;
+    const expectations = script.match(/await (?:refusal|question)\(/g).length;
+    assert.equal(requests, expectations);
+  }
+
+  // Le dossier de l'essai, où se trouve l'atelier, est atteint par « Dossier parent », depuis le dossier parcouru.
+  const first = executed.findIndex(isGesture);
+  const before = executed.slice(0, first);
+  assert.ok(before.at(-1).includes(`exContent().dataset.path === ${JSON.stringify(path.dirname(work))}`));
+  assert.ok(before.at(-2).includes('exButton("Dossier parent").click();'));
+
+  // Les deux captures d'écran des opérations : la question « nom déjà pris » et la confirmation de la Corbeille.
+  assert.deepEqual(report.captures.slice(6, 8), ['07-nom-deja-pris.png', '08-corbeille.png']);
+});
+
+test('opérations : à la fin, l’atelier contient exactement ce qui a été demandé ; sous Windows, la Corbeille et le script sont contrôlés', async () => {
+  for (const platform of ['linux', 'win32']) {
+    const win = createWindow();
+    const { code, report, outDir } = await run(win, FAST, { platform });
+    assert.equal(code, 0, platform);
+    const work = workshopOf(outDir);
+    const content = operationsTest.contentOf(work);
+    const letter = content['Lettre à Zoé.txt'];
+    const other = content["Photos d'été/Lettre à Zoé.txt"];
+    assert.notEqual(letter, other);
+    assert.deepEqual(content, {
+      'Lancer.cmd': content['Lancer.cmd'],
+      'Lettre à Zoé.txt': letter,
+      'Lien vers le dossier parcouru': 'lien',
+      "Photos d'été": 'dossier',
+      // La lettre déjà rangée là n'a pas été remplacée ; la copie conservée à côté a été renommée.
+      "Photos d'été/Lettre relue.txt": letter,
+      "Photos d'été/Lettre à Zoé.txt": other,
+      "Reçus d'août": 'dossier',
+      "Reçus d'août/Lettre à Zoé.txt": letter,
+      "Reçus d'août/Photos d'été": 'dossier',
+      "Reçus d'août/Photos d'été/Lettre relue.txt": letter,
+      "Reçus d'août/Photos d'été/Lettre à Zoé.txt": other,
+      "Reçus d'août/plage.jpg": content["Reçus d'août/plage.jpg"],
+      // Sous Windows seulement : le script confirmé a été exécuté.
+      ...(platform === 'win32' ? { 'script-execute.txt': content['script-execute.txt'] } : {}),
+    });
+    assert.equal(existsSync(path.join(work, 'À jeter')), false);
+
+    const names = report.checks.map((item) => item.name);
+    const trash = names.indexOf(OPERATIONS.trash);
+    if (platform === 'win32') {
+      // Deux contrôles de plus : le dossier est dans la Corbeille, intact ; le script a été exécuté.
+      assert.deepEqual(names.slice(trash, trash + 4), [OPERATIONS.trash, OPERATIONS.recycled, OPERATIONS.open, OPERATIONS.executed]);
+      assert.equal(report.recycled.from, path.join(work, 'À jeter'));
+      assert.ok(report.recycled.record.startsWith(path.join(win.recycleBin, 'S-1-5-21-')) && path.basename(report.recycled.record).startsWith('$I'));
+      assert.equal(report.recycled.content, path.join(path.dirname(report.recycled.record), `$R${path.basename(report.recycled.record).slice(2)}`));
+      assert.deepEqual(readdirSync(report.recycled.content), ['brouillon.txt']);
+      assert.equal(readFileSync(path.join(report.recycled.content, 'brouillon.txt'), 'utf8'), 'Brouillon à jeter.\r\n');
+      // Le script n'est confié à Windows qu'une fois, après la réponse « Ouvrir ».
+      const gestures = win.webContents.executed.filter(isGesture).map((script) => script.slice(OPERATION_PRELUDE.length, -' })()'.length));
+      assert.deepEqual(gestures.slice(-4), [`exOpen(${JSON.stringify(path.join(work, 'Lancer.cmd'))});`, 'dialogPress("cancel");', `exOpen(${JSON.stringify(path.join(work, 'Lancer.cmd'))});`, 'dialogPress("confirm");']);
+    } else {
+      assert.deepEqual(names.slice(trash, trash + 2), [OPERATIONS.trash, OPERATIONS.open]);
+      assert.ok(!names.includes(OPERATIONS.recycled) && !names.includes(OPERATIONS.executed));
+      assert.equal(report.recycled, null);
+    }
+  }
+});
+
+test('opérations : un explorateur fautif fait échouer l’opération en cause — créer, coller, renommer, déplacer, copier, jeter, ouvrir', async () => {
+  const UI = [OPERATIONS.create, OPERATIONS.collision, OPERATIONS.rename, OPERATIONS.move, OPERATIONS.copy, OPERATIONS.trash, OPERATIONS.open];
+  /** Fautes : [intitulé, moment (geste, état, fenêtre ouverte), altération du disque, opération qui doit échouer, valeur observée]. */
+  const faults = [
+    [
+      'un nom réservé est accepté',
+      (gesture, state, dialog) => dialog === 'new-folder' && state.typed === 'CON' && gesture === 'dialogPress("confirm")',
+      (state) => mkdirSync(path.join(state.folder, 'CON')),
+      OPERATIONS.create,
+      { manquants: [], inattendus: ['CON'], modifies: [] },
+    ],
+    [
+      'le dossier annoncé n’est pas créé',
+      (gesture, state, dialog) => dialog === 'new-folder' && state.typed === ITEM.created && gesture === 'dialogPress("confirm")',
+      (state) => rmSync(path.join(state.folder, ITEM.created), { recursive: true }),
+      OPERATIONS.create,
+      { manquants: [ITEM.created], inattendus: [], modifies: [] },
+    ],
+    [
+      '« Ignorer » remplace l’élément en place',
+      (gesture) => gesture === 'dialogPress("skip")',
+      (state) => cpSync(state.clipboard.items[0], path.join(state.folder, ITEM.letter)),
+      OPERATIONS.collision,
+      { etape: 'réponse « Ignorer »', disque: { manquants: [], inattendus: [], modifies: [`${ITEM.photos}/${ITEM.letter}`] } },
+    ],
+    [
+      '« Ignorer » copie tout de même',
+      (gesture) => gesture === 'dialogPress("skip")',
+      (state) => cpSync(state.clipboard.items[0], path.join(state.folder, ITEM.kept)),
+      OPERATIONS.collision,
+      { etape: 'réponse « Ignorer »', disque: { manquants: [], inattendus: [`${ITEM.photos}/${ITEM.kept}`], modifies: [] } },
+    ],
+    [
+      '« Conserver les deux » remplace l’élément en place',
+      (gesture) => gesture === 'dialogPress("keep-both")',
+      (state) => cpSync(state.clipboard.items[0], path.join(state.folder, ITEM.letter)),
+      OPERATIONS.collision,
+      { manquants: [], inattendus: [], modifies: [`${ITEM.photos}/${ITEM.letter}`] },
+    ],
+    [
+      'la copie conservée n’a pas le contenu de l’original',
+      (gesture) => gesture === 'dialogPress("keep-both")',
+      (state) => appendFileSync(path.join(state.folder, ITEM.kept), 'x'),
+      OPERATIONS.collision,
+      { manquants: [], inattendus: [], modifies: [`${ITEM.photos}/${ITEM.kept}`] },
+    ],
+    [
+      'renommer laisse l’ancien nom à côté du nouveau',
+      (gesture, state, dialog) => dialog === 'rename' && state.typed === ITEM.renamed && gesture === 'dialogPress("confirm")',
+      (state) => cpSync(path.join(state.folder, ITEM.renamed), path.join(state.folder, ITEM.kept)),
+      OPERATIONS.rename,
+      { manquants: [], inattendus: [`${ITEM.photos}/${ITEM.kept}`], modifies: [] },
+    ],
+    [
+      'renommer altère le contenu',
+      (gesture, state, dialog) => dialog === 'rename' && state.typed === ITEM.renamed && gesture === 'dialogPress("confirm")',
+      (state) => writeFileSync(path.join(state.folder, ITEM.renamed), 'autre contenu'),
+      OPERATIONS.rename,
+      { manquants: [], inattendus: [], modifies: [`${ITEM.photos}/${ITEM.renamed}`] },
+    ],
+    [
+      'le déplacement a lieu malgré « Annuler »',
+      (gesture, state, dialog) => dialog === 'move' && gesture === 'dialogPress("cancel")',
+      (state) => renameSync(state.clipboard.items[0], path.join(state.folder, ITEM.picture)),
+      OPERATIONS.move,
+      { etape: 'réponse « Annuler »', disque: { manquants: [`${ITEM.photos}/${ITEM.picture}`], inattendus: [`${ITEM.created}/${ITEM.picture}`], modifies: [] } },
+    ],
+    [
+      'le déplacement laisse l’original en place',
+      (gesture, state, dialog) => dialog === 'move' && gesture === 'dialogPress("confirm")',
+      (state) => cpSync(path.join(state.folder, ITEM.picture), path.join(state.folder, '..', ITEM.photos, ITEM.picture)),
+      OPERATIONS.move,
+      { manquants: [], inattendus: [`${ITEM.photos}/${ITEM.picture}`], modifies: [] },
+    ],
+    [
+      'le dossier est copié sans son contenu',
+      (gesture, state) => gesture === 'exCommand("paste")' && state.clipboard?.items.length === 2,
+      (state) => rmSync(path.join(state.folder, ITEM.photos, ITEM.renamed)),
+      OPERATIONS.copy,
+      { manquants: [`${ITEM.created}/${ITEM.photos}/${ITEM.renamed}`], inattendus: [], modifies: [] },
+    ],
+    [
+      'la copie retire l’original',
+      (gesture, state) => gesture === 'exCommand("paste")' && state.clipboard?.items.length === 2,
+      (state) => rmSync(state.clipboard.items[0]),
+      OPERATIONS.copy,
+      { manquants: [ITEM.letter], inattendus: [], modifies: [] },
+    ],
+    [
+      'l’envoi à la Corbeille a lieu malgré « Annuler »',
+      (gesture, state, dialog) => dialog === 'trash' && gesture === 'dialogPress("cancel")',
+      (state) => rmSync(path.join(state.folder, ITEM.discard), { recursive: true }),
+      OPERATIONS.trash,
+      { etape: 'réponse « Annuler »', disque: { manquants: [ITEM.discard, `${ITEM.discard}/${ITEM.draft}`], inattendus: [], modifies: [] } },
+    ],
+    [
+      'l’élément confirmé reste à sa place',
+      (gesture, state, dialog) => dialog === 'trash' && gesture === 'dialogPress("confirm")',
+      (state) => {
+        mkdirSync(path.join(state.folder, ITEM.discard));
+        writeFileSync(path.join(state.folder, ITEM.discard, ITEM.draft), 'Brouillon à jeter.\r\n');
+      },
+      OPERATIONS.trash,
+      { manquants: [], inattendus: [ITEM.discard, `${ITEM.discard}/${ITEM.draft}`], modifies: [] },
+    ],
+    [
+      'le script est exécuté malgré « Annuler »',
+      (gesture, state, dialog) => dialog === 'open' && gesture === 'dialogPress("cancel")',
+      (state) => writeFileSync(path.join(state.folder, ITEM.marker), 'execute\r\n'),
+      OPERATIONS.open,
+      { etape: 'réponse « Annuler »', disque: { manquants: [], inattendus: [ITEM.marker], modifies: [] } },
+    ],
+  ];
+  for (const [label, when, alter, failing, value] of faults) {
+    let altered = 0;
+    const win = createWindow(() => true, {
+      after: (gesture, state, dialog) => {
+        if (altered === 0 && when(gesture, state, dialog)) {
+          altered += 1;
+          alter(state);
+        }
+      },
+    });
+    const { code, report } = await run(win);
+    assert.equal(altered, 1, label);
+    assert.equal(code, 1, label);
+    // L'opération en cause échoue, valeur observée à l'appui ; les suivantes, qui partent de l'état qu'elle laisse,
+    // ne sont pas menées — et le constat final signale lui aussi l'écart.
+    const index = UI.indexOf(failing);
+    assert.deepEqual(failed(report), [...UI.slice(index), OPERATIONS.state], label);
+    assert.deepEqual(report.checks.find((item) => item.name === failing).value, value, label);
+    for (const name of UI.slice(index + 1)) {
+      assert.deepEqual(report.checks.find((item) => item.name === name).value, notRun(failing.split(' : ')[0]), label);
+    }
+    // Les autres contrôles ont tout de même lieu : leur nombre ne change pas.
+    assert.equal(report.checks.length, FULL_CHECKS, label);
+    assert.deepEqual(report.errors, [], label);
+  }
+});
+
+test('opérations : un geste sans effet à l’écran fait échouer l’opération ; la fenêtre de dialogue restée ouverte est refermée', async () => {
+  // La question « nom déjà pris » n'apparaît pas : l'état observé est consigné.
+  const seen = { dialogue: null, notifications: ['Copie terminée'], selection: [], 'presse-papiers': '1 élément à coller', page: 'folder' };
+  const win = createWindow((script) => (script.includes('existe déjà') && script.includes('|| observed();') ? seen : true));
+  const { code, report } = await run(win);
+  assert.equal(code, 1);
+  assert.deepEqual(report.checks.find((item) => item.name === OPERATIONS.collision).value, { etape: 'commande « Coller »', obtenu: seen });
+  assert.deepEqual(report.checks.find((item) => item.name === OPERATIONS.rename).value, notRun('« Coller » devant un nom déjà pris'));
+  // Aucune réponse n'est donnée à une question qui n'a pas été posée.
+  const gestures = win.webContents.executed.filter(isGesture).map((script) => script.slice(OPERATION_PRELUDE.length, -' })()'.length));
+  assert.equal(gestures.at(-1), `dialog()?.querySelector('[data-action="cancel"], [data-action="close"]')?.click();`);
+  assert.equal(gestures.at(-2), 'exCommand("paste").click();');
+  assert.ok(!gestures.includes('dialogPress("skip");'));
+  // La capture de la question n'est pas prise ; les suivantes le sont.
+  assert.deepEqual(report.captures, CAPTURES.filter((name) => name !== '07-nom-deja-pris.png' && name !== '08-corbeille.png'));
+
+  // Un geste impossible (élément absent de la page) : consigné, sans interrompre l'auto-test.
+  const broken = createWindow((script) => {
+    if (isGesture(script) && script.includes('exCommand("rename")')) throw new TypeError("Cannot read properties of null (reading 'click')");
+    return true;
+  });
+  const second = await run(broken);
+  assert.equal(second.code, 1);
+  assert.deepEqual(second.report.checks.find((item) => item.name === OPERATIONS.rename).value, {
+    etape: 'commande « Renommer »',
+    geste: "impossible : Cannot read properties of null (reading 'click')",
+  });
+  assert.deepEqual(second.report.errors, []);
+  assert.equal(second.report.checks.length, FULL_CHECKS);
+});
+
+test('opérations : les demandes à refuser sont présentées à l’application ; une seule acceptée fait échouer', async () => {
+  const win = createWindow();
+  const { code, outDir } = await run(win);
+  assert.equal(code, 0);
+  const work = workshopOf(outDir);
+  const quoted = (...parts) => JSON.stringify(path.join(work, ...parts));
+  const [unconfirmed, refused] = win.webContents.executed.filter((script) => script.includes('const ops = window.evolve.files;'));
+
+  // Sans confirmation ; remplacer ; supprimer définitivement.
+  const letter = quoted('Lettre à Zoé.txt');
+  const photos = quoted("Photos d'été");
+  for (const needle of [
+    `() => ops.trash([${letter}]), "needs-confirmation"`,
+    `() => ops.trash([${letter}], { confirmed: false }), "needs-confirmation"`,
+    `() => ops.move([${letter}], ${photos}), "needs-confirmation"`,
+    `() => ops.open(${quoted('Lancer.cmd')}), "needs-confirmation"`,
+    `() => ops.copy([${letter}], ${photos}, { onCollision: 'replace' }), "bad-arguments"`,
+    `() => ops.copy([${letter}], ${photos}, { overwrite: true }), "bad-arguments"`,
+    `() => ops.move([${letter}], ${photos}, { confirmed: true, onCollision: 'replace' }), "bad-arguments"`,
+    `() => ops.trash([${letter}], { confirmed: true, permanent: true }), "bad-arguments"`,
+    `() => ops.rename(${letter}, "Lancer.cmd"), "collision"`,
+    `() => ops.createFolder(${quoted()}, "Photos d'été"), "collision"`,
+    // Devant un nom déjà pris, la question est posée : rien n'est copié ni déplacé.
+    `await question("copier devant un nom déjà pris", () => ops.copy([${letter}], ${photos}));`,
+    `await question("déplacer devant un nom déjà pris", () => ops.move([${letter}], ${photos}, { confirmed: true }));`,
+  ]) {
+    assert.ok(unconfirmed.includes(needle), needle);
+  }
+
+  // Emplacements de base, liens, chemins, noms.
+  const link = quoted('Lien vers le dossier parcouru');
+  // Chemins interdits : l'un remonte puis revient dans l'atelier, l'autre est relatif au dossier de l'essai.
+  const climbing = `${work}${path.sep}..${path.sep}${WORKSHOP_NAME}`;
+  const relative = `${path.basename(path.dirname(work))}${path.sep}${WORKSHOP_NAME}`;
+  assert.match(relative, /^essai-[A-Za-z0-9]{6}[\\/]Atelier d'essai été 2026$/);
+  const climbingLetter = JSON.stringify(path.join(climbing, 'Lettre à Zoé.txt').replace(work, climbing));
+  const relativeLetter = JSON.stringify(`${relative}${path.sep}Lettre à Zoé.txt`);
+  assert.equal(JSON.parse(climbingLetter), `${climbing}${path.sep}Lettre à Zoé.txt`);
+  for (const needle of [
+    `() => ops.rename(${JSON.stringify(path.parse(work).root)}, 'Evolve'), "protected"`,
+    `await refusal('renommer le dossier personnel ' + place.id, () => ops.rename(place.path, parts.pop()), 'protected');`,
+    `() => ops.createFolder(${JSON.stringify(climbing)}, 'Evolve'), "invalid-path"`,
+    `() => ops.rename(${climbingLetter}, 'x.txt'), "invalid-path"`,
+    `() => ops.trash([${climbingLetter}], { confirmed: true }), "invalid-path"`,
+    `() => ops.rename(${relativeLetter}, 'x.txt'), "invalid-path"`,
+    `() => ops.trash([${relativeLetter}], { confirmed: true }), "invalid-path"`,
+    `() => ops.copy([${letter}], ${JSON.stringify(relative)}), "invalid-path"`,
+    `() => ops.move([${relativeLetter}], ${photos}, { confirmed: true }), "invalid-path"`,
+    `() => ops.open(''), "invalid-path"`,
+    `() => ops.createFolder(${quoted()}, "CON"), "invalid-name"`,
+    `() => ops.createFolder(${quoted()}, "nul.txt"), "invalid-name"`,
+    `() => ops.createFolder(${quoted()}, "a/b"), "invalid-name"`,
+    `() => ops.createFolder(${quoted()}, "fin."), "invalid-name"`,
+    `() => ops.createFolder(${quoted()}, ""), "invalid-name"`,
+    `() => ops.rename(${letter}, 'LPT1.txt'), "invalid-name"`,
+    `() => ops.copy([${photos}], ${photos}), "into-itself"`,
+    `() => ops.move([${photos}], ${photos}, { confirmed: true }), "into-itself"`,
+    `() => ops.open(${photos}), "not-a-file"`,
+    `() => ops.createFolder(), "bad-arguments"`,
+    `() => ops.rename(${link}, 'Autre lien'), "link-not-supported"`,
+    `() => ops.trash([${link}], { confirmed: true }), "link-not-supported"`,
+    `() => ops.copy([${link}], ${photos}), "link-not-supported"`,
+    `() => ops.move([${link}], ${photos}, { confirmed: true }), "link-not-supported"`,
+    `() => ops.open(${link}), "link-not-supported"`,
+  ]) {
+    assert.ok(refused.includes(needle), needle);
+  }
+  // Hors de Windows : ni chemin réseau, ni dossier du système.
+  assert.ok(!refused.includes('localhost') && !refused.includes('%SystemRoot%'));
+
+  // Aucune demande ne peut nuire, même acceptée par erreur. Hors celles qui désignent l'atelier — par son
+  // chemin, ou par le nom, tiré au hasard, du dossier de l'essai —, il ne reste que : un lecteur, qui ne peut
+  // pas être renommé ; un chemin vide ; une demande sans argument. Et chaque dossier personnel n'est
+  // « renommé » que sous son propre nom.
+  const inWorkshop = (args) => args.includes(JSON.stringify(work).slice(1, -1)) || args.includes(JSON.stringify(relative).slice(1, -1));
+  const requests = [...refused.matchAll(/\(\) => ops\.(\w+)\((.*)\), "[a-z-]+"\);/g)];
+  assert.equal(requests.length, 40);
+  assert.deepEqual(requests.filter(([, , args]) => !inWorkshop(args)).map(([, method, args]) => `${method}(${args})`).sort(), [
+    `rename(${JSON.stringify(path.parse(work).root)}, 'Evolve')`,
+    `open('')`,
+    `createFolder()`,
+  ].sort());
+  assert.equal(refused.match(/\bops\.\w+\(/g).length, requests.length + 1); // + les dossiers personnels
+  assert.ok(!/ops\.(?:trash|move|copy|createFolder|open)\(\s*place\b/.test(refused));
+  // Ni la Corbeille, ni un déplacement, ne sont jamais demandés pour un élément extérieur à l'atelier.
+  for (const [, method, args] of requests) {
+    if (method === 'trash' || method === 'move') assert.ok(inWorkshop(args), `${method}(${args})`);
+  }
+
+  // Une demande acceptée, ou refusée pour une autre raison : le contrôle échoue, la demande est nommée.
+  for (const [needle, name] of [["'needs-confirmation'", OPERATIONS.unconfirmed], ['link-not-supported', OPERATIONS.refused]]) {
+    const wrong = [{ demande: 'déplacer, sans confirmation', attendu: 'needs-confirmation', obtenu: 'accepté' }];
+    const accepting = createWindow((script) => (script.includes('const ops = window.evolve.files;') && script.includes(needle.replaceAll("'", '"')) ? wrong : true));
+    const result = await run(accepting);
+    assert.equal(result.code, 1);
+    assert.deepEqual(failed(result.report), [name]);
+    assert.deepEqual(result.report.checks.find((item) => !item.ok).value, wrong);
+  }
+  // La page ne répond pas : échec, lui aussi.
+  const silent = createWindow((script) => {
+    if (script.includes('const ops = window.evolve.files;')) throw new Error('passerelle absente');
+    return true;
+  });
+  const third = await run(silent);
+  assert.deepEqual(failed(third.report), [OPERATIONS.unconfirmed, OPERATIONS.refused]);
+  assert.equal(third.report.checks.find((item) => !item.ok).value, 'exception : passerelle absente');
+
+  // Une demande « refusée » qui laisse pourtant une trace dans l'atelier : le constat final échoue.
+  const leakingDir = freshDir();
+  const leaking = createWindow((script) => {
+    if (script.includes('const ops = window.evolve.files;') && script.includes('invalid-name')) mkdirSync(path.join(workshopOf(leakingDir), 'CON'));
+    return true;
+  });
+  const fourth = await run(leaking, FAST, { outDir: leakingDir });
+  assert.equal(fourth.code, 1);
+  assert.deepEqual(failed(fourth.report), [OPERATIONS.state]);
+  assert.deepEqual(fourth.report.checks.find((item) => !item.ok).value, { manquants: [], inattendus: ['CON'], modifies: [] });
+});
+
+test('opérations sous Windows : chemins réseau et dossiers du système, « renommés » sous leur propre nom', async () => {
+  // Dossiers du système imités : désignés, comme sous Windows, par des variables d'environnement.
+  const system = mkdtempSync(path.join(workDir, 'systeme-'));
+  const folders = { SystemRoot: path.join(system, 'Windows'), ProgramFiles: path.join(system, 'Program Files'), APPDATA: path.join(system, 'Users', 'lea', 'AppData', 'Roaming') };
+  for (const folder of Object.values(folders)) mkdirSync(folder, { recursive: true });
+  const names = ['SystemRoot', 'ProgramFiles', 'ProgramData', 'APPDATA', 'LOCALAPPDATA'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  Object.assign(process.env, folders, { ProgramData: path.join(system, 'Absent') });
+  let executed;
+  let work;
+  try {
+    const win = createWindow();
+    const { code, outDir } = await run(win, FAST, { platform: 'win32' });
+    assert.equal(code, 0);
+    ({ executed } = win.webContents);
+    work = workshopOf(outDir);
+  } finally {
+    for (const name of names) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  }
+  const refused = executed.filter((script) => script.includes('const ops = window.evolve.files;'))[1];
+  const letter = path.join(work, 'Lettre à Zoé.txt');
+  const relative = `${path.basename(path.dirname(work))}${path.sep}${WORKSHOP_NAME}${path.sep}Lettre à Zoé.txt`;
+  // Chacune de ces formes désigne la lettre de l'atelier, ou rien. (Ici, hors de Windows, l'atelier n'est
+  // pas sur un lecteur désigné par une lettre : « C » en tient lieu.)
+  for (const needle of [
+    `() => ops.rename(${JSON.stringify(`\\\\localhost\\C$\\${letter.slice(1)}`)}, 'x.txt'), "invalid-path"`,
+    `() => ops.rename(${JSON.stringify(`\\\\?\\${letter}`)}, 'x.txt'), "invalid-path"`,
+    `() => ops.trash([${JSON.stringify(`${letter}:flux`)}], { confirmed: true }), "invalid-path"`,
+    `() => ops.rename(${JSON.stringify(`C:${relative}`)}, 'x.txt'), "invalid-path"`,
+    `() => ops.open(${JSON.stringify(`${work}\\NUL`)}), "invalid-path"`,
+    // Chaque dossier du système présent sur la machine, par son emplacement réel et sous son propre nom.
+    `await refusal("renommer le dossier du système %SystemRoot%", () => ops.rename(${JSON.stringify(realpathSync.native(folders.SystemRoot))}, "Windows"), "protected");`,
+    `await refusal("renommer le dossier du système %ProgramFiles%", () => ops.rename(${JSON.stringify(realpathSync.native(folders.ProgramFiles))}, "Program Files"), "protected");`,
+    `await refusal("renommer le dossier du système %APPDATA%", () => ops.rename(${JSON.stringify(realpathSync.native(folders.APPDATA))}, "Roaming"), "protected");`,
+  ]) {
+    assert.ok(refused.includes(needle), needle);
+  }
+  // Variable absente, ou dossier introuvable : aucune demande.
+  assert.ok(!refused.includes('%ProgramData%') && !refused.includes('%LOCALAPPDATA%'));
+});
+
+test('opérations sous Windows : un dossier absent de la Corbeille, ou qui n’y est pas intact, fait échouer', async () => {
+  /** Fautes : [intitulé, altération de la Corbeille après l'envoi, valeur observée]. */
+  const faults = [
+    [
+      'supprimé définitivement : ni fiche, ni élément',
+      (owner) => rmSync(owner, { recursive: true }),
+      (found) => assert.deepEqual(found.value, { corbeille: found.bin, 'élément recherché': found.from, 'trouvé': false }),
+    ],
+    [
+      'fiche sans élément',
+      (owner) => rmSync(path.join(owner, readdirSync(owner).find((name) => name.startsWith('$R'))), { recursive: true }),
+      (found) => assert.deepEqual([Object.keys(found.value), found.value['élément']], [['fiche', 'élément'], 'absent de la Corbeille']),
+    ],
+    [
+      'contenu perdu en route',
+      (owner) => rmSync(path.join(owner, readdirSync(owner).find((name) => name.startsWith('$R')), ITEM.draft)),
+      (found) => assert.deepEqual(found.value, { manquants: [ITEM.draft], inattendus: [], modifies: [] }),
+    ],
+    [
+      'contenu altéré',
+      (owner) => writeFileSync(path.join(owner, readdirSync(owner).find((name) => name.startsWith('$R')), ITEM.draft), 'autre'),
+      (found) => assert.deepEqual(found.value, { manquants: [], inattendus: [], modifies: [ITEM.draft] }),
+    ],
+    [
+      'fiche d’un autre emplacement',
+      (owner) => {
+        const record = path.join(owner, readdirSync(owner).find((name) => name.startsWith('$I')));
+        const bytes = readFileSync(record);
+        bytes.write('X', 28, 'utf16le'); // premier caractère du chemin d'origine
+        writeFileSync(record, bytes);
+      },
+      (found) => assert.equal(found.value['trouvé'], false),
+    ],
+  ];
+  for (const [label, alter, verify] of faults) {
+    const win = createWindow(() => true, {
+      after: (gesture, state, dialog) => {
+        if (dialog === 'trash' && gesture === 'dialogPress("confirm")') alter(path.join(state.bin, readdirSync(state.bin)[0]));
+      },
+    });
+    const { code, report, outDir } = await run(win, FAST, { platform: 'win32' });
+    assert.equal(code, 1, label);
+    // Seul ce contrôle échoue : le dossier a bien quitté l'atelier, et la suite des opérations a lieu.
+    assert.deepEqual(failed(report), [OPERATIONS.recycled], label);
+    assert.equal(report.checks.length, WINDOWS_CHECKS, label);
+    assert.equal(report.recycled, null, label);
+    verify({ value: report.checks.find((item) => !item.ok).value, bin: win.recycleBin, from: path.join(workshopOf(outDir), ITEM.discard) });
+  }
+
+  // Corbeille désignée mais introuvable (lecteur sans Corbeille) : échec, et non contrôle omis.
+  const absent = createWindow();
+  const result = await run(absent, FAST, { platform: 'win32', recycleBin: path.join(workDir, 'aucune-corbeille') });
+  assert.deepEqual(failed(result.report), [OPERATIONS.recycled]);
+
+  // L'envoi à la Corbeille n'a pas abouti : la Corbeille n'est pas examinée.
+  const stuck = createWindow(() => true, {
+    after: (gesture, state, dialog) => {
+      if (dialog === 'trash' && gesture === 'dialogPress("cancel")') rmSync(path.join(state.folder, ITEM.discard), { recursive: true });
+    },
+  });
+  const third = await run(stuck, FAST, { platform: 'win32' });
+  assert.deepEqual(failed(third.report), [OPERATIONS.trash, OPERATIONS.recycled, OPERATIONS.open, OPERATIONS.executed, OPERATIONS.state]);
+  assert.deepEqual(third.report.checks.find((item) => item.name === OPERATIONS.recycled).value, notRun('« Envoyer à la Corbeille »'));
+
+  // Hors de Windows, une Corbeille peut être désignée : elle est alors examinée de la même façon.
+  const elsewhere = createWindow();
+  const fourth = await run(elsewhere, FAST, { recycleBin: elsewhere.recycleBin });
+  assert.equal(fourth.code, 0);
+  assert.equal(fourth.report.checks.length, FULL_CHECKS + 1);
+  assert.equal(fourth.report.recycled.from, path.join(workshopOf(fourth.outDir), ITEM.discard));
+});
+
+test('opérations sous Windows : le script confirmé doit réellement s’exécuter — fichier témoin attendu, même tardif', async () => {
+  // Windows n'exécute rien : le fichier témoin n'apparaît pas.
+  const idle = createWindow(() => true, {
+    after: (gesture, state, dialog) => {
+      if (dialog === 'open' && gesture === 'dialogPress("confirm")') rmSync(path.join(state.folder, ITEM.marker));
+    },
+  });
+  const first = await run(idle, { ...FAST, response: 60 }, { platform: 'win32' });
+  assert.equal(first.code, 1);
+  assert.deepEqual(failed(first.report), [OPERATIONS.executed]);
+  assert.deepEqual(first.report.checks.find((item) => !item.ok).value, { 'fichier témoin': 'absent', attendu: path.join(workshopOf(first.outDir), ITEM.marker) });
+
+  // Le script met un moment à s'exécuter : le fichier témoin est attendu.
+  const slow = createWindow(() => true, {
+    after: (gesture, state, dialog) => {
+      if (dialog !== 'open' || gesture !== 'dialogPress("confirm")') return;
+      const marker = path.join(state.folder, ITEM.marker);
+      rmSync(marker);
+      setTimeout(() => writeFileSync(marker, 'execute \r\n'), 40);
+    },
+  });
+  const second = await run(slow, { ...FAST, response: 2_000 }, { platform: 'win32' });
+  assert.equal(second.code, 0);
+  // Son contenu importe peu : seule sa présence prouve l'exécution.
+  assert.equal(readFileSync(path.join(workshopOf(second.outDir), ITEM.marker), 'utf8'), 'execute \r\n');
+
+  // Le script laisse autre chose que son fichier témoin : l'atelier n'a plus le contenu attendu.
+  const messy = createWindow(() => true, {
+    after: (gesture, state, dialog) => {
+      if (dialog === 'open' && gesture === 'dialogPress("confirm")') writeFileSync(path.join(state.folder, 'autre.txt'), '');
+    },
+  });
+  const third = await run(messy, FAST, { platform: 'win32' });
+  assert.deepEqual(failed(third.report), [OPERATIONS.executed, OPERATIONS.state]);
+  assert.deepEqual(third.report.checks.find((item) => !item.ok).value, { manquants: [], inattendus: ['autre.txt'], modifies: [] });
+});
+
+test('opérations : lien d’essai impossible à créer — les autres refus sont contrôlés, un avertissement le signale', async () => {
+  const fsModule = require('node:fs');
+  const original = fsModule.symlinkSync;
+  fsModule.symlinkSync = () => {
+    throw Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' });
+  };
+  let result;
+  let win;
+  try {
+    win = createWindow();
+    result = await run(win);
+  } finally {
+    fsModule.symlinkSync = original;
+  }
+  assert.equal(result.code, 0);
+  assert.equal(result.report.checks.length, FULL_CHECKS);
+  assert.deepEqual(result.report.warnings, ["lien d'essai impossible à créer sur cette machine : le refus des opérations sur les liens n'a pas été vérifié"]);
+  const refused = win.webContents.executed.filter((script) => script.includes('const ops = window.evolve.files;'))[1];
+  assert.ok(!refused.includes('link-not-supported') && refused.includes('into-itself'));
+  assert.equal(existsSync(path.join(workshopOf(result.outDir), ITEM.link)), false);
+});
+
+// ---------------------------------------------------------------------------------
 // Services et scénarios
 // ---------------------------------------------------------------------------------
 
@@ -796,6 +1603,7 @@ test('l’état des services est joint au rapport ; son absence est un simple av
   const described = {
     settings: { state: 'available', storage: 'memory', file: null },
     files: { state: 'available', access: 'read-only', places: 6, drives: 1, methods: ['places', 'list'], events: [] },
+    'file-operations': SOUND_OPERATIONS,
   };
   const first = await run(createWindow(), FAST, { describeServices: () => described });
   assert.equal(first.code, 0);

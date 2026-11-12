@@ -137,6 +137,14 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     exposed: {},
     ipcListeners: new Map(),
     ipcHandlers: new Map(),
+    /** Éléments envoyés à la fausse Corbeille (shell.trashItem) : { from, to }, dans l'ordre. */
+    trashed: [],
+    /** Faux : la Corbeille ne peut recevoir aucun élément — Windows abandonne, rien n'est supprimé. */
+    recycleBin: true,
+    /** Fichiers confiés à l'application associée (shell.openPath), dans l'ordre. */
+    opened: [],
+    /** Texte renvoyé par shell.openPath : vide en cas de réussite, sinon la description de l'échec. */
+    openResult: '',
   };
 
   let resolveReady;
@@ -360,6 +368,30 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
             state.requestFilterUrls = args.length > 1 ? args[0] : null;
           },
         },
+      },
+    },
+    /**
+     * Seules deux fonctions du module « shell » existent ici : l'envoi à la
+     * Corbeille et l'ouverture par l'application associée. Toute autre
+     * (openExternal, writeShortcutLink…) échouerait : Evolve ne s'en sert pas.
+     */
+    shell: {
+      /** Comme Windows : l'élément quitte son dossier pour la Corbeille, ou l'opération est abandonnée et il reste en place. */
+      async trashItem(target) {
+        if (typeof target !== 'string' || !path.isAbsolute(target)) throw new Error('faux electron : trashItem attend un chemin complet');
+        if (!state.recycleBin) throw new Error('Operation was aborted');
+        if (!fs.existsSync(target)) throw new Error('Failed to parse path');
+        const bin = path.join(tempDir, 'corbeille');
+        fs.mkdirSync(bin, { recursive: true });
+        const to = path.join(bin, `${state.trashed.length + 1}-${path.basename(target)}`);
+        fs.renameSync(target, to);
+        state.trashed.push({ from: target, to });
+      },
+      /** Comme Electron : la promesse renvoie un texte vide, ou la description de l'échec. */
+      async openPath(target) {
+        if (typeof target !== 'string' || !path.isAbsolute(target)) throw new Error('faux electron : openPath attend un chemin complet');
+        state.opened.push(target);
+        return state.openResult;
       },
     },
     contextBridge: {

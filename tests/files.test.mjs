@@ -77,6 +77,7 @@ function windowsDisk(extra = {}) {
     },
     errors: extra.errors,
     hang: extra.hang,
+    listedLinks: extra.listedLinks,
   });
 }
 
@@ -126,7 +127,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('le service ne propose que deux opérations, toutes deux de consultation', () => {
   const { service } = windowsService();
-  assert.deepEqual(Object.keys(service).sort(), ['list', 'places', 'status']);
+  // « guard » : les contrôles de chemins, remis aux opérations sur les fichiers (voir tests/file-operations.test.mjs).
+  assert.deepEqual(Object.keys(service).sort(), ['guard', 'list', 'places', 'status']);
+  assert.ok(Object.isFrozen(service.guard));
+  assert.deepEqual(Object.keys(service.guard).sort(), ['checkName', 'checkPath', 'comparable', 'isInside', 'path', 'platform', 'resolve', 'rootOf', 'roots', 'sameLocation']);
   assert.deepEqual(service.status(), { access: 'read-only', places: null, drives: null });
   assert.deepEqual(READ_ONLY_CALLS, ['opendir', 'lstat', 'realpath', 'statfs']);
   assert.ok(Object.isFrozen(READ_ONLY_CALLS) && Object.isFrozen(PLACE_IDS) && Object.isFrozen(DEFAULT_LIMITS));
@@ -489,20 +493,39 @@ test('les liens d’un dossier ne sont jamais suivis pendant sa lecture', async 
 });
 
 test('élément ni fichier ni dossier, et élément verrouillé : affichés sans taille ni date', async () => {
-  const { service } = windowsService({}, {
-    drives: { 'E:\\': { tree: { 'canal': other(), 'verrou.sys': file(5), Dossier: {}, 'lien': link('E:\\Dossier') } } },
-    errors: { lstat: { 'E:\\verrou.sys': 'EBUSY', 'E:\\Dossier': 'EPERM', 'E:\\lien': 'EACCES' } },
-  });
-  const listing = await service.list('E:\\');
-  assert.deepEqual(
-    listing.entries.map((entry) => [entry.name, entry.kind, entry.size, entry.modified]),
-    [
-      ['canal', 'other', null, DATE_OF_FAKE],
-      ['verrou.sys', 'file', null, null],
-      ['Dossier', 'folder', null, null],
-      ['lien', 'link', null, null],
-    ],
-  );
+  // Un élément dont les propriétés sont illisibles n'est connu que par le type que la lecture du
+  // dossier lui donne. Sous Windows, celui d'un lien vers un dossier dépend de la version de Node :
+  // dossier ordinaire (libuv ≤ 1.49.0) ou lien. Dans les deux cas, il est affiché sans taille ni date.
+  for (const [listedLinks, shownAs] of [['as-folders', 'folder'], ['as-links', 'link']]) {
+    const { service } = windowsService({}, {
+      listedLinks,
+      drives: { 'E:\\': { tree: { 'canal': other(), 'verrou.sys': file(5), Dossier: {}, 'lien': link('E:\\Dossier') } } },
+      errors: { lstat: { 'E:\\verrou.sys': 'EBUSY', 'E:\\Dossier': 'EPERM', 'E:\\lien': 'EACCES' } },
+    });
+    const listing = await service.list('E:\\');
+    assert.deepEqual(
+      listing.entries.map((entry) => [entry.name, entry.kind, entry.size, entry.modified]),
+      [
+        ['canal', 'other', null, DATE_OF_FAKE],
+        ['verrou.sys', 'file', null, null],
+        ['Dossier', 'folder', null, null],
+        ['lien', shownAs, null, null],
+      ],
+      listedLinks,
+    );
+  }
+});
+
+test('un lien est reconnu à ses propriétés, quel que soit le type que la lecture du dossier lui donne', async () => {
+  for (const listedLinks of ['as-folders', 'as-links']) {
+    const { service } = windowsService({}, { listedLinks });
+    const kinds = Object.fromEntries((await service.list(WINDOWS_PLACES.documents)).entries.map((entry) => [entry.name, entry.kind]));
+    assert.deepEqual(
+      [kinds['Mes images'], kinds['Vers Windows'], kinds['Vers le NAS'], kinds['Vers nulle part'], kinds.Projets],
+      ['link', 'link', 'link', 'link', 'folder'],
+      listedLinks,
+    );
+  }
 });
 
 test('éléments masqués par l’Explorateur de Windows : signalés d’après leur nom et leur place', async () => {

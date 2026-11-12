@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * Evolve — Auto-test : l'explorateur de fichiers parcourt de vrais dossiers.
+ * Evolve — Auto-test : l'explorateur de fichiers parcourt de vrais dossiers,
+ * et y agit réellement.
  *
  * L'auto-test crée un petit dossier d'essai dans son propre dossier de sortie
  * (noms avec espaces, accents et apostrophe), puis s'y rend comme le ferait
@@ -9,16 +10,22 @@
  * Il contrôle l'affichage (noms, types, tailles, dates), la navigation
  * (précédent, suivant, dossier parent, actualisation), le message affiché
  * devant un dossier supprimé entre-temps ou protégé, les refus du service de
- * fichiers (chemins hors des emplacements autorisés, opérations d'écriture)
- * et, pour finir, que rien n'a changé dans le dossier parcouru.
+ * consultation (chemins hors des emplacements autorisés, écriture) et, pour
+ * finir, que rien n'a changé dans le dossier qu'il n'a fait que parcourir.
  *
- * Seul l'auto-test écrit ces fichiers d'essai, et uniquement dans son dossier
- * de sortie : l'explorateur, lui, ne fait que lire.
+ * À côté de ce dossier, un second — l'« atelier » — reçoit les opérations
+ * réelles : nouveau dossier, copier, coller, renommer, déplacer, envoyer à la
+ * Corbeille, ouvrir (voir selftest-operations.js).
+ *
+ * Seul l'auto-test crée ces éléments d'essai, et uniquement dans son dossier
+ * de sortie.
  */
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+
+const { createWorkshop, operationChecks } = require('./selftest-operations');
 
 /** Sous-dossier du dossier de sortie qui reçoit les dossiers d'essai. */
 const FIXTURE_DIR = 'explorateur';
@@ -48,7 +55,7 @@ const ADDED_NAME = 'Ajouté pendant le test.txt';
 /** Dossier retiré pendant le test, alors que l'explorateur l'affiche encore. */
 const REMOVED_NAME = 'Retiré pendant le test';
 
-/** Opérations qu'un explorateur en lecture seule ne doit pas proposer. */
+/** Opérations que le service de consultation ne doit offrir sous aucun nom. */
 const WRITE_METHODS = Object.freeze(['write', 'create', 'mkdir', 'rename', 'move', 'copy', 'delete', 'remove', 'trash', 'open', 'read']);
 
 /** Outils exécutés dans la page : lecture de l'état de la fenêtre de l'explorateur. */
@@ -225,22 +232,27 @@ function stepsTo(folder) {
 /**
  * Contrôles de l'explorateur de fichiers (la fenêtre de l'explorateur est ouverte).
  * @param {object} tools  outils de l'auto-test (voir selftest.js) ; `platform` et
- *        `env` désignent le système sur lequel l'application s'exécute
+ *        `env` désignent le système sur lequel l'application s'exécute, et
+ *        `recycleBin` le dossier de sa Corbeille (voir selftest-operations.js)
  */
-async function checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, platform = process.platform, env = process.env }) {
+async function checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, timings, recycleBin, platform = process.platform, env = process.env }) {
   const isWindows = platform === 'win32';
   const toggleHidden = `${PAGE_TOOLS}
     [...exWin().querySelectorAll('.ex-commands .btn')].find((el) => el.textContent.trim() === 'Affichage').click();
     [...document.querySelectorAll('.menu:not(.is-closing) .menu__item')]
       .find((el) => el.querySelector('.menu__label')?.textContent === 'Éléments masqués').click();`;
 
-  // 1. Vrais dossiers, lecture seule : plus aucun contenu d'exemple.
+  // 1. Vrais dossiers : plus aucun contenu d'exemple. À l'accueil, qui n'est pas un dossier,
+  //    aucune opération sur les fichiers n'est proposée.
   await check(
-    "l'explorateur consulte les vrais dossiers, en lecture seule (aucun contenu d'exemple)",
+    "l'explorateur présente les vrais dossiers, sans contenu d'exemple ; à l'accueil, aucune opération sur les fichiers n'est proposée",
     `${PAGE_TOOLS}
-     const chips = [...exWin().querySelectorAll('.chip')].map((chip) => chip.textContent);
-     return (exContent().dataset.page === 'home' && exItems().length === 6 && chips.length === 1 && chips[0] === 'Lecture seule')
-       || { chips, ...exState() };`,
+     const chips = [...exWin().querySelectorAll('.chip')].filter((chip) => !chip.hidden).map((chip) => chip.textContent);
+     const commands = [...exWin().querySelectorAll('.ex-commands [data-command]')];
+     const usable = commands.filter((command) => command.getAttribute('aria-disabled') !== 'true').map((command) => command.dataset.command);
+     return (exContent().dataset.page === 'home' && exItems().length === 6 && chips.length === 0
+       && commands.map((command) => command.dataset.command).join(',') === 'new-folder,cut,copy,paste,rename,delete' && usable.length === 0)
+       || { chips, usable, ...exState() };`,
   );
 
   // 2. « Ce PC » : dossiers personnels et lecteurs réels.
@@ -296,15 +308,22 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
   }
   record("chaque dossier personnel disponible s'ouvre (Bureau, Documents, Téléchargements, Images, Musique, Vidéos)", personal);
 
-  // 3. Dossier d'essai : créé ici, par l'auto-test, dans son dossier de sortie.
+  // 3. Dossiers d'essai : créés ici, par l'auto-test, dans son dossier de sortie. Le premier est
+  //    seulement parcouru ; le second, l'atelier, reçoit les opérations.
   let fixture;
-  /** État que le dossier d'essai doit avoir : celui dans lequel l'auto-test l'a laissé. */
+  /** État que le dossier parcouru doit avoir : celui dans lequel l'auto-test l'a laissé. */
   let expected;
   /** Faux dès qu'un écart est constaté. */
   let intact = true;
+  /** Dossier de l'essai : il contient le dossier parcouru et l'atelier. */
+  let run;
+  let operations;
   try {
     fixture = createFixture(outDir, platform);
     expected = snapshot(fixture.folder);
+    run = path.dirname(fixture.folder);
+    const workshop = createWorkshop(run, { linkTarget: fixture.folder });
+    operations = operationChecks({ evaluate, until, record, capture, report, timings }, { pageTools: PAGE_TOOLS, workshop, platform, env, recycleBin });
   } catch (error) {
     report.errors.push(`dossier d'essai de l'explorateur impossible à créer : ${error?.message}`);
     return;
@@ -455,7 +474,13 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
        && names.includes(${js(ADDED_NAME)})) || { names, ...exState() };`,
   );
 
-  // 11. Emplacements non disponibles : annoncés, jamais simulés.
+  // 11. Opérations réelles, menées dans l'atelier par les commandes de l'explorateur : chacune
+  //     est ensuite contrôlée sur le disque (voir selftest-operations.js).
+  await act(`${PAGE_TOOLS} ${clickNav('Dossier parent')}`);
+  await until(reach(run, ''));
+  await operations.operate();
+
+  // 12. Emplacements non disponibles : annoncés, jamais simulés.
   await act(`${PAGE_TOOLS} exWin().querySelector('.ex-side[data-id="network"]').click();`);
   await check(
     '« Réseau » et « Corbeille » sont annoncés comme non disponibles, sans contenu fictif',
@@ -467,7 +492,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
      return (state.page === 'info' && state.message === 'Corbeille non disponible' && exItems().length === 0) || state;`,
   );
 
-  // 12. Le service refuse ce qui sort des emplacements autorisés…
+  // 13. Le service de consultation refuse ce qui sort des emplacements autorisés…
   const outside =
     isWindows
       ? ['\\\\localhost\\C$', '\\\\?\\C:\\', '\\\\.\\C:\\', 'C:', 'C:Users', `${fixture.folder}:flux`, `${fixture.folder}\\NUL`]
@@ -496,15 +521,30 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
      return wrong.length === 0 || wrong;`,
   );
 
-  // 13. … et n'offre aucune opération d'écriture : ni dans ce qu'il annonce
+  // 14. … et n'offre aucune opération d'écriture : ni dans ce qu'il annonce
   //     (inventaire des services, s'il est disponible), ni dans ce qu'il accepte.
+  //     Les opérations passent par des fonctions distinctes, une par opération :
+  //     aucune ne supprime définitivement, aucune ne remplace.
   let declared = null;
+  let dedicated = null;
   try {
-    declared = describeServices ? (describeServices()?.files?.methods ?? []) : null;
+    const inventory = describeServices ? describeServices() : null;
+    declared = inventory ? (inventory.files?.methods ?? []) : null;
+    dedicated = inventory ? (inventory['file-operations'] ?? {}) : null;
   } catch {
     declared = null; // inventaire en panne : signalé ailleurs par un avertissement
+    dedicated = null;
   }
-  const readOnlyService = declared === null || (Array.isArray(declared) && declared.join(',') === 'places,list');
+  const dedicatedOperations =
+    dedicated === null ||
+    (Array.isArray(dedicated.methods) &&
+      dedicated.methods.join(',') === 'createFolder,rename,copy,move,trash,open' &&
+      dedicated.deletion === 'recycle-bin-only' &&
+      dedicated.replace === 'never' &&
+      // La Corbeille et l'ouverture sont fournies par Windows : sans elles, rien n'est supprimé ni ouvert.
+      dedicated.trash === true &&
+      dedicated.open === true);
+  const readOnlyService = dedicatedOperations && (declared === null || (Array.isArray(declared) && declared.join(',') === 'places,list'));
   let refusedWrites;
   try {
     refusedWrites = await evaluate(
@@ -520,18 +560,23 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
     refusedWrites = `exception : ${error?.message}`;
   }
   record(
-    "le service de fichiers n'offre que la consultation : aucune opération d'écriture n'existe",
-    (readOnlyService && refusedWrites === true) || { methodes: declared, demandes: refusedWrites },
+    "le service de consultation n'offre aucune opération d'écriture : chaque opération passe par une fonction distincte, sans suppression définitive ni remplacement",
+    (readOnlyService && refusedWrites === true) || { methodes: declared, operations: dedicated, demandes: refusedWrites },
   );
 
-  // 14. Rien n'a changé dans le dossier parcouru.
+  // 15. Demandes que l'application doit refuser, présentées sans passer par l'interface.
+  await operations.refuse();
+
+  // 16. Rien n'a changé dans le dossier seulement parcouru…
   let unchanged;
   try {
     unchanged = intact && snapshot(fixture.folder) === expected;
   } catch (error) {
     unchanged = `lecture impossible : ${error?.message}`;
   }
-  record("l'explorateur n'a rien modifié dans le dossier parcouru (contenu, tailles et dates identiques)", unchanged);
+  record("parcourir un dossier n'y modifie rien : le dossier seulement consulté est resté identique (contenu, tailles et dates)", unchanged);
+  // … et l'atelier contient exactement ce que les opérations demandées devaient produire.
+  operations.conclude();
 
   // Pour la suite de l'auto-test (fenêtres) : retour à « Ce PC », en grandes icônes.
   await act(`${PAGE_TOOLS} exWin().querySelector('.ex-status [aria-label="Grandes icônes"]').click();`);

@@ -27,12 +27,12 @@ const NAMES = [
   'magnifying-glass', 'bell', 'bell-slash', 'wifi-high', 'wifi-slash', 'bluetooth', 'bluetooth-slash',
   'speaker-high', 'speaker-low', 'speaker-none', 'speaker-x', 'battery-high', 'airplane-tilt', 'moon',
   'sun', 'sun-dim', 'leaf', 'power', 'user', 'sign-out', 'corners-out', 'corners-in', 'squares-four',
-  'sparkle', 'planet',
+  'planet',
   // Navigation et actions
   'caret-left', 'caret-right', 'caret-up', 'caret-down', 'arrow-left', 'arrow-right', 'arrow-up',
   'arrow-clockwise', 'arrows-clockwise', 'x', 'check', 'plus', 'minus', 'info', 'question',
   'warning-circle', 'arrow-square-out', 'scissors', 'copy', 'clipboard-text', 'pencil-simple-line',
-  'share-fat', 'trash', 'arrows-down-up', 'list-bullets', 'link', 'lock',
+  'trash', 'arrows-down-up', 'list-bullets', 'link', 'lock',
   // Emplacements et matériel
   'house', 'desktop', 'download-simple', 'folder', 'folder-open', 'folder-plus', 'images',
   'music-notes', 'film-strip', 'hard-drive', 'network', 'cpu', 'memory', 'graphics-card', 'monitor',

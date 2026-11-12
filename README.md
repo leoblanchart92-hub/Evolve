@@ -2,7 +2,7 @@
 
 **Evolve** est un environnement de bureau au style néon violet : bureau, barre des tâches, menu Démarrer, fenêtres, explorateur de fichiers.
 
-Cette version 0.3.1 reste un **aperçu de l'interface graphique**, avec une première fonction réelle : son **explorateur de fichiers affiche désormais les vrais dossiers de votre ordinateur, en lecture seule** — il ne crée, ne modifie, ne déplace, ne supprime et n'ouvre aucun fichier. Evolve prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie aucun réglage de Windows. Ce qu'il écrit sur le PC se limite à un petit fichier de réglages et à des fichiers temporaires, [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
+Cette version 0.4.0 reste un **aperçu de l'interface graphique**, mais son **explorateur de fichiers agit désormais réellement sur vos fichiers** : il crée des dossiers, renomme, copie, déplace, envoie à la Corbeille de Windows et ouvre un fichier avec son application habituelle. Trois règles ne souffrent aucune exception : **rien n'est supprimé définitivement**, **rien n'est remplacé**, et tout déplacement, tout envoi à la Corbeille, toute ouverture d'un programme sont **confirmés par vous**. Evolve prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie aucun réglage de Windows. Ce qu'il écrit de lui-même sur le PC se limite à un petit fichier de réglages et à des fichiers temporaires, [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
 
 ![Le bureau d'Evolve : fond d'écran, icônes, widgets et barre des tâches](docs/captures/bureau.jpg)
 
@@ -31,7 +31,7 @@ L'exécutable est fabriqué automatiquement par GitHub à chaque modification du
 
 1. Connectez-vous à GitHub, puis ouvrez la page **[Actions → Exécutable Windows](https://github.com/leoblanchart92-hub/Evolve/actions/workflows/build-windows.yml)**.
 2. Cliquez sur l'exécution la plus récente marquée d'une coche verte.
-3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.3.1-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
+3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.4.0-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
 4. Double-cliquez sur le fichier téléchargé. Evolve s'ouvre en plein écran.
 
 À savoir :
@@ -48,10 +48,10 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 | Engagement | En pratique |
 | --- | --- |
 | **Aucune installation** | Rien n'est ajouté au menu Démarrer de Windows, au bureau, à la liste des programmes ni au démarrage de l'ordinateur. Pour « désinstaller » Evolve, supprimez le fichier `.exe` et, si vous avez modifié des réglages, le dossier `%APPDATA%\Evolve`. |
-| **Aucun droit administrateur** | Evolve s'exécute avec les droits de l'utilisateur et ne déclenche jamais la demande d'élévation de Windows. Ce point est contrôlé à chaque compilation. |
-| **Vos fichiers : consultés, jamais modifiés** | L'explorateur affiche le contenu des dossiers que vous ouvrez — noms, types, tailles, dates — sans jamais lire le contenu d'un fichier. Il ne crée, ne modifie, ne déplace, ne supprime et n'ouvre rien : ces opérations n'existent pas dans le programme. Un dossier personnel absent — Documents compris — est annoncé comme introuvable, jamais recréé. Ce que vous consultez n'est ni enregistré ni transmis (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)). Ces points sont contrôlés à chaque compilation. |
+| **Aucun droit administrateur** | Evolve s'exécute avec les droits de l'utilisateur et ne demande jamais pour lui-même l'élévation de Windows : ce point est contrôlé à chaque compilation. Depuis que l'explorateur agit sur les fichiers, deux situations peuvent néanmoins faire apparaître la demande d'autorisation de Windows, et c'est alors Windows qui vous pose la question : l'ouverture d'un programme qui exige lui-même ces droits, et l'envoi à la Corbeille d'un élément réservé aux administrateurs (voir les [limites connues](#limites-connues)). |
+| **Vos fichiers : modifiés seulement à votre demande** | L'explorateur n'agit que lorsque vous le lui demandez — nouveau dossier, renommer, copier, déplacer, envoyer à la Corbeille, ouvrir — et jamais de lui-même. Rien n'est supprimé définitivement : « supprimer » envoie à la Corbeille de Windows, d'où vous pouvez restaurer. Rien n'est remplacé : devant un nom déjà pris, vous choisissez de conserver les deux éléments ou d'ignorer. Déplacer, envoyer à la Corbeille et ouvrir un programme — ou un fichier d'un type inconnu d'Evolve — exigent votre confirmation. Les lecteurs, vos dossiers personnels eux-mêmes et les dossiers du système ne peuvent être ni renommés, ni déplacés, ni supprimés. Evolve n'examine jamais le contenu de vos fichiers, et ce que vous consultez n'est ni enregistré ni transmis. Un dossier personnel absent — Documents compris — est annoncé comme introuvable, jamais recréé (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)). Ces points sont contrôlés à chaque compilation. |
 | **Aucun réglage de Windows modifié** | Les paramètres rapides (Wi-Fi, Bluetooth, volume, luminosité…) sont purement visuels : ils n'agissent que sur l'interface d'Evolve, qui retient leur position sans rien changer à Windows. |
-| **Un seul dossier dans votre profil** | Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié : tant que vous ne changez rien, Evolve n'écrit rien dans votre profil. Ces deux points sont contrôlés à chaque compilation. |
+| **Un seul dossier dans votre profil** | De lui-même, Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié : tant que vous ne changez aucun réglage et ne demandez aucune opération à l'explorateur, Evolve n'écrit rien dans votre profil. Ces deux points sont contrôlés à chaque compilation. |
 | **Aucune mesure réelle du matériel** | Les widgets processeur, mémoire et carte graphique affichent des valeurs simulées, signalées par la mention « DÉMO ». |
 | **Aucune connexion réseau** | L'interface est entièrement locale ; toute requête vers Internet y est bloquée. |
 
@@ -67,7 +67,7 @@ Ces dossiers peuvent être supprimés sans risque lorsqu'Evolve est fermé. Leur
 
 ## L'explorateur de fichiers
 
-L'explorateur d'Evolve parcourt les vrais dossiers de l'ordinateur, **en lecture seule**.
+L'explorateur d'Evolve parcourt les vrais dossiers de l'ordinateur et, depuis la version 0.4.0, **agit réellement sur vos fichiers**, à votre demande.
 
 Ce qu'il affiche :
 
@@ -76,13 +76,40 @@ Ce qu'il affiche :
 - **La navigation habituelle** — double-clic, fil d'Ariane cliquable (les premiers dossiers d'un long chemin se replient dans « … »), précédent, suivant, dossier parent, actualisation, recherche dans le dossier affiché, sélection et déplacement au clavier.
 - **Les éléments masqués** — fichiers du système, `AppData`, `desktop.ini`… restent cachés, comme dans l'Explorateur de Windows ; *Affichage → Éléments masqués* les montre, estompés.
 
+Ce qu'il fait, à votre demande :
+
+| Opération | Comment la demander | Ce qui se passe |
+| --- | --- | --- |
+| **Nouveau dossier** | bouton *Nouveau dossier*, clic droit dans le dossier, `Ctrl` + `Maj` + `N` | Le nom vous est demandé, puis le dossier est créé dans le dossier affiché. |
+| **Renommer** | bouton, clic droit, `F2` | Le nom actuel est proposé, prêt à être remplacé. Un nom déjà pris est refusé : l'élément garde son nom. |
+| **Copier, puis coller** | boutons, clic droit, `Ctrl` + `C` puis `Ctrl` + `V` | Les éléments sont copiés dans le dossier affiché, dossiers entiers compris. Collés dans leur propre dossier, ils sont dupliqués (« nom - Copie »). |
+| **Couper, puis coller** | boutons, clic droit, `Ctrl` + `X` puis `Ctrl` + `V` | Rien ne bouge avant *Coller* ; après votre confirmation, les éléments sont déplacés. `Échap` retire d'abord la sélection ; une seconde fois, il renonce au déplacement. |
+| **Envoyer à la Corbeille** | bouton, clic droit, `Suppr` | Après votre confirmation, les éléments rejoignent la Corbeille de Windows. |
+| **Ouvrir** | double-clic, clic droit, `Entrée` | Un dossier s'ouvre dans l'explorateur ; un fichier est confié à l'application que Windows lui associe, comme lors d'un double-clic dans l'Explorateur de Windows. Un document, une image, un son, une vidéo ou une archive s'ouvre directement ; tout autre fichier, seulement après votre confirmation. |
+
+Les règles qu'il applique, sans exception :
+
+- **Rien n'est supprimé définitivement.** « Supprimer » n'existe que sous une forme : l'envoi à la Corbeille de Windows, d'où chaque élément peut être restauré — ouvrez la Corbeille depuis le bureau de Windows. Il n'y a ni suppression directe, ni `Maj` + `Suppr`. Si la Corbeille ne peut pas recevoir un élément (lecteur sans Corbeille, élément trop volumineux), il reste à sa place et Evolve le signale.
+- **Rien n'est remplacé.** Quand un élément du même nom existe déjà à destination, Evolve s'arrête avant d'avoir rien modifié et vous laisse choisir : *Conserver les deux* — l'élément collé reçoit un nouveau nom, « nom - Copie » —, *Ignorer* — il n'est pas traité — ou *Annuler*. Le choix « Remplacer » n'existe pas dans le programme.
+- **Vous confirmez ce qui retire ou exécute quelque chose.** Un déplacement, un envoi à la Corbeille, l'ouverture d'un programme, d'un script ou d'un raccourci (`.exe`, `.bat`, `.cmd`, `.msi`, `.lnk`…) passent toujours par une fenêtre de confirmation. La règle est sûre par défaut : Evolve n'ouvre sans confirmation que les types de fichiers qu'il sait n'être qu'un contenu — textes, documents, images, sons, vidéos, archives —, reconnus à leur extension ; un fichier d'un type qu'il ne connaît pas, ou sans extension, est traité comme un programme possible. Avant l'ouverture d'un tel fichier, c'est *Annuler* qui est sélectionné dans la fenêtre de confirmation : la touche `Entrée` n'exécute rien.
+- **Les emplacements essentiels sont intouchables.** Un lecteur, vos dossiers personnels eux-mêmes (Bureau, Documents…), les dossiers qui les contiennent (`C:\Users`, votre dossier d'utilisateur) et tout ce qui appartient au système — `C:\Windows`, les dossiers des programmes installés, `ProgramData`, `AppData` — ne peuvent être ni renommés, ni déplacés, ni envoyés à la Corbeille, et rien ne peut être créé ni collé dans un dossier du système. Leur contenu reste consultable, et un fichier peut en être copié vers un autre dossier.
+- **Les liens ne sont pas modifiés.** Un lien symbolique ou une jonction n'est ni renommé, ni copié, ni déplacé, ni supprimé ; dans un dossier copié, les liens sont laissés de côté, et le compte rendu le signale.
+- **Les noms sont ceux que Windows admet.** Un nom vide, réservé (`CON`, `NUL`, `COM1`…), terminé par un point ou une espace, ou contenant l'un des caractères `\ / : * ? " < > |` est refusé, avec l'explication, sans que rien soit modifié.
+- **Tout est contrôlé par l'application, pas seulement par l'interface.** L'interface désactive les commandes qui ne s'appliquent pas ; l'application de bureau, seule à toucher au disque, contrôle ensuite chaque demande — chemin, nom, emplacement réel, confirmation — et refuse celles qui ne respectent pas ces règles.
+
+| Rien n'est remplacé | Rien n'est supprimé définitivement |
+| :---: | :---: |
+| ![La question posée quand un nom est déjà pris : conserver les deux, ignorer ou annuler](docs/captures/nom-deja-pris.jpg) | ![La confirmation demandée avant l'envoi à la Corbeille de Windows](docs/captures/corbeille.jpg) |
+
+Une copie ou un déplacement volumineux affiche son avancement et peut être interrompu : ce qui est déjà fait reste fait, et un dossier dont la copie n'est pas terminée garde un nom qui le dit (« nom (copie incomplète) »). À la fin, une notification résume l'opération ; si certains éléments n'ont pas pu être traités — fichier ouvert dans un autre programme, accès refusé par Windows, disque plein —, une fenêtre en donne la liste et la raison. Un déplacement vers un autre lecteur est une copie, suivie de l'envoi des originaux à la Corbeille.
+
 Ce qu'il ne fait pas, par construction :
 
-- **Aucune opération sur les fichiers.** Les boutons *Nouveau*, *Couper*, *Copier*, *Renommer*, *Supprimer*… sont présents, mais annoncent seulement que l'opération arrivera dans une prochaine étape. Un double-clic sur un fichier ne l'ouvre pas.
-- **Aucune lecture du contenu des fichiers.** Le service qui lit les dossiers ([`src/services/files.js`](src/services/files.js)) ne répond qu'à deux demandes — la liste des emplacements et le contenu d'un dossier — et n'utilise que quatre fonctions de lecture du système : ouvrir un dossier, lire les propriétés d'un élément, résoudre un chemin, lire la capacité d'un lecteur.
+- **Aucune suppression définitive, aucun remplacement.** Le module qui modifie vos fichiers ([`src/services/file-operations.js`](src/services/file-operations.js)) n'emploie que trois fonctions d'écriture du système : créer un dossier, renommer, copier un fichier sans jamais écraser. Aucune fonction de suppression n'y figure ; la Corbeille et l'ouverture d'un fichier sont confiées à Windows.
+- **Aucune lecture du contenu des fichiers.** Evolve n'examine jamais ce que contient un fichier : la copie est confiée au système, l'ouverture à l'application associée. Le service qui lit les dossiers ([`src/services/files.js`](src/services/files.js)) ne répond qu'à deux demandes — la liste des emplacements et le contenu d'un dossier — et n'utilise que quatre fonctions de lecture du système : ouvrir un dossier, lire les propriétés d'un élément, résoudre un chemin, lire la capacité d'un lecteur.
 - **Rien en dehors des emplacements autorisés** : les six dossiers personnels et les lecteurs locaux. Chaque chemin demandé est contrôlé avant tout accès au disque : chemins relatifs, remontées (`..`), partages réseau (`\\serveur\…`) et chemins spéciaux de Windows sont refusés. Un lien ou une jonction qui mène hors de ces emplacements n'est pas suivi.
-- **Aucune création de dossier.** Si l'un de vos dossiers personnels n'existe pas, ou plus — Documents, par exemple, supprimé ou resté sur un disque débranché —, sa tuile est estompée et son ouverture affiche « Dossier « Documents » introuvable », en précisant que rien n'a été modifié. Evolve ne le recrée pas : un dossier absent reste absent. Si vous le remettez en place, *Actualiser* le fait réapparaître — à défaut, fermez puis rouvrez Evolve.
-- **Aucune demande de droits.** Un dossier protégé par Windows affiche « Accès refusé » ; un dossier supprimé entre-temps ou un lecteur retiré, « Dossier introuvable » ou « Emplacement indisponible ». Dans tous les cas, la navigation continue.
+- **Aucune création de dossier de sa propre initiative.** Si l'un de vos dossiers personnels n'existe pas, ou plus — Documents, par exemple, supprimé ou resté sur un disque débranché —, sa tuile est estompée et son ouverture affiche « Dossier « Documents » introuvable », en précisant que rien n'a été modifié. Evolve ne le recrée pas : un dossier absent reste absent. Si vous le remettez en place, *Actualiser* le fait réapparaître — à défaut, fermez puis rouvrez Evolve.
+- **Aucune demande de droits de sa part.** Un dossier protégé par Windows affiche « Accès refusé », et créer, renommer, copier ou déplacer là où Windows ne l'autorise pas à votre compte est refusé de la même façon ; un dossier supprimé entre-temps ou un lecteur retiré affiche « Dossier introuvable » ou « Emplacement indisponible ». Dans tous les cas, la navigation continue. Seuls l'envoi à la Corbeille et l'ouverture d'un fichier, confiés à Windows, peuvent l'amener à vous demander lui-même une autorisation (voir les [limites connues](#limites-connues)).
 
 Ce qui le distingue encore de l'Explorateur de Windows est détaillé dans les [limites connues](#limites-connues).
 
@@ -119,7 +146,7 @@ Avec l'option `--settings-dir=DOSSIER` (voir [Raccourcis utiles](#raccourcis-uti
 - **Paramètres rapides** et **centre de notifications** avec calendrier.
 - **Widgets** — horloge, processeur, mémoire et carte graphique (valeurs de démonstration), masquables depuis le bouton *Widgets*.
 - **Fenêtres** — déplacement, redimensionnement par les bords et les coins, agrandissement, réduction dans la barre des tâches, superposition de plusieurs fenêtres.
-- **Explorateur de fichiers** — vos vrais dossiers, en lecture seule : dossiers personnels et lecteurs, volet latéral, grandes icônes ou vue « Détails », tri, recherche dans le dossier, sélection multiple, navigation au clavier (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)).
+- **Explorateur de fichiers** — vos vrais dossiers et de vraies opérations : dossiers personnels et lecteurs, volet latéral, grandes icônes ou vue « Détails », tri, recherche dans le dossier, sélection multiple, navigation au clavier ; nouveau dossier, renommer, copier, couper, coller, envoyer à la Corbeille, ouvrir (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)).
 - **Adaptation à l'écran** — de 1024 × 768 à la 4K ; les animations sont réduites si Windows est réglé pour les limiter.
 
 Les autres applications (Navigateur, Paramètres, Terminal…) ouvrent pour l'instant une fenêtre d'attente : elles feront l'objet des prochaines étapes.
@@ -136,6 +163,13 @@ Les autres applications (Navigateur, Paramètres, Terminal…) ouvrent pour l'in
 | Explorateur : précédent, suivant, dossier parent | `Alt` + `←`, `Alt` + `→`, `Alt` + `↑` |
 | Explorateur : actualiser le dossier affiché | `F5` |
 | Explorateur : rechercher dans le dossier affiché | `Ctrl` + `F` |
+| Explorateur : ouvrir l'élément sélectionné | `Entrée` |
+| Explorateur : tout sélectionner | `Ctrl` + `A` |
+| Explorateur : copier, couper, coller | `Ctrl` + `C`, `Ctrl` + `X`, `Ctrl` + `V` |
+| Explorateur : nouveau dossier | `Ctrl` + `Maj` + `N` |
+| Explorateur : renommer l'élément sélectionné | `F2` |
+| Explorateur : envoyer la sélection à la Corbeille | `Suppr` |
+| Explorateur : retirer la sélection ; une seconde fois, renoncer à déplacer les éléments coupés | `Échap` |
 
 Le fichier `.exe` accepte aussi des options, à ajouter après son nom dans une invite de commandes ou dans un raccourci :
 
@@ -144,7 +178,7 @@ Le fichier `.exe` accepte aussi des options, à ajouter après son nom dans une 
 | `--windowed` | démarre dans une fenêtre plutôt qu'en plein écran |
 | `--devtools` | autorise les outils de développement (touche `F12`) |
 | `--settings-dir=DOSSIER` | range les réglages dans `DOSSIER` au lieu de `%APPDATA%\Evolve` ; le dossier est créé au premier réglage modifié (voir [Vos réglages](#vos-réglages)) |
-| `--self-test` | lance l'auto-test décrit ci-dessous, puis quitte ; le rapport, les captures d'écran et le petit dossier d'essai de l'explorateur sont enregistrés dans un dossier `self-test-output` créé à côté du fichier `.exe`. Pendant l'auto-test, les réglages restent en mémoire : vos réglages ne sont ni lus ni modifiés |
+| `--self-test` | lance l'auto-test décrit ci-dessous, puis quitte ; le rapport, les captures d'écran et les dossiers d'essai de l'explorateur sont enregistrés dans un dossier `self-test-output` créé à côté du fichier `.exe`. L'auto-test n'agit que sur ses propres fichiers d'essai, dans ce dossier : il les copie, les renomme et les déplace, envoie l'un de ses dossiers d'essai (« À jeter ») à la Corbeille de Windows — où il reste — et fait exécuter par Windows un petit script d'essai, qui n'écrit qu'un fichier témoin à côté de lui. Pendant l'auto-test, les réglages restent en mémoire : vos réglages ne sont ni lus ni modifiés |
 | `--self-test-scenario=NOM` | avec `--self-test`, choisit ce qui est contrôlé : `full` (par défaut, le contrôle complet), ou `settings-write` puis `settings-read`, les deux lancements de la vérification des réglages décrite ci-dessous (ils exigent `--settings-dir`) |
 | `--status-file=FICHIER` | une fois l'interface démarrée, écrit dans `FICHIER` l'état de la fenêtre et enregistre à côté l'image affichée ; sert à la vérification du lancement décrite ci-dessous |
 
@@ -152,10 +186,15 @@ Le fichier `.exe` accepte aussi des options, à ajouter après son nom dans une 
 
 Evolve ne pouvant pas être essayé à la main à chaque modification, la compilation ([`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)) contrôle elle-même le résultat, sur une machine Windows de GitHub :
 
-1. **Tests automatiques** du code (`npm test`).
+1. **Tests automatiques** du code (`npm test`). Les opérations sur les fichiers y sont éprouvées de deux façons : sur un disque simulé, pour provoquer chaque situation et chaque refus de Windows, et sur un vrai dossier temporaire.
 2. **Fabrication** du fichier `.exe` portable.
 3. **Droits demandés** : lecture du manifeste de l'exécutable, qui doit indiquer le niveau `asInvoker` (aucun droit administrateur).
-4. **Auto-test** : le `.exe` est réellement lancé avec l'option `--self-test`. L'application vérifie alors son propre affichage — fond d'écran identique à l'image d'origine, polices, barre des tâches, menu Démarrer, recherche, panneaux, fenêtres, services joignables depuis l'interface, absence d'erreur — et enregistre un rapport accompagné de captures d'écran. Elle met aussi l'**explorateur** à l'épreuve sur de vrais dossiers : elle crée un petit dossier d'essai dans son dossier de résultats, s'y rend comme le ferait un utilisateur (« Ce PC », le lecteur, puis chaque dossier au double-clic) et contrôle les noms, les types, les tailles et les dates affichés, la navigation, l'actualisation, puis le message « Dossier introuvable » devant un dossier supprimé entre-temps. Devant un dossier protégé de Windows, elle attend « Accès refusé » ; sur la machine de GitHub, dont le compte peut tout lire, aucun dossier ne refuse l'accès : ce contrôle-là y est omis (un avertissement le signale dans le rapport), et le refus d'accès n'est vérifié que par les tests automatiques, sur un disque simulé. Elle présente ensuite au service de fichiers des chemins interdits et des demandes d'écriture, qui doivent tous être refusés, et vérifie pour finir que rien n'a changé dans le dossier parcouru.
+4. **Auto-test** : le `.exe` est réellement lancé avec l'option `--self-test`. L'application vérifie alors son propre affichage — fond d'écran identique à l'image d'origine, polices, barre des tâches, menu Démarrer, recherche, panneaux, fenêtres, services joignables depuis l'interface, absence d'erreur — et enregistre un rapport accompagné de captures d'écran. Elle met aussi l'**explorateur** à l'épreuve sur de vrais dossiers : elle crée un petit dossier d'essai dans son dossier de résultats, s'y rend comme le ferait un utilisateur (« Ce PC », le lecteur, puis chaque dossier au double-clic) et contrôle les noms, les types, les tailles et les dates affichés, la navigation, l'actualisation, puis le message « Dossier introuvable » devant un dossier supprimé entre-temps. Devant un dossier protégé de Windows, elle attend « Accès refusé » ; sur la machine de GitHub, dont le compte peut tout lire, aucun dossier ne refuse l'accès : ce contrôle-là y est omis (un avertissement le signale dans le rapport), et le refus d'accès n'est vérifié que par les tests automatiques, sur un disque simulé.
+
+   Elle mène ensuite de **vraies opérations** dans un second dossier d'essai, l'« atelier », par les commandes et les fenêtres de dialogue de l'explorateur : créer un dossier (un nom réservé par Windows doit d'abord être refusé), coller un fichier là où un fichier du même nom existe déjà (*Ignorer* ne doit rien changer, *Conserver les deux* doit créer une copie sous un autre nom sans toucher à l'existant), renommer, déplacer et envoyer à la Corbeille (rien ne doit bouger tant que la confirmation n'est pas donnée), copier un dossier entier, ouvrir un script (rien ne doit s'exécuter sans confirmation, et *Annuler* doit être sélectionné). Après chaque opération, elle relit elle-même le disque et compare le contenu de l'atelier à ce que l'opération devait produire : rien de plus, rien de moins. Elle retrouve dans la Corbeille de Windows le dossier qu'elle y a envoyé, avec son contenu intact, puis constate que le script, une fois confirmé, a réellement été exécuté par Windows.
+
+   Enfin, elle présente directement à l'application des demandes qui doivent toutes être refusées — déplacer, jeter ou exécuter sans confirmation, remplacer un élément, supprimer définitivement, renommer un lecteur, un dossier personnel, un dossier du système ou un lien, employer un nom ou un chemin interdit —, puis vérifie que rien n'a changé dans le dossier qu'elle n'a fait que parcourir, et que l'atelier contient exactement ce que les opérations demandées devaient produire.
+
 5. **Lancement normal** : le `.exe` est lancé une seconde fois, sans option d'essai, comme par un double-clic. Un contrôle extérieur vérifie que la fenêtre s'ouvre en plein écran et couvre tout l'écran, compare une capture de l'écran à l'image dessinée par l'application, puis demande la fermeture comme le ferait `Alt` + `F4` : l'application doit se fermer sans erreur. Il vérifie aussi que les réglages sont bien destinés à `%APPDATA%\Evolve\settings.json` et que ce lancement, où aucun réglage n'est modifié, n'a rien écrit dans le profil de l'utilisateur : ni fichier, ni dossier. L'espace occupé dans le dossier temporaire, et ce qu'il en reste après la fermeture, sont relevés.
 6. **Réglages et redémarrage** : le `.exe` est lancé deux fois de suite sur le véritable dossier `%APPDATA%\Evolve` de la machine. Au premier lancement, l'application modifie cinq réglages depuis son interface, par les mêmes boutons et curseurs qu'un utilisateur, puis se ferme. Le contrôle lit alors lui-même `settings.json` : le fichier doit exister, être seul dans son dossier et contenir exactement ces cinq réglages. Au second lancement, l'interface doit les afficher sans aucune action — widgets masqués, éclairage nocturne et « Ne pas déranger » activés, luminosité et volume réglés —, et relire le fichier ne doit pas le modifier. Le fichier est ensuite retiré de la machine.
 7. **Dossier Documents absent** : le dossier Documents du compte de la machine est mis de côté — renommé, sans que son contenu soit touché —, de sorte que Windows n'en connaît plus aucun. Le `.exe` est alors lancé et ouvre ce dossier comme le ferait un utilisateur, depuis l'accueil de l'explorateur, le volet latéral puis l'icône du bureau : il doit afficher chaque fois « Dossier « Documents » introuvable », y compris après *Actualiser*, et la navigation doit continuer. Le contrôle constate ensuite lui-même, sur le disque, que le dossier est toujours absent, que rien n'est apparu à côté de lui et que le contenu mis de côté est intact, puis il remet le dossier en place.
@@ -164,8 +203,19 @@ Le fichier `.exe` n'est publié que si toutes ces étapes réussissent. Les rapp
 
 ## Limites connues
 
-- Cet aperçu est une application qui *ressemble* à un environnement de bureau : il ne remplace pas le bureau de Windows et ne lance pas de vrais programmes.
-- Seul l'explorateur de fichiers est fonctionnel, et **en lecture seule** : il n'ouvre aucun fichier et n'effectue aucune opération (nouveau, copier, renommer, supprimer…).
+- Cet aperçu est une application qui *ressemble* à un environnement de bureau : il ne remplace pas le bureau de Windows. Seul son explorateur de fichiers est fonctionnel ; les autres applications (Navigateur, Paramètres, Terminal…) n'ouvrent qu'une fenêtre d'attente.
+- Les opérations de l'explorateur ont leurs limites :
+  - il n'y a pas d'annulation (`Ctrl` + `Z`) : une opération ne se défait pas depuis Evolve. Un élément envoyé à la Corbeille se restaure depuis la Corbeille de Windows ; celle d'Evolve reste annoncée comme non disponible ;
+  - sur un lecteur sans Corbeille (certaines clés USB, par exemple), ou pour un élément trop volumineux pour elle, rien ne peut être supprimé depuis Evolve : l'élément reste à sa place ;
+  - il n'y a pas de glisser-déposer, et le presse-papiers des fichiers est interne à Evolve : un fichier copié dans l'Explorateur de Windows ne se colle pas dans Evolve, ni l'inverse ;
+  - il n'existe ni remplacement, ni fusion de dossiers : devant un dossier du même nom, *Conserver les deux* crée un second dossier (« nom - Copie ») ;
+  - une opération porte sur 1 000 éléments sélectionnés au plus — un dossier compte pour un, quel que soit son contenu —, et une seule opération se déroule à la fois ;
+  - les liens symboliques et les jonctions ne sont ni copiés ni modifiés : un dossier copié qui en contient est copié sans eux ;
+  - un déplacement vers un autre lecteur laisse les originaux dans la Corbeille de Windows : l'espace n'est libéré sur le lecteur d'origine qu'une fois celle-ci vidée ;
+  - renommer ou déplacer vérifie d'abord que le nom est libre ; si un autre programme crée un fichier de ce nom dans l'instant qui suit, Windows le remplace. Une copie, elle, ne peut rien remplacer ;
+  - un fichier ouvert sans confirmation l'est d'après son extension seule : Evolve n'examine pas son contenu. Un document peut lui-même contenir des macros ou exploiter une faille de l'application qui l'ouvre : la protection est alors celle de cette application, comme avec l'Explorateur de Windows ;
+  - l'envoi à la Corbeille et l'ouverture d'un fichier sont confiés à Windows, qui peut alors afficher ses propres fenêtres : sa demande d'autorisation, pour jeter un élément réservé aux administrateurs ou pour lancer un programme qui exige ces droits ; la question « Comment voulez-vous ouvrir ce fichier ? », devant un type de fichier sans application associée. Windows et l'application qui ouvre un fichier peuvent aussi l'inscrire dans leur liste de fichiers récents. Ces comportements sont déduits du fonctionnement de Windows et du code du moteur (Electron) : ils n'ont pas été observés sur une vraie machine ;
+  - sur la machine Windows de compilation, l'auto-test mène réellement ces opérations, sur un seul lecteur (voir [Vérifications automatiques](#vérifications-automatiques)). Le déplacement d'un lecteur à un autre, l'interruption d'une copie en cours et les refus de Windows (fichier ouvert dans un autre programme, disque plein, lecteur sans Corbeille) ne sont contrôlés que par les tests automatiques, sur un disque simulé ou dans un dossier temporaire.
 - L'explorateur diffère encore de celui de Windows :
   - les dossiers portent leur nom réel sur le disque (« Users », « Program Files ») et non leur nom traduit (« Utilisateurs », « Programmes ») ; seuls les six dossiers personnels sont présentés sous leur nom français ;
   - les éléments masqués sont reconnus à leur nom et à leur emplacement, l'attribut « caché » de Windows n'étant pas lisible ici : un fichier que vous avez masqué vous-même reste affiché ;
@@ -206,18 +256,20 @@ L'interface est écrite en HTML, CSS et JavaScript, sans bibliothèque ni étape
 
 Tout ce qui touche à l'ordinateur passe par une **couche de services** (`src/services/`), indépendante d'Electron comme de l'interface. Chaque service s'inscrit auprès d'un point d'accès unique (`hub.js`) en déclarant ses méthodes publiques et ses événements ; l'interface, isolée dans un bac à sable, ne peut qu'appeler ces méthodes par leur nom (`services.call('settings', 'set', …)`) et recevoir ces événements — elle n'a accès ni aux fichiers ni au système. Deux services existent : les réglages (`settings`) et la consultation des dossiers, en lecture seule (`files`) ; les suivants s'ajouteront de la même façon, sans modifier ni la passerelle ni la fenêtre.
 
+Les opérations sur les fichiers ne sont volontairement pas un service : elles ne peuvent pas être désignées par leur nom à travers le point d'accès. [`src/services/file-operations.js`](src/services/file-operations.js), seul module autorisé à modifier les fichiers de l'utilisateur, propose six fonctions — créer un dossier, renommer, copier, déplacer, envoyer à la Corbeille, ouvrir —, reliées une à une à l'interface par des canaux qui leur sont propres. Il n'emploie que trois fonctions d'écriture du système (créer un dossier, renommer, copier un fichier sans jamais écraser) et aucune fonction de suppression : l'envoi à la Corbeille et l'ouverture d'un fichier lui sont fournis par le processus principal, qui les confie à Windows. Un test relit le code de l'application et échoue si un autre fichier se met à écrire sur le disque.
+
 L'emplacement des dossiers personnels est demandé au moteur par [`src/main/personal-folders.js`](src/main/personal-folders.js), qui ne lui pose que des questions sans effet sur le disque. Le moteur crée en effet le dossier Documents absent dès qu'il en obtient le chemin. Sous Windows, il ne l'obtient pas : le système vérifie d'abord que le dossier existe, et répond par une erreur s'il est absent. Sur les autres systèmes (développement), le chemin lui est donné sans vérification : la question n'est donc jamais posée, et Evolve désigne lui-même le dossier `Documents` du compte. Un emplacement obtenu n'est plus redemandé de la session ; seul un dossier resté introuvable l'est de nouveau, à chaque actualisation.
 
 ```text
 assets/          fond d'écran, polices, icône de l'application
 src/main/        application de bureau (Electron) : fenêtre, sécurité, auto-test
-src/services/    services : point d'accès, réglages (schéma, fichier, emplacement), consultation des dossiers
+src/services/    services : point d'accès, réglages (schéma, fichier, emplacement), consultation des dossiers, opérations sur les fichiers
 src/renderer/    interface : page, feuilles de style et modules JavaScript
   js/core/       outils communs (DOM, formats, horloge, pictogrammes, accès aux services)
-  js/shell/      bureau, barre des tâches, menu Démarrer, panneaux
+  js/shell/      bureau, barre des tâches, menu Démarrer, panneaux, fenêtres de dialogue
   js/wm/         gestionnaire de fenêtres
   js/widgets/    widgets matériels (processeur, mémoire, carte graphique)
-  js/apps/       applications (explorateur de fichiers : affichage, navigation)
+  js/apps/       applications (explorateur de fichiers : affichage, navigation, opérations)
   js/data/       applications et contenus de démonstration (menu Démarrer, notifications)
 scripts/         outils : aperçu, pictogrammes, vérifications de l'exécutable
 tests/           tests automatiques

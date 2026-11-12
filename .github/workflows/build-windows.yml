@@ -3,6 +3,9 @@
 # À chaque envoi de code, une machine Windows de GitHub :
 #   1. lance les tests automatiques ;
 #   2. démarre l'application et vérifie que l'interface répond (auto-test) ;
+#      l'explorateur y mène de vraies opérations sur ses propres fichiers
+#      d'essai : créer, renommer, copier, déplacer, envoyer à la Corbeille
+#      de Windows, ouvrir ;
 #   3. fabrique le fichier .exe portable ;
 #   4. vérifie ce fichier : aucun droit administrateur demandé, puis démarrage
 #      réel et nouveau passage de l'auto-test ;
@@ -11,7 +14,9 @@
 #      normale, fichiers temporaires, rien d'écrit dans le profil ;
 #   6. lance ce fichier deux fois de suite : des réglages modifiés au premier
 #      lancement doivent être sur le disque, puis retrouvés au second ;
-#   7. publie le .exe, téléchargeable depuis la page de l'exécution
+#   7. met de côté le dossier Documents de la machine le temps d'un
+#      lancement : il doit être annoncé comme introuvable, jamais recréé ;
+#   8. publie le .exe, téléchargeable depuis la page de l'exécution
 #      (rubrique « Artifacts »), ainsi que les rapports et les captures
 #      d'écran des vérifications.
 #
@@ -108,11 +113,12 @@ jobs:
         timeout-minutes: 12
         run: bash scripts/ci-run.sh reglages-redemarrage node scripts/check-settings.mjs --out=self-test-output/reglages --settings-dir="$APPDATA/Evolve"
 
-      # L'explorateur est en lecture seule : il ne doit rien créer. Le dossier
-      # Documents du compte de cette machine est mis de côté (renommé) le
-      # temps d'un lancement : l'exécutable doit l'annoncer comme introuvable,
-      # et le script constate lui-même, sur le disque, que le dossier est
-      # toujours absent — avant de le remettre en place.
+      # Evolve ne crée rien de lui-même : un dossier n'apparaît que si
+      # l'utilisateur le demande. Le dossier Documents du compte de cette
+      # machine est mis de côté (renommé) le temps d'un lancement :
+      # l'exécutable doit l'annoncer comme introuvable, et le script constate
+      # lui-même, sur le disque, que le dossier est toujours absent — avant de
+      # le remettre en place.
       - name: Dossier Documents absent jamais recréé par l'exécutable portable
         timeout-minutes: 8
         run: bash scripts/ci-run.sh documents-absent node scripts/check-documents.mjs --out=self-test-output/documents-absent

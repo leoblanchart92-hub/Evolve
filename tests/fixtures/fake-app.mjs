@@ -56,6 +56,20 @@ switch (mode) {
     report(true, [{ name: 'contrôle un', ok: true }], [], { explorer: { places: 'desktop', drives: null } });
     process.exit(0);
     break;
+  case 'pass-with-recycled': // réussite, avec le dossier d'essai retrouvé dans la Corbeille de Windows
+    report(true, [{ name: 'contrôle un', ok: true }], [], {
+      recycled: {
+        from: "D:\\a\\Evolve\\self-test-output\\explorateur\\essai-AbC123\\Atelier d'essai été 2026\\À jeter",
+        record: 'D:\\$RECYCLE.BIN\\S-1-5-21-1-2-3-500\\$IK4T9QZ',
+        content: 'D:\\$RECYCLE.BIN\\S-1-5-21-1-2-3-500\\$RK4T9QZ',
+      },
+    });
+    process.exit(0);
+    break;
+  case 'pass-with-odd-recycled': // information mal formée : ignorée
+    report(true, [{ name: 'contrôle un', ok: true }], [], { recycled: { from: 12, content: null } });
+    process.exit(0);
+    break;
   case 'fail':
     report(false, [{ name: 'contrôle un', ok: true }, { name: 'contrôle deux', ok: false, value: { attendu: 1 } }]);
     process.exit(1);
