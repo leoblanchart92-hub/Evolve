@@ -7,11 +7,16 @@
  * et la relie à la couche de services (src/services/), indépendante de
  * l'interface.
  *   - aucun droit administrateur n'est demandé ;
- *   - aucun paramètre de Windows n'est lu ni modifié ;
+ *   - aucun paramètre de Windows n'est modifié ;
  *   - rien n'est installé : les fichiers de travail (cache du moteur de rendu)
  *     sont placés dans le dossier temporaire de l'utilisateur ;
  *   - les réglages de l'utilisateur sont conservés dans un seul fichier,
- *     %APPDATA%\Evolve\settings.json, créé au premier réglage modifié.
+ *     %APPDATA%\Evolve\settings.json, créé au premier réglage modifié ;
+ *   - les dossiers de l'ordinateur sont consultés en lecture seule par
+ *     l'explorateur de fichiers (service « files ») : Windows est seulement
+ *     interrogé sur l'emplacement des dossiers personnels (Bureau, Documents…),
+ *     et aucun dossier n'est jamais créé — un dossier absent le reste
+ *     (voir personal-folders.js).
  *
  * Options de la ligne de commande : voir args.js.
  */
@@ -21,6 +26,7 @@ const path = require('node:path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
 
 const { parseArgs } = require('./args');
+const { personalFolders } = require('./personal-folders');
 const { createServices } = require('../services');
 const { settingsDir, settingsFile } = require('../services/platform');
 
@@ -99,6 +105,31 @@ function resolveSettingsFile() {
   return settingsFile(settingsDir({ appData: app.getPath('appData') }));
 }
 
+/**
+ * Dossiers personnels de l'utilisateur (Bureau, Documents, Téléchargements,
+ * Images, Musique, Vidéos), tels que Windows les indique : ils peuvent avoir
+ * été déplacés, vers OneDrive par exemple. Demandés à la première ouverture
+ * de l'explorateur — jamais au démarrage — et sans que rien ne soit créé : un
+ * dossier absent est signalé comme introuvable. Il est seul redemandé aux
+ * recherches suivantes (`known` : emplacements déjà obtenus), au cas où il
+ * serait revenu.
+ */
+function locatePersonalFolders(known) {
+  return personalFolders({ getPath: (name) => app.getPath(name), known });
+}
+
+/**
+ * Module de fichiers d'origine de Node : celui d'Electron présente les
+ * archives .asar comme des dossiers, ce qu'un explorateur ne doit pas faire.
+ */
+function plainFileSystem() {
+  try {
+    return require('original-fs');
+  } catch {
+    return fs; // hors d'Electron (tests)
+  }
+}
+
 if (options.selfTest) {
   process.on('uncaughtException', abortSelfTest);
   process.on('unhandledRejection', abortSelfTest);
@@ -134,6 +165,8 @@ if (!hasLock) {
   services = createServices({
     settingsFile: resolveSettingsFile(),
     appVersion: app.getVersion(),
+    // Explorateur de fichiers : dossiers personnels et lecteurs locaux, en lecture seule.
+    files: { places: locatePersonalFolders, drives: 'auto', fs: plainFileSystem() },
     log: (message) => console.warn(message),
   });
   // Événements des services : transmis à la fenêtre, sauf ceux qui découlent
@@ -298,6 +331,10 @@ async function start() {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     callback({ cancel: NETWORK_URL.test(details.url) });
   });
+
+  // Elle n'enregistre aucun fichier : un téléchargement, d'où qu'il vienne,
+  // est annulé avant que rien ne soit écrit sur le disque.
+  session.defaultSession.on('will-download', (event) => event.preventDefault());
 
   registerIpc();
   const win = createWindow();

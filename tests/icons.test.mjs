@@ -8,11 +8,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import { describeNode, FILE_TYPES } from '../src/renderer/js/core/file-types.js';
 import { hasIcon } from '../src/renderer/js/core/icons.js';
 import { ICON_NAMES, ICON_SYMBOLS, ICON_WEIGHTS } from '../src/renderer/js/core/icons.data.js';
 import { APPS, DESKTOP_ICONS } from '../src/renderer/js/data/apps.js';
 import { createDemoNotifications } from '../src/renderer/js/data/demo-content.js';
-import { createDemoFileSystem, describeNode, FILE_TYPES } from '../src/renderer/js/data/demo-files.js';
+import { createDemoFileSystem } from '../src/renderer/js/data/demo-files.js';
 import { QUICK_SETTING_ENTRIES } from '../src/renderer/js/shell/search.js';
 import { networkGlyph, volumeGlyph } from '../src/renderer/js/shell/ui-state.js';
 import { listFiles, relative, RENDERER, stripComments } from './helpers.mjs';

@@ -27,7 +27,7 @@ export class Shell {
       return el;
     };
 
-    /** Arborescence d'exemple partagée (explorateur, recherche, recommandations). */
+    /** Arborescence d'exemple du menu Démarrer (recommandations, recherche) ; l'explorateur lit les vrais dossiers. */
     this.files = createDemoFileSystem();
 
     this.menus = new MenuLayer($('menus'));

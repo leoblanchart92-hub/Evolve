@@ -6,7 +6,8 @@
  * Utilisé par la compilation automatique (GitHub Actions) pour vérifier, sur
  * un vrai Windows, que l'exécutable démarre et que l'interface répond :
  * chargement sans erreur, fond d'écran officiel, barre des tâches, menu
- * Démarrer, panneaux, fenêtres, explorateur de fichiers.
+ * Démarrer, panneaux, fenêtres, explorateur de fichiers — qui parcourt de
+ * vrais dossiers, en lecture seule (voir selftest-explorer.js).
  *
  * Il écrit un rapport (result.json) et des captures d'écran dans DOSSIER,
  * puis renvoie 0 (tout est conforme) ou 1 (au moins un contrôle en échec).
@@ -15,13 +16,18 @@
  *   full             contrôle complet de l'interface (par défaut) ;
  *   settings-write   modifie des réglages depuis l'interface ;
  *   settings-read    vérifie, après un nouveau lancement, que l'interface les
- *                    a retrouvés (voir selftest-settings.js).
+ *                    a retrouvés (voir selftest-settings.js) ;
+ *   documents-missing  sur une machine dont le dossier Documents a été mis de
+ *                    côté : l'explorateur l'annonce comme introuvable, sans
+ *                    rien créer (voir selftest-documents.js).
  */
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { documentsScenarios } = require('./selftest-documents');
+const { checkExplorer } = require('./selftest-explorer');
 const { settingsScenarios } = require('./selftest-settings');
 
 /** Scénario exécuté quand aucun n'est demandé. */
@@ -106,9 +112,10 @@ function withTimeout(promise, ms, message) {
  * @param {Partial<typeof DEFAULT_TIMINGS>} [options.timings]
  * @param {string} [options.scenario]  scénario à exécuter (voir l'en-tête)
  * @param {() => object} [options.describeServices]  état des services d'Evolve, joint au rapport
+ * @param {string} [options.platform]  système sur lequel l'application s'exécute
  * @returns {Promise<number>} code de sortie : 0 = réussite, 1 = échec
  */
-async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null }) {
+async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, platform = process.platform }) {
   const started = Date.now();
   const { webContents } = win;
   const t = { ...DEFAULT_TIMINGS, ...timings };
@@ -134,6 +141,8 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     images: [],
     /** Inventaire et état des services d'Evolve à la fin du test. */
     services: null,
+    /** Dossiers personnels et lecteurs que l'explorateur a trouvés sur cette machine. */
+    explorer: null,
   };
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -185,10 +194,11 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
   };
 
   /**
-   * Contrôle : attend que `code` renvoie `true` dans la page (les animations
-   * et une machine lente peuvent retarder l'état attendu).
+   * Attend que `code` renvoie `true` dans la page (les animations, une lecture
+   * du disque ou une machine lente peuvent retarder l'état attendu). Renvoie
+   * la dernière valeur obtenue.
    */
-  const check = async (name, code, { timeout = t.check } = {}) => {
+  const until = async (code, { timeout = t.check } = {}) => {
     const deadline = Date.now() + timeout;
     let value;
     for (;;) {
@@ -200,8 +210,11 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
       if (value === true || fatal || Date.now() >= deadline) break;
       await sleep(t.poll);
     }
-    return record(name, value);
+    return value;
   };
+
+  /** Contrôle : l'état attendu doit apparaître dans la page (voir `until`). */
+  const check = async (name, code, options) => record(name, await until(code, options));
 
   /**
    * Mesure une capture : dimensions et nombre de couleurs. Facultative —
@@ -385,7 +398,8 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        return Boolean(win) && win.classList.contains('is-focused') && inView(win) && win.querySelectorAll('.ex-item').length > 0
          && document.querySelector('.tb-app[data-app="explorer"]').classList.contains('is-active');`,
     );
-    await capture('06-explorateur');
+    // Vrais dossiers, navigation, refus du service, lecture seule (capture 06 comprise).
+    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, platform });
     await act(`document.querySelector('.window[data-app="explorer"] .window__control--max').click();`);
     await check(
       "la fenêtre s'agrandit sur tout l'espace de travail",
@@ -424,7 +438,11 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     }, t.total);
   });
 
-  const scenarios = { [DEFAULT_SCENARIO]: scenario, ...settingsScenarios({ begin, check, act, capture }) };
+  const scenarios = {
+    [DEFAULT_SCENARIO]: scenario,
+    ...settingsScenarios({ begin, check, act, capture }),
+    ...documentsScenarios({ begin, check, act, until, evaluate, record, capture, report }),
+  };
   // Un scénario inconnu est un échec : un test qui ne contrôle rien ne doit jamais réussir.
   const selected = Object.hasOwn(scenarios, scenarioName) ? scenarios[scenarioName] : null;
   if (!selected) report.errors.push(`scénario d'auto-test inconnu : ${scenarioName}`);

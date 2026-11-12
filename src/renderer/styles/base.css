@@ -232,4 +232,13 @@ mark {
     transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
+
+  /* Dans un panneau ouvert, rien n'est différé, pas même d'une milliseconde :
+     le panneau et son contenu sont visibles aussitôt, et reçoivent le clavier
+     dès l'ouverture (recherche du menu Démarrer). Sans cela, la transition
+     d'une milliseconde s'appliquerait aussi à leur visibilité. */
+  .flyout.is-open,
+  .flyout.is-open * {
+    transition-duration: 0s !important;
+  }
 }

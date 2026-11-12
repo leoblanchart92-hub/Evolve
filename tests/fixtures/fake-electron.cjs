@@ -13,6 +13,7 @@
  */
 
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
 const path = require('node:path');
 
 /** Événement annulable, comme ceux d'Electron. */
@@ -25,24 +26,100 @@ function cancellable() {
   };
 }
 
+/** Dossiers personnels connus du faux Electron : nom demandé → dossier du faux profil. */
+const PERSONAL_FOLDERS = Object.freeze({
+  desktop: 'Desktop',
+  documents: 'Documents',
+  downloads: 'Downloads',
+  pictures: 'Pictures',
+  music: 'Music',
+  videos: 'Videos',
+});
+
+const isDirectory = (target) => {
+  try {
+    return fs.statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Emplacements du compte tels que le moteur les fournit (Electron 45,
+ * Chromium 156 : chrome_paths.cc, chrome_paths_win.cc) — défaut compris :
+ * après avoir obtenu le chemin du dossier Documents, le moteur le crée s'il
+ * n'existe pas.
+ *
+ *   - Windows : le chemin est demandé au système, qui vérifie que le dossier
+ *     existe ; absent, la demande échoue (« Failed to get … path ») et rien
+ *     n'est créé. Pour Téléchargements, le moteur se rabat alors sur
+ *     « Downloads » dans Documents, sans vérifier ni créer ;
+ *   - autres systèmes : le chemin est fourni sans vérification, et le dossier
+ *     Documents absent est créé.
+ *
+ * @param {object} options
+ * @param {string} options.profile     dossier du compte (les dossiers personnels s'y trouvent)
+ * @param {string} [options.platform]  système imité (par défaut : celui de la machine)
+ * @param {{ pathRequests: string[], unknownFolders: string[], movedFolders: Record<string, string>, createdByEngine: string[] }} options.state
+ *        `pathRequests` : demandes reçues ; `unknownFolders` : dossiers que le système ne connaît pas ;
+ *        `movedFolders` : dossiers déplacés hors du profil ; `createdByEngine` : dossiers créés par le moteur
+ * @returns {(name: string) => string} équivalent de `app.getPath` pour « home » et les six dossiers personnels
+ */
+function createEnginePaths({ profile, platform = process.platform, state }) {
+  const registered = (name) => state.movedFolders[name] ?? path.join(profile, PERSONAL_FOLDERS[name]);
+  const failure = (name) => new Error(`Failed to get '${name}' path`);
+
+  return function getPath(name) {
+    state.pathRequests.push(name);
+    if (name === 'home') return profile;
+    if (!Object.hasOwn(PERSONAL_FOLDERS, name)) throw new Error(`faux moteur : emplacement inattendu « ${name} »`);
+    if (state.unknownFolders.includes(name)) throw failure(name);
+
+    const target = registered(name);
+    if (platform === 'win32') {
+      if (isDirectory(target)) return target;
+      if (name !== 'downloads') throw failure(name);
+      // Téléchargements introuvable : « Downloads » dans Documents, si Documents existe.
+      if (state.unknownFolders.includes('documents') || !isDirectory(registered('documents'))) throw failure(name);
+      return path.join(registered('documents'), 'Downloads');
+    }
+    if (name === 'documents' && !isDirectory(target)) {
+      fs.mkdirSync(target, { recursive: true });
+      state.createdByEngine.push(target);
+    }
+    return target;
+  };
+}
+
 /**
  * @param {object} options
  * @param {string} options.tempDir                 dossier temporaire renvoyé par app.getPath('temp') ;
  *                                                 le dossier de configuration de l'utilisateur
- *                                                 (app.getPath('appData')) est placé à l'intérieur :
- *                                                 les tests n'écrivent jamais dans le vrai profil
+ *                                                 (app.getPath('appData')) et ses dossiers personnels
+ *                                                 (app.getPath('documents')…) sont placés à l'intérieur :
+ *                                                 les tests ne touchent jamais au vrai profil
+ * @param {string} [options.platform]              système dont le moteur imite le comportement pour les
+ *                                                 dossiers personnels (voir createEnginePaths)
  * @param {boolean} [options.packaged]             application empaquetée (app.isPackaged)
  * @param {boolean} [options.lock]                 verrou d'instance unique obtenu
  * @param {{width:number,height:number}} [options.workArea]  zone de travail de l'écran principal
  * @param {Error|null} [options.loadError]         erreur renvoyée par le chargement de la page
  */
-function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = { width: 1920, height: 1040 }, loadError = null }) {
+function createFakeElectron({ tempDir, platform = process.platform, packaged = true, lock = true, workArea = { width: 1920, height: 1040 }, loadError = null }) {
   const state = {
     /** Codes passés à app.exit(), dans l'ordre. */
     exitCodes: [],
     quitCalls: 0,
     /** Chemins redéfinis par app.setPath(). */
     paths: {},
+    /** Emplacements du compte demandés par app.getPath() (« home » et dossiers personnels), dans l'ordre. */
+    pathRequests: [],
+    /** Dossiers personnels que le faux Windows ne connaît pas (app.getPath() échoue). */
+    unknownFolders: [],
+    /** Dossiers personnels déplacés : nom → chemin (OneDrive, autre disque…). */
+    movedFolders: {},
+    /** Dossiers créés par le moteur lui-même en réponse à une demande d'emplacement. */
+    createdByEngine: [],
     /** Options de ligne de commande ajoutées au moteur. */
     switches: [],
     /** Fenêtres créées. */
@@ -50,6 +127,8 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
     /** Valeur passée à Menu.setApplicationMenu() (undefined = jamais appelé). */
     menu: undefined,
     permissionHandler: undefined,
+    /** Écouteurs de la session (session.defaultSession.on) : événement → fonction. */
+    sessionListeners: new Map(),
     /** Filtre des requêtes installé par session.webRequest.onBeforeRequest(). */
     requestFilter: undefined,
     /** Boîtes d'erreur affichées : [titre, message]. */
@@ -65,6 +144,9 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
     resolveReady = resolve;
   });
 
+  /** Dossiers du compte, comme le moteur les fournit — création du dossier Documents comprise. */
+  const enginePaths = createEnginePaths({ profile: path.join(tempDir, 'profil'), platform, state });
+
   const app = Object.assign(new EventEmitter(), {
     isPackaged: packaged,
     getName: () => 'Evolve',
@@ -73,6 +155,7 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
       if (state.paths[name]) return state.paths[name];
       if (name === 'temp') return tempDir;
       if (name === 'appData') return path.join(tempDir, 'profil', 'AppData', 'Roaming');
+      if (name === 'home' || Object.hasOwn(PERSONAL_FOLDERS, name)) return enginePaths(name);
       throw new Error(`faux electron : chemin inattendu « ${name} »`);
     },
     setPath(name, value) {
@@ -266,6 +349,10 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
         setPermissionRequestHandler(handler) {
           state.permissionHandler = handler;
         },
+        on(name, listener) {
+          if (state.sessionListeners.has(name)) throw new Error(`faux electron : événement de session déjà écouté « ${name} »`);
+          state.sessionListeners.set(name, listener);
+        },
         webRequest: {
           onBeforeRequest(...args) {
             // Signature d'Electron : ([filtre, ]écouteur).
@@ -296,4 +383,4 @@ function createFakeElectron({ tempDir, packaged = true, lock = true, workArea = 
   };
 }
 
-module.exports = { createFakeElectron, cancellable };
+module.exports = { createFakeElectron, createEnginePaths, cancellable, PERSONAL_FOLDERS };

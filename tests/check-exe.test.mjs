@@ -158,6 +158,10 @@ test('un scénario particulier est nommé dans les titres ; le contrôle complet
   assert.match(found.annotation, /^Auto-test « réglages retrouvés » — node(\.exe)?$/);
   assert.equal(found.heading, "❌ Auto-test « réglages retrouvés » de l'exécutable : échec");
 
+  found = titles(['--self-test-scenario=documents-missing']);
+  assert.match(found.annotation, /^Auto-test « dossier Documents absent » — node(\.exe)?$/);
+  assert.equal(found.heading, "✅ Auto-test « dossier Documents absent » de l'exécutable : réussi");
+
   // Scénario inconnu de ce script : son nom est repris tel quel.
   assert.match(titles(['--self-test-scenario=autre']).annotation, /^Auto-test « autre » — node(\.exe)?$/);
   // Option répétée : la première compte, comme dans l'application.
@@ -191,6 +195,26 @@ test('sur GitHub Actions, le résultat est publié en annotation', () => {
   assert.match(fatal[0], /^::error title=[^:]+::L'application s'est terminée \(code 1\) sans écrire de rapport[^\n]*%0A%0AError: panne simulée%0A/);
 
   assert.deepEqual(lines(run('pass').output), [], 'aucune annotation hors de GitHub Actions');
+});
+
+test('les emplacements trouvés par l’explorateur figurent dans le compte rendu', () => {
+  const passed = run('pass-with-explorer', { env: { GITHUB_ACTIONS: 'true' } });
+  assert.equal(passed.code, 0, passed.output);
+  const line = 'Explorateur : dossiers personnels desktop, documents · lecteurs C:, D:';
+  assert.ok(passed.output.includes(`  ${line}\n`), passed.output);
+  assert.match(passed.output, /^::notice title=[^:]+::Auto-test réussi — [^\n]*%0AExplorateur : dossiers personnels desktop, documents · lecteurs C(?::|%3A), D(?::|%3A)$/m);
+
+  // En cas d'échec aussi : l'information aide à comprendre ce que la machine expose.
+  const failed = run('fail-with-explorer', { env: { GITHUB_ACTIONS: 'true' } });
+  assert.equal(failed.code, 1, failed.output);
+  assert.match(failed.output, /^::error title=[^:]+::Auto-test en échec[^\n]*%0AExplorateur : dossiers personnels aucun · lecteurs aucun$/m);
+
+  // Information absente ou mal formée : rien n'est affiché, le résultat ne change pas.
+  for (const mode of ['pass', 'pass-with-odd-explorer']) {
+    const other = run(mode, { env: { GITHUB_ACTIONS: 'true' } });
+    assert.equal(other.code, 0, other.output);
+    assert.doesNotMatch(other.output, /Explorateur/);
+  }
 });
 
 test('les mesures des captures figurent dans le compte rendu', () => {
