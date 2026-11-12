@@ -89,7 +89,7 @@ async function run(win, timings = FAST, options = {}) {
 }
 
 /** Nombre de contrôles du scénario complet ; un de plus sous Windows (dossier protégé). */
-const FULL_CHECKS = 42;
+const FULL_CHECKS = 43;
 
 const failed = (report) => report.checks.filter((item) => !item.ok).map((item) => item.name);
 
@@ -449,6 +449,7 @@ const EXPLORER_CHECKS = [
   "chaque dossier personnel disponible s'ouvre (Bureau, Documents, Téléchargements, Images, Musique, Vidéos)",
   null, // navigation au double-clic : l'intitulé cite le nombre de niveaux
   "le dossier d'essai affiche son contenu réel (noms avec espaces, accents et apostrophe)",
+  'un dossier supprimé entre-temps affiche « Dossier introuvable », sans bloquer la navigation',
   'les éléments masqués ne sont affichés que sur demande (menu Affichage)',
   'vue « Détails » : type, taille et date de modification réels',
   "un sous-dossier s'ouvre au double-clic",
@@ -512,6 +513,37 @@ test('explorateur : un dossier d’essai réel est créé dans le dossier de sor
   }
 });
 
+test('explorateur : un dossier est retiré pendant que l’explorateur l’affiche encore, pour éprouver « Dossier introuvable »', async () => {
+  const { REMOVED_NAME } = explorerTest;
+  const outDir = freshDir();
+  const seen = {};
+  const win = createWindow((code) => {
+    const present = () => existsSync(path.join(fixtureOf(outDir), REMOVED_NAME));
+    // Contenu du dossier d'essai : le dossier y figure encore, sur le disque comme à l'écran.
+    if (code.includes('is-dimmed') && seen.listed === undefined) seen.listed = present() && code.includes(REMOVED_NAME);
+    // Ouverture du dossier : il a été retiré juste avant, par l'auto-test lui-même.
+    if (code.includes("state.code === 'not-found'") && seen.opened === undefined) seen.opened = present();
+    return true;
+  });
+  const { code, report } = await run(win, FAST, { outDir });
+  assert.equal(code, 0);
+  assert.deepEqual(seen, { listed: true, opened: false });
+  assert.equal(existsSync(path.join(fixtureOf(outDir), REMOVED_NAME)), false);
+
+  // Aller par un double-clic sur le dossier disparu, retour par « Précédent ».
+  const script = win.webContents.executed.find((item) => item.includes("state.code === 'not-found'"));
+  assert.ok(script.includes(`exOpen(${JSON.stringify(path.join(fixtureOf(outDir), REMOVED_NAME))})`));
+  assert.match(script, /state\.message === 'Dossier introuvable'/);
+  assert.match(script, /exButton\('Précédent'\)\.click\(\)/);
+
+  // La page d'erreur n'apparaît pas : le contrôle échoue, seul.
+  const stuck = createWindow((item) => (item.includes("state.code === 'not-found'") ? { page: 'folder', code: '' } : true));
+  const failing = await run(stuck);
+  assert.equal(failing.code, 1);
+  assert.deepEqual(failed(failing.report), [EXPLORER_CHECKS[5]]);
+  assert.deepEqual(failing.report.checks.find((item) => !item.ok).value, { page: 'folder', code: '' });
+});
+
 test('explorateur : le trajet jusqu’au dossier d’essai se fait au double-clic, un niveau après l’autre', async () => {
   const win = createWindow();
   const { outDir } = await run(win);
@@ -561,8 +593,8 @@ test('explorateur : la moindre modification du dossier parcouru fait échouer l�
     'dossier créé': (folder) => mkdirSync(path.join(folder, 'Nouveau dossier')),
     'date modifiée seule': (folder) => utimesSync(path.join(folder, 'Résumé été.pdf'), new Date(2020, 0, 1), new Date(2020, 0, 1)),
   };
-  // Avant ou après l'ajout du fichier témoin de l'actualisation : les deux moitiés du scénario sont surveillées.
-  for (const moment of ['Ce dossier est vide', 'Corbeille non disponible']) {
+  // Avant le retrait du dossier témoin, avant l'ajout du fichier témoin, et après : tout le scénario est surveillé.
+  for (const moment of ['is-dimmed', 'Ce dossier est vide', 'Corbeille non disponible']) {
     for (const [label, change] of Object.entries(changes)) {
       const outDir = freshDir();
       let done = false;
@@ -630,37 +662,62 @@ test('explorateur : chemins hors des emplacements autorisés présentés au serv
   assert.ok(!others.includes('localhost'));
 });
 
-test('explorateur sous Windows : un dossier protégé est contrôlé ; s’il ne l’est pas sur cette machine, simple avertissement', async () => {
+test('explorateur sous Windows : un dossier protégé est contrôlé ; si aucun ne l’est sur cette machine, simple avertissement', async () => {
   const win = createWindow();
   const { code, report } = await run(win, FAST, { platform: 'win32' });
   assert.equal(code, 0);
   assert.equal(report.checks.length, FULL_CHECKS + 1);
   const names = report.checks.map((item) => item.name);
-  assert.equal(names.indexOf(PROTECTED_CHECK), names.indexOf(EXPLORER_CHECKS[4]) + 1, 'après l’arrivée dans le dossier d’essai');
+  assert.equal(names.indexOf(PROTECTED_CHECK), names.indexOf(EXPLORER_CHECKS[5]) + 1, 'après le contrôle du dossier supprimé');
   assert.deepEqual(report.warnings, []);
   // Aller par un double-clic sur le dossier protégé, retour par « Précédent ».
   const script = win.webContents.executed.find((item) => item.includes("state.code === 'access-denied'"));
   assert.match(script, /exOpen\("[A-Z]:\\\\System Volume Information"\)/);
+  assert.match(script, /state\.path === "[A-Z]:\\\\"/);
   assert.match(script, /exButton\('Précédent'\)\.click\(\)/);
+  // Plusieurs dossiers connus sont proposés au service, du plus courant au moins courant.
+  const probe = win.webContents.executed.find((item) => item.includes("reply.code === 'access-denied'"));
+  assert.match(probe, /System Volume Information.*Program Files\\\\WindowsApps.*ProgramData\\\\Microsoft\\\\Windows\\\\SystemData/);
 
   // Ailleurs que sous Windows : ce contrôle n'existe pas.
   const other = await run(createWindow());
   assert.ok(!other.report.checks.some((item) => item.name === PROTECTED_CHECK));
 
-  // Dossier lisible, absent, ou service muet : le contrôle est omis, un avertissement le dit.
+  // Le premier dossier est lisible sur cette machine, le deuxième refuse l'accès : c'est lui qui est contrôlé,
+  // après un trajet au double-clic jusqu'à son dossier parent.
+  const nested = createWindow((item) => (item.includes("reply.code === 'access-denied'") ? { index: 1, tried: { svi: 'lisible' } } : true));
+  const second = await run(nested, FAST, { platform: 'win32' });
+  assert.equal(second.code, 0);
+  assert.equal(second.report.checks.length, FULL_CHECKS + 1);
+  assert.deepEqual(second.report.warnings, []);
+  const { executed } = nested.webContents;
+  const walk = executed.findIndex((item) => /exOpen\("[A-Z]:\\\\Program Files"\)/.test(item) && /dataset\.path === "[A-Z]:\\\\Program Files"/.test(item));
+  const open = executed.findIndex((item) => item.includes("state.code === 'access-denied'"));
+  assert.ok(walk > 0 && open > walk, 'le dossier parent est atteint avant le double-clic');
+  assert.match(executed[open], /exOpen\("[A-Z]:\\\\Program Files\\\\WindowsApps"\)/);
+  assert.match(executed[open], /state\.path === "[A-Z]:\\\\Program Files"/);
+  assert.match(executed[open], /exCrumbs\(\)\.at\(-1\) === "WindowsApps"/);
+  // Retour au dossier d'essai, un pas en arrière après l'autre.
+  const back = executed.slice(open + 1).find((item) => item.includes("exButton(\"Précédent\").click();"));
+  assert.ok(back.includes(JSON.stringify(explorerTest.FOLDER_NAME).slice(1, -1)), 'jusqu’au dossier d’essai');
+
+  // Aucun dossier ne refuse l'accès, réponse inutilisable ou service muet : le contrôle est omis, un avertissement le dit.
   const probes = [
-    [{ ok: true, code: null }, /^dossier protégé non vérifié \([A-Z]:\\System Volume Information : \{"ok":true,"code":null\}\)$/],
-    [{ ok: false, code: 'not-found' }, /"code":"not-found"/],
+    [{ tried: { 'C:\\System Volume Information': 'lisible', 'C:\\Program Files\\WindowsApps': 'not-found' } }, /^dossier protégé non vérifié \(aucun refus d'accès sur cette machine : \{"C:\\\\System Volume Information":"lisible","C:\\\\Program Files\\\\WindowsApps":"not-found"\}\)$/],
+    [{ index: 0, tried: {} }, /aucun refus d'accès sur cette machine : \{\}/],
+    [{ index: 7 }, /aucun refus d'accès sur cette machine : \{"index":7\}/],
+    [{ index: 1.5 }, /\{"index":1\.5\}/],
+    [false, /aucun refus d'accès sur cette machine : false/],
     [new Error('service muet'), /\{"exception":"service muet"\}/],
   ];
   for (const [answer, warning] of probes) {
-    const probing = createWindow((script) => {
-      if (!script.includes("reply.code === 'access-denied'")) return true;
+    const probing = createWindow((item) => {
+      if (!item.includes("reply.code === 'access-denied'")) return true;
       if (answer instanceof Error) throw answer;
       return answer;
     });
     const skipped = await run(probing, FAST, { platform: 'win32' });
-    assert.equal(skipped.code, 0);
+    assert.equal(skipped.code, 0, JSON.stringify(answer));
     assert.equal(skipped.report.checks.length, FULL_CHECKS);
     assert.ok(!skipped.report.checks.some((item) => item.name === PROTECTED_CHECK));
     assert.equal(skipped.report.warnings.length, 1);

@@ -7,9 +7,10 @@
  * (noms avec espaces, accents et apostrophe), puis s'y rend comme le ferait
  * l'utilisateur : « Ce PC », le lecteur, puis chaque dossier, au double-clic.
  * Il contrôle l'affichage (noms, types, tailles, dates), la navigation
- * (précédent, suivant, dossier parent, actualisation), les refus du service
- * de fichiers (chemins hors des emplacements autorisés, opérations
- * d'écriture) et, pour finir, que rien n'a changé dans le dossier parcouru.
+ * (précédent, suivant, dossier parent, actualisation), le message affiché
+ * devant un dossier supprimé entre-temps ou protégé, les refus du service de
+ * fichiers (chemins hors des emplacements autorisés, opérations d'écriture)
+ * et, pour finir, que rien n'a changé dans le dossier parcouru.
  *
  * Seul l'auto-test écrit ces fichiers d'essai, et uniquement dans son dossier
  * de sortie : l'explorateur, lui, ne fait que lire.
@@ -44,6 +45,9 @@ const DETAILED_FILE = Object.freeze({
 /** Fichier ajouté pendant le test, que « Actualiser » doit faire apparaître. */
 const ADDED_NAME = 'Ajouté pendant le test.txt';
 
+/** Dossier retiré pendant le test, alors que l'explorateur l'affiche encore. */
+const REMOVED_NAME = 'Retiré pendant le test';
+
 /** Opérations qu'un explorateur en lecture seule ne doit pas proposer. */
 const WRITE_METHODS = Object.freeze(['write', 'create', 'mkdir', 'rename', 'move', 'copy', 'delete', 'remove', 'trash', 'open', 'read']);
 
@@ -76,7 +80,7 @@ const js = (value) => JSON.stringify(value);
  * précédent, laissé sur place, ne fausse rien.
  * @param {string} outDir  dossier de sortie de l'auto-test
  * @param {string} [platform]  système visé : il décide du nom de l'élément masqué
- * @returns {{ folder: string, sub: string, empty: string, added: string, hidden: string }} chemins réels
+ * @returns {{ folder: string, sub: string, empty: string, added: string, removed: string, hidden: string }} chemins réels
  */
 function createFixture(outDir, platform = process.platform) {
   const hidden = hiddenNameFor(platform);
@@ -87,8 +91,10 @@ function createFixture(outDir, platform = process.platform) {
   const folder = path.join(run, FOLDER_NAME);
   const sub = path.join(folder, VISIBLE_NAMES[0]);
   const empty = path.join(folder, VISIBLE_NAMES[1]);
+  const removed = path.join(folder, REMOVED_NAME);
   fs.mkdirSync(sub, { recursive: true });
   fs.mkdirSync(empty);
+  fs.mkdirSync(removed);
   fs.writeFileSync(path.join(sub, 'plage.jpg'), Buffer.alloc(2048, 7));
   fs.writeFileSync(path.join(folder, 'Budget 2026.xlsx'), Buffer.alloc(4096, 1));
   fs.writeFileSync(path.join(folder, 'Résumé été.pdf'), Buffer.alloc(512, 2));
@@ -96,7 +102,7 @@ function createFixture(outDir, platform = process.platform) {
   const detailed = path.join(folder, DETAILED_FILE.name);
   fs.writeFileSync(detailed, Buffer.alloc(DETAILED_FILE.bytes, 3));
   fs.utimesSync(detailed, DETAILED_FILE.modified, DETAILED_FILE.modified);
-  return { folder, sub, empty, added: path.join(folder, ADDED_NAME), hidden };
+  return { folder, sub, empty, added: path.join(folder, ADDED_NAME), removed, hidden };
 }
 
 /** État d'un dossier : chaque élément avec sa taille, sa date et l'empreinte de son contenu. */
@@ -129,50 +135,75 @@ const reach = (target, action) => `${PAGE_TOOLS}
 const clickNav = (label) => `exButton(${js(label)}).click();`;
 
 /**
+ * Dossiers de Windows fermés aux comptes d'utilisateur, du plus courant au
+ * moins courant. Selon la machine et les droits du compte, certains peuvent
+ * être lisibles : le premier qui refuse l'accès sert au contrôle.
+ */
+const protectedFolders = (drive) => [
+  `${drive}\\System Volume Information`,
+  `${drive}\\Program Files\\WindowsApps`,
+  `${drive}\\ProgramData\\Microsoft\\Windows\\SystemData`,
+];
+
+/**
  * Dossier protégé de Windows : l'explorateur affiche « Accès refusé » et la
  * navigation continue. Partie de `backTo`, le dossier affiché, elle y revient.
  *
- * « System Volume Information », à la racine du lecteur du système, est
- * fermé à tous les comptes d'utilisateur. Si ce n'est pas le cas sur cette
- * machine, le contrôle est omis et un avertissement le signale.
+ * Si aucun des dossiers connus ne refuse l'accès sur cette machine (compte
+ * aux droits étendus), le contrôle est omis et un avertissement le signale.
  * @param {object} tools  outils de l'auto-test
  * @param {{ drive: string, backTo: string }} target  lecteur du système (« C: ») et dossier de retour
  */
 async function checkProtectedFolder({ check, act, until, evaluate, report }, { drive, backTo }) {
-  const root = `${drive}\\`;
-  const protectedFolder = `${root}System Volume Information`;
-  let denied;
+  const candidates = protectedFolders(drive);
+  // Le service est interrogé directement : quel dossier refuse l'accès ?
+  let probe;
   try {
-    denied = await evaluate(
-      `const reply = await window.evolve.services.call('files', 'list', ${js(protectedFolder)});
-       return (reply.ok === false && reply.code === 'access-denied') || { ok: reply.ok, code: reply.code ?? null };`,
+    probe = await evaluate(
+      `const tried = {};
+       for (const [index, target] of ${js(candidates)}.entries()) {
+         const reply = await window.evolve.services.call('files', 'list', target);
+         if (reply.ok === false && reply.code === 'access-denied') return index === 0 ? true : { index, tried };
+         tried[target] = reply.ok ? 'lisible' : (reply.code ?? null);
+       }
+       return { tried };`,
     );
   } catch (error) {
-    denied = { exception: error?.message };
+    probe = { exception: error?.message };
   }
-  if (denied !== true) {
-    report.warnings.push(`dossier protégé non vérifié (${protectedFolder} : ${JSON.stringify(denied)})`);
+  const index = probe === true ? 0 : Number.isInteger(probe?.index) && probe.index > 0 && probe.index < candidates.length ? probe.index : -1;
+  if (index < 0) {
+    report.warnings.push(`dossier protégé non vérifié (aucun refus d'accès sur cette machine : ${JSON.stringify(probe?.tried ?? probe)})`);
     return;
   }
 
+  // Trajet : le lecteur du système, puis chaque dossier jusqu'au parent du dossier protégé.
+  const target = candidates[index];
+  const [root, ...folders] = stepsTo(path.win32.dirname(target));
   await act(`${PAGE_TOOLS} exWin().querySelector('.ex-side[data-id="drive:${drive}"]').click();`);
-  await until(reach(root, ''));
+  let arrived = await until(reach(root.path, ''));
+  for (const step of folders) {
+    if (arrived !== true) break;
+    arrived = await until(reach(step.path, `exOpen(${js(step.id)});`));
+  }
+  const parent = folders.length ? folders.at(-1).path : root.path;
+
   // Aller : double-clic sur le dossier protégé. Retour : « Précédent », qui rend « Suivant » disponible.
   await check(
     'un dossier protégé de Windows affiche « Accès refusé », sans bloquer la navigation',
     `${PAGE_TOOLS}
      const state = exState();
-     if (state.page === 'folder' && state.path === ${js(root)}) {
+     if (state.page === 'folder' && state.path === ${js(parent)}) {
        if (exButton('Suivant').getAttribute('aria-disabled') === 'false') return true;
-       if (!exBusy()) state.ouvert = exOpen(${js(protectedFolder)});
+       if (!exBusy()) state.ouvert = exOpen(${js(target)});
      } else if (state.page === 'error' && state.code === 'access-denied' && state.message === 'Accès refusé'
-       && exCrumbs().at(-1) === 'System Volume Information' && exItems().length === 0) {
+       && exCrumbs().at(-1) === ${js(path.win32.basename(target))} && exItems().length === 0) {
        if (!exBusy()) exButton('Précédent').click();
      }
      return state;`,
   );
-  await act(`${PAGE_TOOLS} ${clickNav('Précédent')}`);
-  await until(reach(backTo, ''));
+  // Retour au dossier de départ, un pas en arrière après l'autre.
+  await until(reach(backTo, clickNav('Précédent')));
 }
 
 /** Étapes du trajet de « Ce PC » à `folder` : le lecteur, puis chaque dossier. */
@@ -267,14 +298,32 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
 
   // 3. Dossier d'essai : créé ici, par l'auto-test, dans son dossier de sortie.
   let fixture;
-  let before;
+  /** État que le dossier d'essai doit avoir : celui dans lequel l'auto-test l'a laissé. */
+  let expected;
+  /** Faux dès qu'un écart est constaté. */
+  let intact = true;
   try {
     fixture = createFixture(outDir, platform);
-    before = snapshot(fixture.folder);
+    expected = snapshot(fixture.folder);
   } catch (error) {
     report.errors.push(`dossier d'essai de l'explorateur impossible à créer : ${error?.message}`);
     return;
   }
+  /**
+   * L'auto-test modifie lui-même le dossier d'essai : il vérifie d'abord que
+   * l'explorateur n'y a rien changé jusque-là, puis retient le nouvel état.
+   */
+  const alter = (change) => {
+    try {
+      intact = intact && snapshot(fixture.folder) === expected;
+      change();
+      expected = snapshot(fixture.folder);
+      return true;
+    } catch (error) {
+      report.errors.push(`dossier d'essai de l'explorateur inutilisable : ${error?.message}`);
+      return false;
+    }
+  };
 
   // Les éléments masqués sont affichés pendant le trajet : aucun dossier du chemin ne peut manquer.
   await act(toggleHidden);
@@ -292,19 +341,45 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
     `${PAGE_TOOLS}
      const names = exNames();
      const crumbs = exCrumbs();
-     return (exContent().dataset.path === ${js(fixture.folder)} && [...names].sort().join('|') === ${js([...VISIBLE_NAMES, fixture.hidden].sort().join('|'))}
+     return (exContent().dataset.path === ${js(fixture.folder)} && [...names].sort().join('|') === ${js([...VISIBLE_NAMES, REMOVED_NAME, fixture.hidden].sort().join('|'))}
        && exItems().filter((item) => item.classList.contains('is-dimmed')).map(exName).join('|') === ${js(fixture.hidden)}
        && crumbs[0] === 'Ce PC' && crumbs.at(-1) === ${js(FOLDER_NAME)}
        && exWin().querySelector('.window__title').textContent.startsWith(${js(FOLDER_NAME)})) || { names, crumbs, ...exState() };`,
   );
 
-  // 4. Dossier inaccessible (Windows) : un message, et la navigation continue.
+  // 4. Dossier supprimé alors que l'explorateur l'affiche encore : un message
+  //    clair à l'ouverture, la navigation continue, et le dossier relu ne le cite plus.
+  if (!alter(() => fs.rmdirSync(fixture.removed))) return;
+  let vanished = await until(
+    `${PAGE_TOOLS}
+     const state = exState();
+     if (state.page === 'folder' && state.path === ${js(fixture.folder)}) {
+       // Revenu de la page d'erreur par « Précédent » : « Suivant » est disponible.
+       if (exButton('Suivant').getAttribute('aria-disabled') === 'false') return true;
+       if (!exBusy()) state.ouvert = exOpen(${js(fixture.removed)});
+     } else if (state.page === 'error' && state.code === 'not-found' && state.message === 'Dossier introuvable'
+       && exCrumbs().at(-1) === ${js(REMOVED_NAME)} && exItems().length === 0) {
+       if (!exBusy()) exButton('Précédent').click();
+     }
+     return state;`,
+  );
+  if (vanished === true) {
+    vanished = await until(
+      `${PAGE_TOOLS}
+       const names = exNames();
+       return (exContent().dataset.path === ${js(fixture.folder)} && !exBusy() && names.length === ${VISIBLE_NAMES.length + 1}
+         && !names.includes(${js(REMOVED_NAME)})) || { names, ...exState() };`,
+    );
+  }
+  record('un dossier supprimé entre-temps affiche « Dossier introuvable », sans bloquer la navigation', vanished);
+
+  // 5. Dossier inaccessible (Windows) : un message, et la navigation continue.
   if (isWindows) {
     const drive = /^[A-Za-z]:$/.test(env.SystemDrive ?? '') ? env.SystemDrive.toUpperCase() : 'C:';
     await checkProtectedFolder({ check, act, until, evaluate, report }, { drive, backTo: fixture.folder });
   }
 
-  // 5. Éléments masqués : affichés à la demande seulement.
+  // 6. Éléments masqués : affichés à la demande seulement.
   await act(toggleHidden);
   await check(
     'les éléments masqués ne sont affichés que sur demande (menu Affichage)',
@@ -314,7 +389,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
        && exStatus() === '5 éléments · 1 élément masqué') || { names, status: exStatus(), ...exState() };`,
   );
 
-  // 6. Vue « Détails » : type, taille et date réels.
+  // 7. Vue « Détails » : type, taille et date réels.
   await act(`${PAGE_TOOLS} exWin().querySelector('.ex-status [aria-label="Détails"]').click();`);
   await check(
     'vue « Détails » : type, taille et date de modification réels',
@@ -330,7 +405,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
   );
   await capture('06-explorateur');
 
-  // 7. Sous-dossier, précédent, suivant, dossier parent.
+  // 8. Sous-dossier, précédent, suivant, dossier parent.
   await act(`${PAGE_TOOLS} exOpen(${js(fixture.sub)});`);
   await check(
     "un sous-dossier s'ouvre au double-clic",
@@ -353,7 +428,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
   await act(`${PAGE_TOOLS} ${clickNav('Précédent')}`);
   await until(reach(fixture.folder, ''));
 
-  // 8. Recherche dans le dossier affiché.
+  // 9. Recherche dans le dossier affiché.
   await act(
     `${PAGE_TOOLS}
      const input = exWin().querySelector('.ex-filter input');
@@ -368,17 +443,8 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
   );
   await act(`${PAGE_TOOLS} exWin().querySelector('.ex-filter [aria-label="Effacer la recherche"]').click();`);
 
-  // 9. Actualiser : un fichier ajouté entre-temps apparaît.
-  let unchangedSoFar;
-  let afterAdding;
-  try {
-    unchangedSoFar = snapshot(fixture.folder) === before;
-    fs.writeFileSync(fixture.added, 'Fichier créé par l’auto-test après la première lecture du dossier.\n');
-    afterAdding = snapshot(fixture.folder);
-  } catch (error) {
-    report.errors.push(`dossier d'essai de l'explorateur illisible : ${error?.message}`);
-    return;
-  }
+  // 10. Actualiser : un fichier ajouté entre-temps apparaît.
+  if (!alter(() => fs.writeFileSync(fixture.added, 'Fichier créé par l’auto-test après la première lecture du dossier.\n'))) return;
   await until(`${PAGE_TOOLS} return exNames().length === ${VISIBLE_NAMES.length} || exNames();`);
   await act(`${PAGE_TOOLS} ${clickNav('Actualiser')}`);
   await check(
@@ -389,7 +455,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
        && names.includes(${js(ADDED_NAME)})) || { names, ...exState() };`,
   );
 
-  // 10. Emplacements non disponibles : annoncés, jamais simulés.
+  // 11. Emplacements non disponibles : annoncés, jamais simulés.
   await act(`${PAGE_TOOLS} exWin().querySelector('.ex-side[data-id="network"]').click();`);
   await check(
     '« Réseau » et « Corbeille » sont annoncés comme non disponibles, sans contenu fictif',
@@ -401,7 +467,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
      return (state.page === 'info' && state.message === 'Corbeille non disponible' && exItems().length === 0) || state;`,
   );
 
-  // 11. Le service refuse ce qui sort des emplacements autorisés…
+  // 12. Le service refuse ce qui sort des emplacements autorisés…
   const outside =
     isWindows
       ? ['\\\\localhost\\C$', '\\\\?\\C:\\', '\\\\.\\C:\\', 'C:', 'C:Users', `${fixture.folder}:flux`, `${fixture.folder}\\NUL`]
@@ -430,7 +496,7 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
      return wrong.length === 0 || wrong;`,
   );
 
-  // 12. … et n'offre aucune opération d'écriture : ni dans ce qu'il annonce
+  // 13. … et n'offre aucune opération d'écriture : ni dans ce qu'il annonce
   //     (inventaire des services, s'il est disponible), ni dans ce qu'il accepte.
   let declared = null;
   try {
@@ -458,10 +524,10 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
     (readOnlyService && refusedWrites === true) || { methodes: declared, demandes: refusedWrites },
   );
 
-  // 13. Rien n'a changé dans le dossier parcouru.
+  // 14. Rien n'a changé dans le dossier parcouru.
   let unchanged;
   try {
-    unchanged = unchangedSoFar && snapshot(fixture.folder) === afterAdding;
+    unchanged = intact && snapshot(fixture.folder) === expected;
   } catch (error) {
     unchanged = `lecture impossible : ${error?.message}`;
   }
@@ -473,4 +539,4 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
   await until(`${PAGE_TOOLS} return exContent().dataset.page === 'pc' || exState();`);
 }
 
-module.exports = { checkExplorer, checkProtectedFolder, createFixture, snapshot, stepsTo, FIXTURE_DIR, FOLDER_NAME, VISIBLE_NAMES, DETAILED_FILE, ADDED_NAME, WRITE_METHODS };
+module.exports = { checkExplorer, checkProtectedFolder, createFixture, snapshot, stepsTo, FIXTURE_DIR, FOLDER_NAME, VISIBLE_NAMES, DETAILED_FILE, ADDED_NAME, REMOVED_NAME, WRITE_METHODS };
