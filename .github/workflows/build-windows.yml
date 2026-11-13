@@ -28,7 +28,9 @@
 # Le .exe n'est publié que si toutes les vérifications ont réussi.
 #
 # Les étapes passent par scripts/ci-run.sh : en cas d'échec, la fin de leur
-# sortie est affichée en tête de la page de l'exécution.
+# sortie est affichée en tête de la page de l'exécution. Le bilan des tests y
+# figure aussi : combien ont réussi sur cette machine Windows, et lesquels
+# n'y ont pas été exécutés — avec le motif.
 
 name: Exécutable Windows
 

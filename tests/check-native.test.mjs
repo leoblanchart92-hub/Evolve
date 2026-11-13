@@ -273,6 +273,12 @@ test('script — options de la ligne de commande', () => {
   }
 });
 
+/**
+ * Sortie d'un script, telle qu'un message d'échec peut la citer : sur GitHub Actions, une ligne
+ * commençant par « :: » serait prise pour une commande et publiée comme une annotation.
+ */
+const shown = (text) => String(text).replace(/^::/gm, ': :');
+
 /** Exécute le script ; renvoie son code de sortie et ce qu'il a affiché. */
 function runScript(args, env = {}) {
   const summary = path.join(workDir(), 'resume.md');
@@ -289,7 +295,22 @@ test('script — module compilé : vérification réussie, compte rendu, annotat
   const { code, out, err, summary } = runScript(['--rounds=3'], { GITHUB_ACTIONS: 'true' });
   assert.equal(code, 0, err);
   const fingerprint = sha256(ADDON_FILE);
-  assert.ok(out.startsWith(`Module : ${path.join('native', 'build', 'Release', 'evolve_fs.node')} (${fs.statSync(ADDON_FILE).size} octets, SHA-256 ${fingerprint})\nSystème : ${process.platform} ${process.arch}, Node.js ${process.versions.node}\n✔ nom libre : 5 déplacements aboutis`), out);
+  const header = `Module : ${path.join('native', 'build', 'Release', 'evolve_fs.node')} (${fs.statSync(ADDON_FILE).size} octets, SHA-256 ${fingerprint})\nSystème : ${process.platform} ${process.arch}, Node.js ${process.versions.node}\n`;
+  assert.ok(out.startsWith(header), shown(out));
+  let rest = out.slice(header.length);
+  // Sous Windows, le compte rendu cite ensuite ce que le module fait charger avec lui : des
+  // bibliothèques de Windows seulement — dont celle qui fournit MoveFileExW —, et le programme
+  // qui le charge. Ailleurs, le module n'est pas à ce format : rien n'est cité.
+  const libraries = /^✔ Bibliothèques requises : ([^;\n]+)(?: ; au premier usage : ([^;\n]+) \(le programme qui charge le module\))?\n/.exec(rest);
+  assert.equal(libraries !== null, process.platform === 'win32', shown(out));
+  if (libraries) {
+    const required = libraries[1].split(', ');
+    assert.ok(required.some((name) => name.toLowerCase() === 'kernel32.dll'), libraries[1]);
+    assert.deepEqual(required.filter((name) => NOT_IN_WINDOWS.test(name)), [], 'aucune bibliothèque absente d’un Windows neuf');
+    assert.deepEqual(importedLibraries(ADDON_FILE).required, required);
+    rest = rest.slice(libraries[0].length);
+  }
+  assert.ok(rest.startsWith('✔ nom libre : 5 déplacements aboutis'), shown(out));
   assert.match(out, /\n✔ nom déjà pris : refusé par le système dans les \d cas/);
   assert.match(out, /\n✔ seule la casse du nom change : accepté \(2 cas\)\n/);
   assert.match(out, /\n✔ concurrence : 12 courses, 48 demandes simultanées — une seule aboutie par course/);

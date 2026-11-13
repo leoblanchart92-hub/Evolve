@@ -949,7 +949,7 @@ test('vrai disque : un lien est décrit sans être suivi ; il ne s’ouvre que v
   assert.equal(await refusal(service.list(path.join(documents, 'Vers ailleurs'))), 'leads-outside');
 });
 
-test('vrai disque : dossier dont l’accès est refusé par le système', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'droits non applicables ici' : false }, async () => {
+test('vrai disque : dossier dont l’accès est refusé par le système', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'droits retirés par chmod : sans effet sous Windows, ou pour le compte root' : false }, async () => {
   const locked = path.join(documents, 'Privé');
   mkdirSync(locked);
   chmodSync(locked, 0o000);

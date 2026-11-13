@@ -283,7 +283,7 @@ test('Windows : les codes d’erreur du système sont traduits — nom déjà pr
 });
 
 // Hors de Windows, les codes d'erreur sont ceux du système qui exécute les tests : Node ne sait les nommer que chez lui.
-test('autres systèmes : le code d’erreur du système est traduit par Node ; un chemin relatif est refusé', { skip: process.platform === 'win32' ? 'codes propres aux autres systèmes' : false }, async () => {
+test('autres systèmes : le code d’erreur du système est traduit par Node ; un chemin relatif est refusé', { skip: process.platform === 'win32' ? 'codes d’erreur des autres systèmes : sous Windows, ce sont ceux de Windows qui sont traduits' : false }, async () => {
   const { calls, binding } = fakeBinding((from) => (from.endsWith('pris') ? 17 : from.endsWith('ailleurs') ? 18 : from.endsWith('inconnu') ? 987654 : 0));
   const posixMove = createAtomicMove(binding, { platform: 'linux' });
   await posixMove('/home/léo/libre', '/home/léo/nouveau');

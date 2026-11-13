@@ -434,7 +434,7 @@ test('vrai disque — dossier copié : si le nom prévu est pris pendant l’att
   assert.deepEqual(snapshot(docs), before);
 });
 
-test('vrai disque — permissions insuffisantes : l’échec est signalé, rien n’est modifié', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async () => {
+test('vrai disque — permissions insuffisantes : l’échec est signalé, rien n’est modifié', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'droits retirés par chmod : sans effet sous Windows, ou pour le compte root' : false }, async () => {
   const { at, docs, operations } = profile();
   const locked = at('Documents', 'Archives');
   fs.writeFileSync(path.join(locked, 'ancien.txt'), 'ancien');

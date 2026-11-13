@@ -153,7 +153,7 @@ test('recherche dans la Corbeille : la fiche qui cite l’emplacement d’origin
   assert.deepEqual(findRecycled(bin, file), { record: second.record, content: null });
 });
 
-test('recherche dans la Corbeille : le dossier d’un autre compte, illisible, est simplement ignoré', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, () => {
+test('recherche dans la Corbeille : le dossier d’un autre compte, illisible, est simplement ignoré', { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'droits retirés par chmod : sans effet sous Windows, ou pour le compte root' : false }, () => {
   const bin = path.join(freshDir(), '$RECYCLE.BIN');
   const source = freshDir();
   const file = path.join(source, 'Lettre.txt');
