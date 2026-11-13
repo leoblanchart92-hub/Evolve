@@ -16,6 +16,10 @@
  * REMPLACENT un fichier existant : un service qui écraserait un fichier par
  * mégarde le ferait aussi ici, et le test le verrait.
  *
+ * Il fournit aussi, hors du faux module, les fonctions que l'hôte confie aux
+ * opérations : `recycle` (la Corbeille) et `moveNoReplace` (le déplacement
+ * sans remplacement, refusé d'un seul geste si le nom d'arrivée est pris).
+ *
  *   const disk = createFakeFs({
  *     platform: 'win32',
  *     drives: {
@@ -396,8 +400,36 @@ function createFakeFs({ platform = 'win32', drives = {}, errors = {}, hang = [],
       bin.push({ path: place.real, node: place.children[place.existing] });
       delete place.children[place.existing];
     },
+    /**
+     * Déplacement sans remplacement, à remettre au service comme fonction
+     * `moveNoReplace`. Comme celui du système, il vérifie et déplace d'un seul
+     * geste : si quoi que ce soit porte déjà le nom d'arrivée — autre que
+     * l'élément lui-même, dont seule la casse changerait —, il échoue
+     * (« EEXIST ») et rien n'est modifié. Il ne fait pas partie du faux module
+     * de fichiers : le service ne peut l'atteindre que si le test le lui confie.
+     */
+    moveNoReplace: async (from, to) => {
+      calls.push(['moveNoReplace', from, to]);
+      await new Promise((done) => setImmediate(done));
+      const code = imposed('moveNoReplace', from) ?? imposed('moveNoReplace', to);
+      if (code) throw failure(code, 'rename', from);
+      const source = slot(from, 'rename');
+      if (source.existing === undefined) throw failure('ENOENT', 'rename', from);
+      const node = source.children[source.existing];
+      const destination = slot(to, 'rename');
+      // D'un lecteur à l'autre : le système refuse (EXDEV), comme pour un vrai disque.
+      if (fold(P.parse(source.real).root) !== fold(P.parse(destination.real).root)) throw failure('EXDEV', 'rename', from);
+      if (kindOf(node) === 'dir' && contains(node, destination.parent)) throw failure('EINVAL', 'rename', from);
+      if (destination.existing !== undefined) {
+        // Nom pris : refus, quel que soit l'occupant — fichier, dossier (même vide) ou lien.
+        if (destination.children[destination.existing] !== node) throw failure('EEXIST', 'rename', to);
+        delete destination.children[destination.existing];
+      }
+      delete source.children[source.existing];
+      destination.children[destination.wanted] = node;
+    },
     /** Appels qui modifient le disque : [fonction, chemin, destination]. */
-    writes: () => calls.filter(([name]) => name === 'mkdir' || name === 'rename' || name === 'copyFile'),
+    writes: () => calls.filter(([name]) => name === 'mkdir' || name === 'rename' || name === 'copyFile' || name === 'moveNoReplace'),
     /** Contenu complet d'un lecteur (ou de tous) : une ligne par élément, pour comparer avant et après. */
     snapshot(root = null) {
       const lines = [];

@@ -43,8 +43,11 @@ const FILE_OPERATIONS = Object.freeze(['createFolder', 'rename', 'copy', 'move',
  * @param {object} [options.operations]  ce que l'hôte fournit aux opérations
  *        sur les fichiers : `trash(chemin)` envoie un élément à la Corbeille
  *        (et échoue si c'est impossible), `openPath(chemin)` confie un fichier
- *        à l'application associée. Sans `trash`, rien ne peut être supprimé ;
- *        sans `openPath`, rien ne peut être ouvert.
+ *        à l'application associée, `moveNoReplace(de, vers)` renomme ou
+ *        déplace un élément sans jamais rien remplacer — le système refuse
+ *        lui-même si le nom d'arrivée est pris. Sans `trash`, rien ne peut
+ *        être supprimé ; sans `openPath`, rien ne peut être ouvert ; sans
+ *        `moveNoReplace`, rien ne peut être renommé ni déplacé.
  * @param {(message: string) => void} [options.log]
  */
 function createServices({ settingsFile = null, appVersion = null, files: fileOptions = {}, operations: operationOptions = {}, log = () => {} } = {}) {
@@ -58,6 +61,7 @@ function createServices({ settingsFile = null, appVersion = null, files: fileOpt
     ...(fileOptions.env ? { env: fileOptions.env } : {}),
     trash: typeof operationOptions.trash === 'function' ? operationOptions.trash : null,
     openPath: typeof operationOptions.openPath === 'function' ? operationOptions.openPath : null,
+    moveNoReplace: typeof operationOptions.moveNoReplace === 'function' ? operationOptions.moveNoReplace : null,
     log,
   });
 

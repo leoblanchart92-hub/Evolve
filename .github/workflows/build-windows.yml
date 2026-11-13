@@ -1,22 +1,27 @@
 # Evolve — Fabrication de l'exécutable Windows portable.
 #
 # À chaque envoi de code, une machine Windows de GitHub :
-#   1. lance les tests automatiques ;
-#   2. démarre l'application et vérifie que l'interface répond (auto-test) ;
+#   1. compile le module natif qui renomme ou déplace sans jamais rien
+#      remplacer (native/evolve_fs.c), puis l'éprouve sur son disque : nom
+#      déjà pris refusé par Windows, déplacements simultanés vers un même
+#      nom, autre lecteur ;
+#   2. lance les tests automatiques ;
+#   3. démarre l'application et vérifie que l'interface répond (auto-test) ;
 #      l'explorateur y mène de vraies opérations sur ses propres fichiers
 #      d'essai : créer, renommer, copier, déplacer, envoyer à la Corbeille
 #      de Windows, ouvrir ;
-#   3. fabrique le fichier .exe portable ;
-#   4. vérifie ce fichier : aucun droit administrateur demandé, puis démarrage
-#      réel et nouveau passage de l'auto-test ;
-#   5. lance ce fichier normalement, comme un double-clic : fenêtre en plein
+#   4. fabrique le fichier .exe portable ;
+#   5. vérifie ce fichier : aucun droit administrateur demandé, module natif
+#      embarqué identique à celui qui a été éprouvé, puis démarrage réel et
+#      nouveau passage de l'auto-test ;
+#   6. lance ce fichier normalement, comme un double-clic : fenêtre en plein
 #      écran, écran comparé à l'image dessinée par l'application, fermeture
 #      normale, fichiers temporaires, rien d'écrit dans le profil ;
-#   6. lance ce fichier deux fois de suite : des réglages modifiés au premier
+#   7. lance ce fichier deux fois de suite : des réglages modifiés au premier
 #      lancement doivent être sur le disque, puis retrouvés au second ;
-#   7. met de côté le dossier Documents de la machine le temps d'un
+#   8. met de côté le dossier Documents de la machine le temps d'un
 #      lancement : il doit être annoncé comme introuvable, jamais recréé ;
-#   8. publie le .exe, téléchargeable depuis la page de l'exécution
+#   9. publie le .exe, téléchargeable depuis la page de l'exécution
 #      (rubrique « Artifacts »), ainsi que les rapports et les captures
 #      d'écran des vérifications.
 #
@@ -68,6 +73,21 @@ jobs:
       - name: Installer les dépendances
         run: bash scripts/ci-run.sh installation npm ci --no-audit --no-fund
 
+      # Renommer ou déplacer sans jamais rien remplacer : Node ne sait pas le
+      # faire (son renommage remplace le fichier en place). Un petit module
+      # natif le demande donc à Windows — MoveFileExW sans l'option de
+      # remplacement. Il est compilé ici, avec le compilateur C de la machine.
+      - name: Compiler le module natif (déplacement sans remplacement)
+        timeout-minutes: 10
+        run: bash scripts/ci-run.sh module-natif npm run build:native
+
+      # Avant tout le reste, le module est éprouvé sur le disque de cette
+      # machine (NTFS) : un nom déjà pris est refusé par Windows lui-même, et
+      # de plusieurs déplacements simultanés vers un même nom, un seul aboutit.
+      - name: Vérifier que renommer ou déplacer ne remplace jamais rien
+        timeout-minutes: 5
+        run: bash scripts/ci-run.sh sans-remplacement node scripts/check-native.mjs --record=native/build/evolve_fs.sha256
+
       - name: Tests automatiques
         run: bash scripts/ci-run.sh tests-automatiques npm test
 
@@ -94,6 +114,14 @@ jobs:
 
       - name: Vérifier que le .exe ne demande aucun droit administrateur
         run: bash scripts/ci-run.sh droits-administrateur npm run check:manifest
+
+      # Le module embarqué dans l'exécutable doit être, octet pour octet, celui
+      # qui a été compilé puis éprouvé avant les tests (son empreinte a été
+      # inscrite à ce moment-là) ; il est éprouvé une seconde fois, tel qu'il
+      # a été embarqué.
+      - name: Vérifier le module natif embarqué dans l'exécutable
+        timeout-minutes: 5
+        run: bash scripts/ci-run.sh module-embarque node scripts/check-native.mjs --module=dist/win-unpacked/resources/app.asar.unpacked/native/build/Release/evolve_fs.node --expect=native/build/evolve_fs.sha256
 
       - name: Auto-test de l'exécutable portable
         timeout-minutes: 8

@@ -5,6 +5,9 @@ node_modules/
 dist/
 out/
 
+# Module natif compilé (npm run build:native)
+native/build/
+
 # Journaux et fichiers temporaires
 *.log
 npm-debug.log*

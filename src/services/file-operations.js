@@ -9,14 +9,24 @@
  *
  *   - RIEN N'EST SUPPRIMÉ DÉFINITIVEMENT. Aucune fonction de suppression du
  *     système de fichiers n'est employée (`WRITE_CALLS` : créer un dossier,
- *     renommer, copier un fichier — rien d'autre). Supprimer, c'est envoyer à
- *     la Corbeille, par la fonction que l'hôte fournit (`trash`) ; si elle
+ *     copier un fichier — rien d'autre). Supprimer, c'est envoyer à la
+ *     Corbeille, par la fonction que l'hôte fournit (`trash`) ; si elle
  *     échoue, l'élément reste à sa place et l'échec est signalé ;
- *   - RIEN N'EST REMPLACÉ. Une copie est refusée par le système si le nom
- *     existe déjà (`COPYFILE_EXCL`, création de dossier non récursive) ; un
- *     renommage ou un déplacement n'a lieu qu'après avoir constaté que le nom
- *     est libre. En cas de nom déjà pris, l'appelant choisit : conserver les
- *     deux (« nom - Copie ») ou ignorer l'élément. « Remplacer » n'existe pas ;
+ *   - RIEN N'EST REMPLACÉ, et c'est le système lui-même qui le garantit, non
+ *     une vérification faite avant d'agir : entre une vérification et
+ *     l'action, un autre programme pourrait créer un élément du même nom.
+ *     Chaque écriture est donc une opération que le système refuse d'un seul
+ *     geste si le nom d'arrivée est pris :
+ *       · un dossier est créé sans option « récursive » (`mkdir`) ;
+ *       · un fichier est copié en mode exclusif (`COPYFILE_EXCL`) ;
+ *       · un élément est renommé ou déplacé par la fonction `moveNoReplace`
+ *         de l'hôte, qui demande au système de ne déplacer que si le nom est
+ *         libre (sous Windows : MoveFileExW sans l'option de remplacement,
+ *         voir src/main/atomic-move.js). La fonction `rename` de Node, qui
+ *         remplace le fichier en place, n'est jamais employée ; sans
+ *         `moveNoReplace`, renommer et déplacer sont refusés.
+ *     En cas de nom déjà pris, l'appelant choisit : conserver les deux
+ *     (« nom - Copie ») ou ignorer l'élément. « Remplacer » n'existe pas ;
  *   - CHAQUE CHEMIN EST CONTRÔLÉ avant tout accès, par les contrôles du
  *     service de consultation (`guard`, voir files.js) : forme du chemin (ni
  *     relatif, ni « .. », ni réseau, ni espace de noms), emplacement autorisé,
@@ -43,10 +53,6 @@
  *     ne l'est qu'après une confirmation explicite ;
  *   - déplacer, envoyer à la Corbeille et exécuter exigent que l'appelant
  *     déclare la confirmation de l'utilisateur (`confirmed: true`).
- *
- * Limite connue, inhérente au système : entre le contrôle « ce nom est
- * libre » et le renommage, un autre programme qui créerait au même instant un
- * fichier de ce nom le verrait remplacé. Les copies, elles, sont atomiques.
  */
 
 const nodeFs = require('node:fs');
@@ -55,8 +61,12 @@ const { promisify } = require('node:util');
 const { ServiceError } = require('./hub');
 const { HIDDEN_AT_DRIVE_ROOT } = require('./files');
 
-/** Les seules fonctions du système de fichiers qui modifient le disque. Aucune ne supprime, aucune ne remplace. */
-const WRITE_CALLS = Object.freeze(['mkdir', 'rename', 'copyFile']);
+/**
+ * Les seules fonctions du module de fichiers qui modifient le disque. Aucune ne
+ * supprime, et le système refuse chacune si le nom d'arrivée existe déjà.
+ * S'y ajoute le déplacement sans remplacement que l'hôte fournit (`moveNoReplace`).
+ */
+const WRITE_CALLS = Object.freeze(['mkdir', 'copyFile']);
 /** Fonctions de lecture employées pour contrôler chaque opération. */
 const READ_CALLS = Object.freeze(['lstat', 'opendir', 'realpath']);
 
@@ -167,6 +177,9 @@ const systemZone = () =>
 const linkNotSupported = () =>
   refused('link-not-supported', 'Cet élément est un lien (lien symbolique ou jonction) : Evolve ne modifie pas les liens et ne les ouvre pas comme des fichiers.');
 const needsConfirmation = (message) => refused('needs-confirmation', message);
+/** Sans la fonction de déplacement sans remplacement de l'hôte : aucune autre façon de faire n'est tentée. */
+const NO_REPLACE_MISSING = "la fonction du système qui garantit qu'aucun élément n'est remplacé n'a pas pu être chargée. Rien n'a été modifié.";
+const moveUnavailable = (what = 'Renommer et déplacer ne sont pas disponibles') => refused('move-unavailable', `${what} : ${NO_REPLACE_MISSING}`);
 const notADirectory = () => refused('not-a-directory', "Cet élément n'est pas un dossier.");
 
 /** Erreur du système traduite en erreur du service (aucun détail interne n'est transmis). */
@@ -207,7 +220,6 @@ function diskAccess(fs) {
     // Résolution par le système lui-même (liens, jonctions, noms courts, casse réelle).
     realpath: promisify(fs.realpath.native),
     mkdir: promisify(fs.mkdir),
-    rename: promisify(fs.rename),
     copyFile: promisify(fs.copyFile),
     /** Copie refusée par le système si la destination existe : jamais de remplacement. */
     exclusive: fs.constants.COPYFILE_EXCL,
@@ -225,10 +237,17 @@ function diskAccess(fs) {
  * @param {((location: string) => Promise<string>) | null} [options.openPath]
  *        confie un fichier à l'application que le système lui associe ; renvoie
  *        un texte vide, ou la description de l'échec
+ * @param {((from: string, to: string) => Promise<void>) | null} [options.moveNoReplace]
+ *        donne à l'élément `from` le nom `to` SANS JAMAIS RIEN REMPLACER : la
+ *        vérification et le déplacement doivent être une seule opération du
+ *        système. Si quoi que ce soit porte déjà le nom `to`, la promesse est
+ *        rejetée avec le code « EEXIST » et rien n'est modifié ; d'un lecteur à
+ *        un autre, avec le code « EXDEV ». Sans cette fonction, renommer et
+ *        déplacer sont refusés : aucune autre façon de faire n'est tentée.
  * @param {Partial<typeof DEFAULT_LIMITS>} [options.limits]
  * @param {(message: string) => void} [options.log]
  */
-function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = null, openPath = null, limits: customLimits = {}, log = () => {} } = {}) {
+function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = null, openPath = null, moveNoReplace = null, limits: customLimits = {}, log = () => {} } = {}) {
   if (!guard || typeof guard.resolve !== 'function') throw new TypeError('Opérations sur les fichiers : contrôles de chemins manquants.');
   const P = guard.path;
   const isWindows = guard.platform === 'win32';
@@ -240,6 +259,19 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
   let active = null;
   let counter = 0;
   let zoneList = null;
+
+  // --- Déplacement sans remplacement ---------------------------------------------
+
+  /**
+   * Donne à l'élément `from` le nom `to`. C'est le système qui refuse si ce
+   * nom est pris (« EEXIST ») : aucun élément n'est jamais remplacé, même créé
+   * par un autre programme à l'instant du déplacement. Seule façon dont ce
+   * module renomme ou déplace.
+   */
+  async function moveWithoutReplacing(from, to) {
+    if (typeof moveNoReplace !== 'function') throw moveUnavailable();
+    await moveNoReplace(from, to);
+  }
 
   // --- Emplacements préservés ----------------------------------------------------
 
@@ -521,18 +553,19 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
    * achevée, ou interrompue). Windows refuse de renommer un dossier tant qu'un
    * autre programme tient ouvert l'un des fichiers qu'il contient — ce que
    * fait un antivirus avec des fichiers tout juste écrits : la demande est
-   * alors renouvelée pendant quelques instants. Le nom d'arrivée doit être
-   * resté libre à chaque essai : rien n'est jamais remplacé.
+   * alors renouvelée pendant quelques instants. À chaque essai, c'est le
+   * système qui refuse si le nom d'arrivée est pris : rien n'est jamais remplacé.
    */
   async function renameCopied(pending, target) {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await disk.rename(pending, target);
+        await moveWithoutReplacing(pending, target);
         return;
       } catch (error) {
         if (!TRANSIENT_REFUSALS.has(error?.code) || attempt >= limits.retries) throw error;
       }
       await pause(limits.retryMs * 2 ** attempt);
+      // Nom pris pendant l'attente : inutile d'insister, le système refuserait encore.
       if (await exists(target)) throw collision();
     }
   }
@@ -569,6 +602,9 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
 
     // Dossier : copié sous un nom provisoire, pour qu'une copie interrompue
     // (erreur, annulation, arrêt de l'ordinateur) ne passe jamais pour achevée.
+    // Il ne recevra son nom que par un déplacement sans remplacement : sans cette
+    // fonction, rien n'est commencé.
+    if (typeof moveNoReplace !== 'function') throw moveUnavailable("Ce dossier n'a pas été copié");
     context.checkpoint();
     const pending = P.join(folder, await markedName(folder, name, 'copie en cours'));
     try {
@@ -585,6 +621,8 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
       throw failure;
     }
     // Copie achevée : le dossier prend son nom définitif — ou, si ce nom a été pris entre-temps, un nom libre.
+    // Si ce nom est pris à l'instant même du renommage, le système refuse : la copie, entière, garde
+    // son nom provisoire et rien n'est remplacé.
     try {
       const final = (await exists(target)) ? P.join(folder, await copyName(folder, name, true, new Set())) : target;
       await renameCopied(pending, final);
@@ -621,10 +659,12 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
   async function moveItem(item, folder, name, context) {
     const target = P.join(folder, name);
     context.checkpoint();
-    // Dernier contrôle avant le déplacement : rien ne porte ce nom à destination.
+    // Constat préalable : rien ne porte ce nom à destination. Il évite une demande inutile, mais ne
+    // garantit rien — un élément peut apparaître l'instant d'après : c'est le système, en déplaçant,
+    // qui refuse alors lui-même (« EEXIST ») sans rien remplacer.
     if (await exists(target)) throw collision();
     try {
-      await disk.rename(item.path, target);
+      await moveWithoutReplacing(item.path, target);
       context.step(name);
       return { path: target };
     } catch (error) {
@@ -672,8 +712,10 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
         const caseOnly = item.name.toLowerCase() === name.toLowerCase() && (await sameItem(item.path, target));
         if (!caseOnly) throw collision();
       }
+      // Ce constat ne garantit rien pour l'instant qui suit : en renommant, le système refuse
+      // lui-même (« EEXIST ») si un élément porte ce nom, sans rien remplacer.
       try {
-        await disk.rename(item.path, target);
+        await moveWithoutReplacing(item.path, target);
       } catch (error) {
         throw translate(error);
       }
@@ -690,6 +732,7 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
     // La forme de chaque chemin est contrôlée avant tout accès au disque.
     for (const input of [destinationInput, ...sources]) guard.checkPath(input);
     if (kind === 'move' && options.confirmed !== true) throw needsConfirmation("Le déplacement n'a pas été confirmé.");
+    if (kind === 'move' && typeof moveNoReplace !== 'function') throw moveUnavailable();
 
     return exclusive(kind, options.operation, async (job) => {
       // 1. Tout est contrôlé avant que rien ne soit modifié.
@@ -909,7 +952,15 @@ function createFileOperations({ guard, fs = nodeFs, env = process.env, trash = n
       return () => listeners.delete(listener);
     },
     /** État, pour les comptes rendus. */
-    status: () => ({ busy: Boolean(active), trash: typeof trash === 'function', open: typeof openPath === 'function', deletion: 'recycle-bin-only', replace: 'never' }),
+    status: () => ({
+      busy: Boolean(active),
+      trash: typeof trash === 'function',
+      open: typeof openPath === 'function',
+      /** Vrai si l'hôte fournit le déplacement sans remplacement : sans lui, renommer et déplacer sont refusés. */
+      noReplaceMove: typeof moveNoReplace === 'function',
+      deletion: 'recycle-bin-only',
+      replace: 'never',
+    }),
   };
 }
 

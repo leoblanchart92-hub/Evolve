@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 
-import { fromRoot } from './helpers.mjs';
+import { fromRoot, loadNativeMove } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const { createFakeElectron, cancellable } = require('./fixtures/fake-electron.cjs');
@@ -25,6 +25,13 @@ const PRELOAD = fromRoot('src', 'main', 'preload.js');
 const SELFTEST = fromRoot('src', 'main', 'selftest.js');
 const STATUS = fromRoot('src', 'main', 'status.js');
 const ARGS = fromRoot('src', 'main', 'args.js');
+const ATOMIC_MOVE = fromRoot('src', 'main', 'atomic-move.js');
+
+/**
+ * Déplacement sans remplacement : le processus principal charge le vrai module natif
+ * (native/evolve_fs.c) ; sans lui, les essais d'opérations ne vaudraient rien.
+ */
+const nativeMove = loadNativeMove();
 
 /** Laisse s'exécuter les suites de promesses en attente. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -47,11 +54,13 @@ function stubModule(file, exports) {
  * @param {boolean} [options.ready]        émettre l'événement « prêt » d'Electron
  * @param {Function} [options.runSelfTest] remplace l'auto-test réel
  * @param {Function} [options.reportStatus] remplace le compte rendu de démarrage réel
+ * @param {Function} [options.loadAtomicMove] remplace le chargement du module natif de déplacement
+ *                                         sans remplacement (par défaut : le vrai module)
  * @param {object} [options.env]           variables d'environnement à définir
  * @param {string} [options.tempDir]       dossier temporaire d'un lancement précédent, pour
  *                                         simuler un redémarrage sur la même machine
  */
-async function launch({ argv = [], ready = true, runSelfTest, reportStatus, env = {}, tempDir = null, ...electronOptions } = {}) {
+async function launch({ argv = [], ready = true, runSelfTest, reportStatus, loadAtomicMove, env = {}, tempDir = null, ...electronOptions } = {}) {
   tempDir ??= mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
   const fake = createFakeElectron({ tempDir, ...electronOptions });
   fake.tempDir = tempDir;
@@ -60,6 +69,7 @@ async function launch({ argv = [], ready = true, runSelfTest, reportStatus, env 
 
   stubModule(ELECTRON, fake.electron);
   if (runSelfTest) stubModule(SELFTEST, { runSelfTest });
+  if (loadAtomicMove) stubModule(ATOMIC_MOVE, { loadAtomicMove });
   // Par défaut, tout appel au compte rendu de démarrage est une erreur du test.
   stubModule(STATUS, {
     reportStatus:
@@ -476,8 +486,17 @@ test('auto-test : fenêtre non plein écran, rendu jamais suspendu, données sé
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], window);
   // Chemin relatif : résolu depuis le dossier du fichier .exe portable.
-  const { describeServices, ...options } = calls[0][1];
+  const { describeServices, moveNoReplace, ...options } = calls[0][1];
   assert.deepEqual(options, { outDir: path.join(tmpdir(), 'dossier-du-exe', 'resultats'), scenario: undefined });
+  // L'auto-test reçoit le déplacement sans remplacement que l'application emploie, pour l'éprouver sur le disque :
+  // celui du module natif, qui refuse un nom déjà pris.
+  const taken = path.join(tempDir, 'pris.txt');
+  const moving = path.join(tempDir, 'arrivant.txt');
+  writeFileSync(taken, 'en place');
+  writeFileSync(moving, 'arrivant');
+  await assert.rejects(moveNoReplace(moving, taken), { code: 'EEXIST' });
+  assert.deepEqual([readFileSync(taken, 'utf8'), readFileSync(moving, 'utf8')], ['en place', 'arrivant']);
+  assert.equal(describeServices()['file-operations'].noReplaceMove, true);
   // Les réglages de l'utilisateur ne sont ni lus ni modifiés par un auto-test : tout reste en mémoire.
   const { settings } = describeServices();
   assert.equal(settings.storage, 'memory');
@@ -1203,6 +1222,82 @@ test('opérations : rien n’est jamais remplacé — nom déjà pris à la cré
   assert.equal(readFileSync(notes, 'utf8'), 'bonjour');
 });
 
+test('opérations : un élément créé par un autre programme à l’instant du renommage ou du déplacement n’est pas remplacé', async () => {
+  // Le module natif est le vrai ; juste avant chaque demande au système — donc après le constat « ce nom est
+  // libre » des opérations —, un autre programme crée un élément du nom d'arrivée.
+  const intruded = [];
+  const { profile, documents, files } = await launchForOperations({
+    loadAtomicMove: () => async (from, to) => {
+      writeFileSync(to, 'créé par un autre programme');
+      intruded.push(to);
+      return nativeMove(from, to);
+    },
+  });
+  const notes = path.join(documents, 'Notes.txt');
+  const desktop = path.join(profile, 'Desktop');
+
+  // Renommer : refusé par le système, signalé à la page comme un nom déjà pris.
+  const renamed = await files.rename(notes, 'Courrier.txt');
+  assert.deepEqual(renamed, { ok: false, code: 'collision', message: 'Un élément porte déjà ce nom à cet endroit. Rien n’a été remplacé.' });
+  assert.equal(readFileSync(path.join(documents, 'Courrier.txt'), 'utf8'), 'créé par un autre programme');
+  assert.equal(readFileSync(notes, 'utf8'), 'bonjour', 'l’élément à renommer est resté à sa place, intact');
+
+  // Déplacer : même refus, élément par élément.
+  const moved = await files.move([notes], desktop, { confirmed: true });
+  assert.equal(moved.ok, true);
+  assert.deepEqual([moved.value.done, moved.value.failed.map((item) => [item.name, item.code])], [[], [['Notes.txt', 'collision']]]);
+  assert.equal(readFileSync(path.join(desktop, 'Notes.txt'), 'utf8'), 'créé par un autre programme');
+  assert.equal(readFileSync(notes, 'utf8'), 'bonjour');
+  assert.deepEqual(intruded, [path.join(documents, 'Courrier.txt'), path.join(desktop, 'Notes.txt')]);
+});
+
+test('opérations : sans le module natif, renommer et déplacer sont refusés — aucun repli — et un auto-test s’arrête en échec', async () => {
+  const reason = 'Déplacement sans remplacement : module natif introuvable ou inutilisable (evolve_fs.node) — panne simulée';
+  const loadAtomicMove = () => {
+    throw new Error(reason);
+  };
+  const warnings = [];
+  const savedWarn = console.warn;
+  console.warn = (message) => warnings.push(String(message));
+  cleanups.push(() => (console.warn = savedWarn));
+
+  // Lancement normal : l'application démarre, l'annonce, et refuse de renommer comme de déplacer.
+  const { state, profile, documents, files, api } = await launchForOperations({ loadAtomicMove });
+  assert.deepEqual(warnings, [`${reason} — renommer et déplacer sont désactivés.`]);
+  assert.equal(state.windows.length, 1);
+  assert.deepEqual(state.errorBoxes, []);
+  const notes = path.join(documents, 'Notes.txt');
+  const desktop = path.join(profile, 'Desktop');
+  const before = snapshotOf(profile);
+  const unavailable = {
+    ok: false,
+    code: 'move-unavailable',
+    message: "Renommer et déplacer ne sont pas disponibles : la fonction du système qui garantit qu'aucun élément n'est remplacé n'a pas pu être chargée. Rien n'a été modifié.",
+  };
+  assert.deepEqual(await files.rename(notes, 'Courrier.txt'), unavailable);
+  assert.deepEqual(await files.rename(path.join(documents, 'Projets été'), 'Projets'), unavailable);
+  assert.deepEqual(await files.move([notes], desktop, { confirmed: true }), unavailable);
+  assert.deepEqual(snapshotOf(profile), before, 'rien n’a été renommé ni déplacé, d’aucune façon');
+  // Les autres opérations restent disponibles : créer un dossier, copier un fichier (refusés par le système si le nom existe).
+  assert.equal((await files.createFolder(documents, 'Nouveau')).ok, true);
+  assert.deepEqual((await files.copy([notes], desktop)).value.done.map((item) => item.name), ['Notes.txt']);
+  // Un dossier ne reçoit son nom que par un déplacement sans remplacement : sa copie n'est pas commencée.
+  const folder = await files.copy([path.join(documents, 'Projets été')], desktop);
+  assert.deepEqual([folder.value.done, folder.value.failed.map((item) => item.code)], [[], ['move-unavailable']]);
+  assert.deepEqual(readdirSync(desktop), ['Notes.txt']);
+  assert.equal((await api.services.call('files', 'list', documents)).ok, true, 'la consultation n’est pas touchée');
+
+  // Auto-test : il n'a pas lieu. L'échec et sa cause sont consignés ; l'exécutable ne serait pas publié.
+  const outDir = mkdtempSync(path.join(tmpdir(), 'evolve-natif-absent-'));
+  cleanups.push(() => rmSync(outDir, { recursive: true, force: true }));
+  let ran = false;
+  const selfTest = await launch({ argv: [`--self-test=${outDir}`], loadAtomicMove, runSelfTest: async () => ((ran = true), 0) });
+  assert.equal(ran, false);
+  assert.deepEqual(selfTest.state.exitCodes, [1]);
+  assert.deepEqual(selfTest.state.errorBoxes, []);
+  assert.match(readFileSync(path.join(outDir, 'fatal-error.log'), 'utf8'), /module natif introuvable ou inutilisable \(evolve_fs\.node\) — panne simulée/);
+});
+
 test('opérations : si la Corbeille ne peut pas recevoir un élément, il reste à sa place — aucune suppression définitive', async () => {
   const { state, profile, documents, files } = await launchForOperations();
   const notes = path.join(documents, 'Notes.txt');
@@ -1483,6 +1578,7 @@ test('opérations : l’inventaire des services les décrit — Corbeille seulem
     busy: false,
     trash: true,
     open: true,
+    noReplaceMove: true,
     deletion: 'recycle-bin-only',
     replace: 'never',
     methods: ['createFolder', 'rename', 'copy', 'move', 'trash', 'open'],

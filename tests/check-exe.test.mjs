@@ -235,6 +235,29 @@ test('le dossier d’essai retrouvé dans la Corbeille de Windows figure dans le
   }
 });
 
+test('les constats de la vérification « renommer ou déplacer ne remplace jamais rien » figurent dans le compte rendu', () => {
+  const summary = path.join(workDir, 'resume-sans-remplacement.md');
+  const passed = run('pass-with-no-replace', { env: { GITHUB_ACTIONS: 'true', GITHUB_STEP_SUMMARY: summary } });
+  assert.equal(passed.code, 0, passed.output);
+  // Ce que l'application a constaté sur le disque : refus du système (avec son code), courses, aucune perte.
+  const line = 'Sans remplacement : 8 déplacements vers un nom déjà pris refusés par le système (code 183) · 40 courses, 160 demandes simultanées, aucun élément remplacé ni perdu';
+  assert.ok(passed.output.includes(`  ${line}\n`), passed.output);
+  assert.match(passed.output, /^::notice title=[^:]+::Auto-test réussi — [^\n]*%0ASans remplacement (?::|%3A) 8 déplacements vers un nom déjà pris refusés par le système \(code 183\) · 40 courses, 160 demandes simultanées, aucun élément remplacé ni perdu$/m);
+  assert.ok(readFileSync(summary, 'utf8').includes(`\n${line}\n`));
+
+  // En cas d'échec aussi : le nombre d'éléments remplacés ou perdus est dit.
+  const failed = run('fail-with-no-replace', { env: { GITHUB_ACTIONS: 'true' } });
+  assert.equal(failed.code, 1, failed.output);
+  assert.match(failed.output, /^::error title=[^:]+::Auto-test en échec[^\n]*%0ASans remplacement (?::|%3A) 7 déplacements vers un nom déjà pris refusés par le système · 40 courses, 160 demandes simultanées, 29 élément\(s\) remplacé\(s\) ou perdu\(s\)$/m);
+
+  // Information absente ou mal formée : rien n'est affiché, le résultat ne change pas.
+  for (const mode of ['pass', 'pass-with-odd-no-replace']) {
+    const other = run(mode, { env: { GITHUB_ACTIONS: 'true' } });
+    assert.equal(other.code, 0, other.output);
+    assert.doesNotMatch(other.output, /Sans remplacement/);
+  }
+});
+
 test('les mesures des captures figurent dans le compte rendu', () => {
   const { code, output } = run('pass-with-images', { env: { GITHUB_ACTIONS: 'true' } });
   assert.equal(code, 0, output);

@@ -31,6 +31,9 @@ import { fileURLToPath } from 'node:url';
 
 import { annotation } from './ci-annotate.mjs';
 
+/** Résumé de la vérification « renommer ou déplacer ne remplace jamais rien » menée par l'application. */
+const { summarizeFacts } = createRequire(import.meta.url)('../src/main/selftest-no-replace.js');
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
@@ -194,6 +197,8 @@ child.on('exit', (code, signal) => {
     typeof from === 'string' && typeof content === 'string'
       ? `Corbeille : « ${path.win32.basename(from).slice(0, 80)} » retrouvé intact dans ${content.slice(0, 260)}`
       : null;
+  // Ce que l'application a constaté, sur le disque, en se demandant à elle-même de déplacer vers un nom déjà pris.
+  const noReplace = summarizeFacts(report.noReplace);
 
   const passed = checks.filter((item) => item.ok).length;
   const success = code === 0 && report.ok === true && checks.length > 0 && passed === checks.length && errors.length === 0;
@@ -205,6 +210,7 @@ child.on('exit', (code, signal) => {
   if (report.executable) console.log(`  Programme : ${report.executable}`);
   if (explorer) console.log(`  ${explorer}`);
   if (recycled) console.log(`  ${recycled}`);
+  if (noReplace) console.log(`  ${noReplace}`);
 
   summarize(
     [
@@ -213,6 +219,7 @@ child.on('exit', (code, signal) => {
       `${passed}/${checks.length} contrôles · ${captures.length} captures${imagesInfo} · fenêtre ${size} · ${engine} · ${seconds} s`,
       ...(explorer ? ['', explorer] : []),
       ...(recycled ? ['', recycled] : []),
+      ...(noReplace ? ['', noReplace] : []),
       '',
       '| Contrôle | Résultat |',
       '| --- | --- |',
@@ -238,6 +245,7 @@ child.on('exit', (code, signal) => {
         ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`),
         ...(explorer ? [explorer] : []),
         ...(recycled ? [recycled] : []),
+        ...(noReplace ? [noReplace] : []),
         ...(fatal ? ['', fatal] : []),
       ].join('\n'),
     );
@@ -251,6 +259,7 @@ child.on('exit', (code, signal) => {
       ...(report.executable ? [`Programme : ${report.executable}`] : []),
       ...(explorer ? [explorer] : []),
       ...(recycled ? [recycled] : []),
+      ...(noReplace ? [noReplace] : []),
       ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`),
     ].join('\n'),
   );

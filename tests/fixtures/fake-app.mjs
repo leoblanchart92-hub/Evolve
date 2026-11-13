@@ -70,6 +70,22 @@ switch (mode) {
     report(true, [{ name: 'contrôle un', ok: true }], [], { recycled: { from: 12, content: null } });
     process.exit(0);
     break;
+  case 'pass-with-no-replace': // réussite, avec les constats de la vérification « rien n'est remplacé »
+    report(true, [{ name: 'contrôle un', ok: true }], [], {
+      noReplace: { free: 5, taken: { cases: 8, numbers: [183] }, link: true, caseOnly: 2, races: { rounds: 40, requests: 160, moved: 31, refused: 120, lost: 0 }, contests: { rounds: 20, creator: 9, mover: 11 }, crossVolume: null, transient: 3 },
+    });
+    process.exit(0);
+    break;
+  case 'fail-with-no-replace': // échec : un élément a été remplacé
+    report(false, [{ name: 'contrôle un', ok: false, value: { problemes: ['remplacé'] } }], [], {
+      noReplace: { free: 5, taken: { cases: 7, numbers: [] }, link: true, caseOnly: 2, races: { rounds: 40, requests: 160, moved: 60, refused: 100, lost: 29 }, contests: { rounds: 20, creator: 9, mover: 11 }, crossVolume: null, transient: 0 },
+    });
+    process.exit(1);
+    break;
+  case 'pass-with-odd-no-replace': // information mal formée : ignorée
+    report(true, [{ name: 'contrôle un', ok: true }], [], { noReplace: { free: 'cinq', taken: null, races: 40 } });
+    process.exit(0);
+    break;
   case 'fail':
     report(false, [{ name: 'contrôle un', ok: true }, { name: 'contrôle deux', ok: false, value: { attendu: 1 } }]);
     process.exit(1);

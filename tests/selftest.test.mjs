@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { rename as renameAsync } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,18 +15,25 @@ import { after, test } from 'node:test';
 import vm from 'node:vm';
 
 import { recycle } from './fixtures/recycle-bin.mjs';
-import { fromRoot } from './helpers.mjs';
+import { fromRoot, loadNativeMove } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const { runSelfTest, countColors, DEFAULT_TIMINGS, DEFAULT_SCENARIO, MIN_CAPTURE_COLORS, WALLPAPER } = require('../src/main/selftest.js');
 const { CHANGED_SETTINGS, EXPECTED_SETTINGS } = require('../src/main/selftest-settings.js');
 const documentsTest = require('../src/main/selftest-documents.js');
 const explorerTest = require('../src/main/selftest-explorer.js');
+const noReplaceTest = require('../src/main/selftest-no-replace.js');
 const operationsTest = require('../src/main/selftest-operations.js');
 const { SETTINGS, defaultsOf } = require('../src/services/settings-schema.js');
 
 const workDir = mkdtempSync(path.join(tmpdir(), 'evolve-selftest-'));
 after(() => rmSync(workDir, { recursive: true, force: true }));
+
+/**
+ * Déplacement sans remplacement remis à l'auto-test, comme le fait l'application : le vrai module
+ * natif (native/evolve_fs.c). L'auto-test l'éprouve sur le disque (voir selftest-no-replace.js).
+ */
+const nativeMove = loadNativeMove();
 
 /** Durées très courtes : les tests ne patientent pas. */
 const FAST = { total: 5_000, ready: 80, check: 80, response: 1_000, poll: 5, settle: 0 };
@@ -200,13 +208,14 @@ async function run(win, timings = FAST, options = {}) {
   const outDir = options.outDir ?? freshDir();
   // Sous Windows, l'auto-test examine la Corbeille : ici, celle de la fausse fenêtre.
   const recycleBin = Object.hasOwn(options, 'recycleBin') ? options.recycleBin : options.platform === 'win32' ? win.recycleBin : undefined;
-  const code = await runSelfTest(win, { timings, platform: 'linux', ...options, recycleBin, outDir });
+  // Le déplacement sans remplacement est le vrai ; une seule course de chaque sorte, pour que les tests restent brefs.
+  const code = await runSelfTest(win, { timings, platform: 'linux', moveNoReplace: nativeMove, noReplaceRounds: 1, ...options, recycleBin, outDir });
   const report = JSON.parse(readFileSync(path.join(outDir, 'result.json'), 'utf8'));
   return { code, report, outDir };
 }
 
 /** Nombre de contrôles du scénario complet. */
-const FULL_CHECKS = 53;
+const FULL_CHECKS = 54;
 /** Sous Windows, trois de plus : dossier protégé, contenu de la Corbeille, script réellement exécuté. */
 const WINDOWS_CHECKS = FULL_CHECKS + 3;
 
@@ -237,6 +246,7 @@ test('tout est conforme : code 0, rapport complet, neuf captures', async () => {
   assert.equal(report.checks.length, FULL_CHECKS);
   assert.equal(report.explorer, null, "sans réponse du service de fichiers, le rapport n'invente aucun emplacement");
   assert.equal(report.recycled, null, 'hors de Windows, la Corbeille n’est pas examinée');
+  assert.equal(noReplaceTest.summarizeFacts(report.noReplace)?.startsWith('Sans remplacement : '), true, 'constats de la vérification « rien n’est remplacé »');
   assert.deepEqual(failed(report), []);
   assert.deepEqual(report.errors, []);
   assert.deepEqual(report.warnings, []);
@@ -572,6 +582,7 @@ const OPERATIONS = operationsTest.CHECKS;
 const READ_ONLY_CHECK =
   "le service de consultation n'offre aucune opération d'écriture : chaque opération passe par une fonction distincte, sans suppression définitive ni remplacement";
 const UNCHANGED_CHECK = "parcourir un dossier n'y modifie rien : le dossier seulement consulté est resté identique (contenu, tailles et dates)";
+const NO_REPLACE_CHECK = noReplaceTest.CHECK;
 
 /** Intitulés des contrôles de l'explorateur, dans l'ordre du scénario. */
 const EXPLORER_CHECKS = [
@@ -601,9 +612,10 @@ const EXPLORER_CHECKS = [
   '« Réseau » et « Corbeille » sont annoncés comme non disponibles, sans contenu fictif',
   'le service de fichiers refuse les chemins relatifs, réseau ou spéciaux, et distingue dossier introuvable et fichier',
   READ_ONLY_CHECK,
-  // Demandes refusées, puis état final des deux dossiers d'essai.
+  // Demandes refusées ; déplacement sans remplacement éprouvé sur le disque ; état final des deux dossiers d'essai.
   OPERATIONS.unconfirmed,
   OPERATIONS.refused,
+  NO_REPLACE_CHECK,
   UNCHANGED_CHECK,
   OPERATIONS.state,
 ];
@@ -761,6 +773,7 @@ const SOUND_OPERATIONS = Object.freeze({
   busy: false,
   trash: true,
   open: true,
+  noReplaceMove: true,
   deletion: 'recycle-bin-only',
   replace: 'never',
   methods: ['createFolder', 'rename', 'copy', 'move', 'trash', 'open'],
@@ -776,9 +789,12 @@ test('explorateur : un service de consultation qui sait écrire fait échouer l�
 
   const sound = await run(createWindow(), FAST, { describeServices: described(['places', 'list']) });
   assert.equal(sound.code, 0);
-  // Ce que l'application réelle annonce satisfait le contrôle (à la Corbeille et à l'ouverture près, fournies par Windows).
+  // Ce que l'application réelle annonce satisfait le contrôle (à la Corbeille, à l'ouverture et au déplacement sans
+  // remplacement près, fournis par Windows).
   const { createServices } = require('../src/services/index.js');
-  assert.deepEqual(createServices({ operations: { trash: async () => {}, openPath: async () => '' } }).describe()['file-operations'], SOUND_OPERATIONS);
+  assert.deepEqual(createServices({ operations: { trash: async () => {}, openPath: async () => '', moveNoReplace: nativeMove } }).describe()['file-operations'], SOUND_OPERATIONS);
+  // Sans déplacement sans remplacement, elle l'annonce : l'auto-test échoue (voir plus bas).
+  assert.equal(createServices({ operations: { trash: async () => {}, openPath: async () => '' } }).describe()['file-operations'].noReplaceMove, false);
 
   // Méthode supplémentaire annoncée par le service.
   for (const methods of [['places', 'list', 'write'], ['list', 'places'], ['places'], [], undefined]) {
@@ -789,7 +805,7 @@ test('explorateur : un service de consultation qui sait écrire fait échouer l�
   }
 
   // Opérations annoncées autrement : une fonction de plus, une suppression définitive, un remplacement possible,
-  // pas de Corbeille ou pas d'ouverture fournie par Windows, ou aucune annonce.
+  // pas de Corbeille, d'ouverture ou de déplacement sans remplacement fournis par Windows, ou aucune annonce.
   const unsound = [
     { ...SOUND_OPERATIONS, methods: [...SOUND_OPERATIONS.methods, 'delete'] },
     { ...SOUND_OPERATIONS, methods: ['createFolder', 'rename', 'copy', 'move', 'trash'] },
@@ -797,6 +813,9 @@ test('explorateur : un service de consultation qui sait écrire fait échouer l�
     { ...SOUND_OPERATIONS, replace: 'ask' },
     { ...SOUND_OPERATIONS, trash: false },
     { ...SOUND_OPERATIONS, open: false },
+    { ...SOUND_OPERATIONS, noReplaceMove: false },
+    { ...SOUND_OPERATIONS, noReplaceMove: undefined },
+    { ...SOUND_OPERATIONS, noReplaceMove: 'oui' },
     { ...SOUND_OPERATIONS, methods: undefined },
     null,
   ];
@@ -821,6 +840,68 @@ test('explorateur : un service de consultation qui sait écrire fait échouer l�
     assert.ok(attempts.includes(`"${method}"`), method);
   }
   assert.deepEqual([...explorerTest.WRITE_METHODS].sort(), ['copy', 'create', 'delete', 'mkdir', 'move', 'open', 'read', 'remove', 'rename', 'trash', 'write']);
+});
+
+test('déplacement sans remplacement : l’auto-test éprouve sur le disque la fonction que l’application emploie, dans un dossier à lui', async () => {
+  const { code, report, outDir } = await run(createWindow(), FAST, { noReplaceRounds: undefined });
+  assert.equal(code, 0);
+  assert.deepEqual(failed(report), []);
+
+  // Les constats sont joints au rapport : refus du système devant un nom pris, courses, aucune perte.
+  const facts = report.noReplace;
+  // Sans le cas du chemin de plus de 260 caractères : le dossier d'essai est conservé, puis archivé avec le rapport.
+  assert.deepEqual([facts.free, facts.longPath], [4, false]);
+  assert.equal(facts.taken.cases, facts.link ? 8 : 6);
+  assert.equal(facts.caseOnly, 2);
+  // Par défaut : dix courses entre fichiers, dix entre dossiers, et autant entre un déplacement et une création.
+  assert.deepEqual([facts.races.rounds, facts.contests.rounds, facts.races.lost], [40, 20, 0]);
+  assert.equal(facts.crossVolume, null, 'un seul lecteur : celui du dossier de sortie');
+  assert.match(noReplaceTest.summarizeFacts(facts), /^Sans remplacement : \d déplacements vers un nom déjà pris refusés par le système \(code \d+\) · 40 courses, 160 demandes simultanées, aucun élément remplacé ni perdu$/);
+
+  // Le dossier d'essai de ce contrôle est créé à côté du dossier parcouru et de l'atelier, puis laissé sur place.
+  const run1 = path.dirname(fixtureOf(outDir));
+  assert.deepEqual(readdirSync(run1).sort(), [explorerTest.FOLDER_NAME, operationsTest.WORKSHOP_NAME, noReplaceTest.FOLDER_NAME].sort());
+  const kept = path.join(run1, noReplaceTest.FOLDER_NAME);
+  assert.deepEqual(readdirSync(kept).sort(), ['1 - nom libre', '2 - nom déjà pris', '3 - casse', '4 - concurrence']);
+  // Aucun chemin n'y dépasse la limite historique de Windows : le dossier peut être archivé et extrait par tout outil.
+  const longest = (folder) => readdirSync(folder, { withFileTypes: true }).reduce((most, item) => Math.max(most, item.isDirectory() && !item.isSymbolicLink() ? longest(path.join(folder, item.name)) : path.join(folder, item.name).length), folder.length);
+  assert.ok(longest(kept) - run1.length < 100, `chemin le plus long : ${longest(kept) - run1.length} caractères après le dossier de l'essai`);
+});
+
+test('déplacement sans remplacement : sans cette fonction, ou avec une fonction qui remplace, l’auto-test échoue', async () => {
+  const valueOf = (report) => report.checks.find((item) => item.name === NO_REPLACE_CHECK).value;
+
+  // Aucune fonction : l'application ne saurait ni renommer ni déplacer.
+  for (const missing of [null, undefined, 'moveNoReplace']) {
+    const { code, report, outDir } = await run(createWindow(), FAST, { moveNoReplace: missing });
+    assert.equal(code, 1);
+    assert.deepEqual(failed(report), [NO_REPLACE_CHECK]);
+    assert.deepEqual(valueOf(report), { problemes: ['fonction de déplacement sans remplacement absente'] });
+    assert.deepEqual(readdirSync(path.join(path.dirname(fixtureOf(outDir)), noReplaceTest.FOLDER_NAME)), []);
+  }
+
+  // Le renommage de Node, qui remplace l'élément en place.
+  const replacing = await run(createWindow(), FAST, { moveNoReplace: (from, to) => renameAsync(from, to) });
+  assert.equal(replacing.code, 1);
+  assert.deepEqual(failed(replacing.report), [NO_REPLACE_CHECK]);
+  assert.ok(valueOf(replacing.report).problemes.includes("nom déjà pris (un fichier vers le nom d'un fichier) : le déplacement a abouti — l'occupant a été remplacé"));
+  assert.ok(replacing.report.noReplace.races.lost > 0);
+
+  // L'ancienne façon de faire — vérifier que le nom est libre, puis renommer : démasquée par les courses.
+  const checkThenRename = async (from, to) => {
+    if (existsSync(to)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+    await renameAsync(from, to);
+  };
+  const racy = await run(createWindow(), FAST, { moveNoReplace: checkThenRename, noReplaceRounds: 4 });
+  assert.equal(racy.code, 1);
+  assert.deepEqual(failed(racy.report), [NO_REPLACE_CHECK]);
+  assert.ok(valueOf(racy.report).problemes.some((message) => /déplacements ont abouti vers le même nom, au lieu d'un seul$/.test(message)), JSON.stringify(valueOf(racy.report)));
+
+  // Une fonction en panne : le contrôle échoue, l'auto-test continue jusqu'au bout.
+  const broken = await run(createWindow(), FAST, { moveNoReplace: () => Promise.reject(new Error('module natif en panne')) });
+  assert.equal(broken.code, 1);
+  assert.deepEqual(failed(broken.report), [NO_REPLACE_CHECK]);
+  assert.equal(broken.report.checks.length, FULL_CHECKS);
 });
 
 test('explorateur : chemins hors des emplacements autorisés présentés au service, selon le système', async () => {

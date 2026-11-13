@@ -113,12 +113,18 @@ function withTimeout(promise, ms, message) {
  * @param {Partial<typeof DEFAULT_TIMINGS>} [options.timings]
  * @param {string} [options.scenario]  scénario à exécuter (voir l'en-tête)
  * @param {() => object} [options.describeServices]  état des services d'Evolve, joint au rapport
+ * @param {((from: string, to: string) => Promise<void>) | null} [options.moveNoReplace]  déplacement sans
+ *        remplacement que l'application emploie : éprouvé sur le disque (voir selftest-no-replace.js)
+ * @param {number} [options.noReplaceRounds]  nombre de courses de cette vérification
  * @param {string} [options.platform]  système sur lequel l'application s'exécute
  * @param {string|null} [options.recycleBin]  dossier de la Corbeille du lecteur où se trouve `outDir` ;
  *        par défaut, celui de Windows (« X:\$RECYCLE.BIN »), et aucun sur un autre système
  * @returns {Promise<number>} code de sortie : 0 = réussite, 1 = échec
  */
-async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, platform = process.platform, recycleBin }) {
+async function runSelfTest(
+  win,
+  { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, moveNoReplace = null, noReplaceRounds, platform = process.platform, recycleBin },
+) {
   const started = Date.now();
   const { webContents } = win;
   const t = { ...DEFAULT_TIMINGS, ...timings };
@@ -148,6 +154,8 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     explorer: null,
     /** Dossier d'essai envoyé à la Corbeille, tel que retrouvé dans la Corbeille de Windows. */
     recycled: null,
+    /** Constats de la vérification « renommer ou déplacer ne remplace jamais rien » (voir selftest-no-replace.js). */
+    noReplace: null,
   };
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -404,7 +412,7 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
          && document.querySelector('.tb-app[data-app="explorer"]').classList.contains('is-active');`,
     );
     // Vrais dossiers, navigation, opérations réelles sur les fichiers, refus (captures 06 à 08 comprises).
-    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, platform, recycleBin, timings: t });
+    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, moveNoReplace, noReplaceRounds, platform, recycleBin, timings: t });
     await act(`document.querySelector('.window[data-app="explorer"] .window__control--max').click();`);
     await check(
       "la fenêtre s'agrandit sur tout l'espace de travail",

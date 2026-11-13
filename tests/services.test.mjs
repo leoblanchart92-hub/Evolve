@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { fromRoot, listFiles, relative, stripComments } from './helpers.mjs';
+import { fromRoot, listFiles, loadNativeMove, relative, stripComments } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const { createHub, ServiceError, isPlainData, LIMITS } = require('../src/services/hub.js');
@@ -43,23 +43,30 @@ test('la couche de services ne dépend ni d’Electron, ni de l’interface, ni 
   }
 });
 
-test('la couche de services se charge avec Node seul', () => {
+test('la couche de services se charge avec Node seul', async () => {
   const services = createServices();
   assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'file-operations']);
   // Le service de fichiers ne sait que consulter : deux méthodes, aucun événement.
   assert.deepEqual(services.describe().files, { state: 'available', access: 'read-only', places: null, drives: null, methods: ['places', 'list'], events: [] });
   // Les opérations sur les fichiers ne sont pas un service : six fonctions distinctes. Sans hôte pour fournir la
-  // Corbeille et l'ouverture, ni l'une ni l'autre n'est disponible — et rien ne les remplace.
+  // Corbeille, l'ouverture et le déplacement sans remplacement, aucun des trois n'est disponible — et rien ne
+  // les remplace : en particulier, la couche ne se rabat jamais sur le renommage de Node, qui remplace.
   assert.deepEqual(services.describe()['file-operations'], {
     state: 'available',
     access: 'dedicated-functions',
     busy: false,
     trash: false,
     open: false,
+    noReplaceMove: false,
     deletion: 'recycle-bin-only',
     replace: 'never',
     methods: ['createFolder', 'rename', 'copy', 'move', 'trash', 'open'],
     events: ['progress'],
+  });
+  assert.deepEqual(await services.fileOperations.move([path.join(tmpdir(), 'Lettre.txt')], tmpdir(), { confirmed: true }), {
+    ok: false,
+    code: 'move-unavailable',
+    message: "Renommer et déplacer ne sont pas disponibles : la fonction du système qui garantit qu'aucun élément n'est remplacé n'a pas pu être chargée. Rien n'a été modifié.",
   });
   assert.deepEqual(FILE_OPERATIONS, ['createFolder', 'rename', 'copy', 'move', 'trash', 'open']);
   assert.ok(Object.isFrozen(FILE_OPERATIONS) && Object.isFrozen(services.fileOperations));
@@ -83,6 +90,8 @@ test('opérations sur les fichiers : hors du point d’accès, une fonction par 
           throw new Error(`détail interne ${location}`);
         },
         openPath: async (location) => (opened.push(location), ''),
+        // Le vrai déplacement sans remplacement de l'application (module natif).
+        moveNoReplace: loadNativeMove(),
       },
       log: (message) => logs.push(message),
     });
@@ -92,6 +101,7 @@ test('opérations sur les fichiers : hors du point d’accès, une fonction par 
     assert.deepEqual(Object.keys(fileOperations), ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel', 'onProgress']);
     assert.deepEqual(services.describe()['file-operations'].trash, true);
     assert.deepEqual(services.describe()['file-operations'].open, true);
+    assert.deepEqual(services.describe()['file-operations'].noReplaceMove, true);
     // Le point d'accès aux services ne les connaît pas, sous aucun nom.
     assert.deepEqual(Object.keys(services.hub.describe()), ['settings', 'files']);
     for (const method of ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel']) {
@@ -114,6 +124,16 @@ test('opérations sur les fichiers : hors du point d’accès, une fonction par 
     // Refus : { ok: false, code, message } — jamais d'exception, jamais de détail interne.
     const refusal = await fileOperations.createFolder(documents, 'Factures');
     assert.deepEqual(refusal, { ok: false, code: 'collision', message: 'Un élément porte déjà ce nom à cet endroit. Rien n’a été remplacé.' });
+    // Renommer vers un nom déjà pris : même refus, et l'élément en place est intact.
+    assert.deepEqual(await fileOperations.rename(renamed.value.path, 'Courrier - Copie.txt'), refusal);
+    assert.equal(readFileSync(path.join(documents, 'Courrier - Copie.txt'), 'utf8'), 'bonjour');
+
+    // Sans déplacement sans remplacement fourni par l'hôte : renommer est refusé, rien n'est modifié.
+    const bare = createServices({ files: { places: { documents }, drives: [], env: {} } });
+    const unavailable = await bare.fileOperations.rename(renamed.value.path, 'Autre nom.txt');
+    assert.deepEqual([unavailable.ok, unavailable.code], [false, 'move-unavailable']);
+    assert.match(unavailable.message, /^Renommer et déplacer ne sont pas disponibles : .* Rien n'a été modifié\.$/);
+    assert.deepEqual(readdirSync(documents).sort(), ['Courrier - Copie.txt', 'Courrier.txt', 'Factures']);
     assert.equal((await fileOperations.rename(documents, 'Autre')).code, 'protected');
     assert.equal((await fileOperations.move([renamed.value.path], created.value.path)).code, 'needs-confirmation');
     assert.equal((await fileOperations.trash([renamed.value.path])).code, 'needs-confirmation');

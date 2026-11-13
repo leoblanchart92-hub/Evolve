@@ -6,7 +6,9 @@
  * Ce faux disque note chaque appel reçu et, comme un vrai, laisse `rename`
  * et `copyFile` remplacer un fichier existant : tout écrasement serait vu
  * (`disk.overwritten`). La Corbeille y est simulée (`disk.recycle`) — c'est
- * la seule façon dont un élément peut quitter le disque.
+ * la seule façon dont un élément peut quitter le disque. Le déplacement sans
+ * remplacement que l'hôte fournit l'est aussi (`disk.moveNoReplace`) : comme
+ * celui du système, il vérifie et déplace d'un seul geste.
  *
  * Les mêmes opérations sont éprouvées sur un vrai disque dans
  * tests/file-operations-disk.test.mjs.
@@ -46,7 +48,7 @@ const ENV = Object.freeze({
 });
 
 /** Faux PC : un profil, des dossiers du système, un second disque, un partage réseau et la lettre qui y mène. */
-function pc({ errors, trash, openPath, limits, wrap, listedLinks } = {}) {
+function pc({ errors, trash, openPath, limits, wrap, listedLinks, move } = {}) {
   const disk = createFakeFs({
     platform: 'win32',
     errors,
@@ -97,6 +99,8 @@ function pc({ errors, trash, openPath, limits, wrap, listedLinks } = {}) {
     env: ENV,
     trash: trash === undefined ? disk.recycle : trash,
     openPath: openPath ?? (async (target) => (opened.push(target), '')),
+    // Déplacement sans remplacement : celui du faux disque ; `move(disk)` en fournit un autre, `null` aucun.
+    moveNoReplace: move === undefined ? disk.moveNoReplace : move === null ? null : move(disk),
     limits,
   });
   return { disk, files, operations, opened };
@@ -121,15 +125,16 @@ const CONFIRMED = Object.freeze({ confirmed: true });
 // Ce que le module peut faire au disque
 // ---------------------------------------------------------------------------------
 
-test('le module ne dispose que de trois fonctions qui modifient le disque : créer un dossier, renommer, copier un fichier', () => {
-  assert.deepEqual(WRITE_CALLS, ['mkdir', 'rename', 'copyFile']);
+test('le module ne modifie le disque que de trois façons, que le système refuse si le nom est pris : créer un dossier, copier un fichier, déplacer sans remplacer', () => {
+  // Deux fonctions du module de fichiers ; `rename`, qui remplace le fichier en place, n'en fait pas partie.
+  assert.deepEqual(WRITE_CALLS, ['mkdir', 'copyFile']);
   assert.deepEqual(READ_CALLS, ['lstat', 'opendir', 'realpath']);
   assert.ok(Object.isFrozen(WRITE_CALLS) && Object.isFrozen(READ_CALLS));
   // « Remplacer » n'est pas un choix possible.
   assert.deepEqual(COLLISION_POLICIES, ['ask', 'keep-both', 'skip']);
 
   const code = stripComments(readText('src', 'services', 'file-operations.js'));
-  // Le module de fichiers n'est atteint que par « disk », construit à partir de ces six fonctions.
+  // Le module de fichiers n'est atteint que par « disk », construit à partir de ces cinq fonctions.
   const viaDisk = new Set([...code.matchAll(/\bdisk\.(\w+)/g)].map((match) => match[1]));
   assert.deepEqual([...viaDisk].sort(), [...READ_CALLS, ...WRITE_CALLS, 'exclusive'].sort());
   const viaModule = new Set([...code.matchAll(/\bfs\.(\w+)/g)].map((match) => match[1]));
@@ -147,9 +152,18 @@ test('le module ne dispose que de trois fonctions qui modifient le disque : cré
   for (const call of copies) assert.match(call, /, disk\.exclusive$/);
   // Aucune création de dossier récursive (elle réussirait sur un dossier existant).
   assert.doesNotMatch(code, /recursive/);
+
+  // Renommer et déplacer : une seule voie, le déplacement sans remplacement fourni par l'hôte.
+  // Il n'est appelé qu'à un endroit, et rien n'est tenté d'autre s'il manque.
+  assert.equal([...code.matchAll(/\bmoveNoReplace\(/g)].length, 1);
+  assert.match(code, /async function moveWithoutReplacing\(from, to\) \{\s*if \(typeof moveNoReplace !== 'function'\) throw moveUnavailable\(\);\s*await moveNoReplace\(from, to\);\s*\}/);
+  // Trois usages : renommer, déplacer, donner son nom à un dossier copié.
+  assert.equal([...code.matchAll(/\bawait moveWithoutReplacing\(/g)].length, 3);
+  // La fonction de renommage de Node n'apparaît sous aucune forme.
+  assert.doesNotMatch(code, /\b(?:disk|fs|nodeFs)\s*\.\s*rename\b|\brenameSync\b|promisify\(\s*\w+\.rename\b/);
 });
 
-test('une session complète ne touche que les six fonctions prévues du système de fichiers', async () => {
+test('une session complète ne touche que les cinq fonctions prévues du système de fichiers — jamais son renommage', async () => {
   const { disk, operations } = pc();
   await operations.createFolder(DOCS, 'Factures');
   await operations.rename(`${DOCS}\\Lettre.txt`, 'Courrier.txt');
@@ -160,6 +174,11 @@ test('une session complète ne touche que les six fonctions prévues du système
   await operations.open(`${DESKTOP}\\Notes.txt`);
   // « statfs » : recherche des lecteurs par le service de consultation, qui partage ce faux disque.
   assert.deepEqual([...disk.touched].sort(), [...READ_CALLS, ...WRITE_CALLS, 'constants', 'statfs'].sort());
+  // Le renommage de Node — qui remplace — n'a été ni appelé, ni même consulté : chaque renommage,
+  // chaque déplacement est passé par le déplacement sans remplacement.
+  assert.ok(!disk.touched.has('rename'));
+  assert.deepEqual([...new Set(disk.writes().map(([name]) => name))].sort(), ['copyFile', 'mkdir', 'moveNoReplace']);
+  assert.ok(disk.writes().filter(([name]) => name === 'moveNoReplace').length >= 3);
   assert.deepEqual(disk.overwritten, []);
 });
 
@@ -211,8 +230,8 @@ test('renommer : un fichier, puis un dossier avec tout son contenu', async () =>
   assert.ok(!names.includes('Lettre.txt') && !names.includes('Projets'));
   assert.deepEqual(await namesIn(files, `${DOCS}\\Projets 2026`), ['plan.pdf', 'Été']);
   assert.deepEqual(disk.writes(), [
-    ['rename', `${DOCS}\\Lettre.txt`, `${DOCS}\\Courrier de mars.txt`],
-    ['rename', `${DOCS}\\Projets`, `${DOCS}\\Projets 2026`],
+    ['moveNoReplace', `${DOCS}\\Lettre.txt`, `${DOCS}\\Courrier de mars.txt`],
+    ['moveNoReplace', `${DOCS}\\Projets`, `${DOCS}\\Projets 2026`],
   ]);
 
   // Même nom : rien à faire. Seule la casse change : c'est le même élément, renommé.
@@ -379,8 +398,8 @@ test('déplacer : un fichier et un dossier, sur le même lecteur', async () => {
   assert.deepEqual(await namesIn(files, `${DOCS}\\Archives\\Projets\\Été`), ['Vers Windows', 'photo.jpg']);
   const names = await namesIn(files, DOCS);
   assert.ok(!names.includes('Lettre.txt') && !names.includes('Projets'));
-  // Un simple renommage par élément : rien n'est copié, rien ne passe par la Corbeille.
-  assert.deepEqual(disk.writes().map(([name]) => name), ['rename', 'rename']);
+  // Un simple déplacement par élément : rien n'est copié, rien ne passe par la Corbeille.
+  assert.deepEqual(disk.writes().map(([name]) => name), ['moveNoReplace', 'moveNoReplace']);
   assert.deepEqual(disk.bin, []);
   assert.deepEqual(disk.overwritten, []);
 });
@@ -446,8 +465,9 @@ test('déplacer : nom déjà pris — question, « ignorer », « conserver les 
   assert.deepEqual(disk.overwritten, []);
 });
 
-test('déplacer : un fichier apparu à destination entre le contrôle et le déplacement est détecté', async () => {
-  // Le plan est établi, puis un fichier du même nom apparaît : le dernier contrôle, juste avant le renommage, le voit.
+test('déplacer : un fichier apparu à destination après l’établissement du plan est vu par le constat préalable', async () => {
+  // Le plan est établi, puis un fichier du même nom apparaît : le constat fait juste avant le déplacement le voit,
+  // et le système n'est pas même sollicité. (Apparu après ce constat : voir les tests de concurrence, plus bas.)
   let planned = 0;
   const wrap = (disk) =>
     new Proxy(disk.fs, {
@@ -467,6 +487,7 @@ test('déplacer : un fichier apparu à destination entre le contrôle et le dép
   assert.deepEqual(report.failed.map((item) => item.code), ['collision']);
   assert.equal((await files.list(`${DOCS}\\Archives`)).entries[0].size, 777);
   assert.ok((await namesIn(files, DOCS)).includes('Lettre.txt'));
+  assert.deepEqual(disk.writes(), []);
   assert.deepEqual(disk.overwritten, []);
 });
 
@@ -546,7 +567,7 @@ test('supprimer exige une confirmation déclarée et une Corbeille ; sinon rien 
   const without = pc({ trash: null });
   assert.equal(await codeOf(without.operations.trash([`${DOCS}\\Lettre.txt`], CONFIRMED)), 'trash-unavailable');
   assert.deepEqual(without.disk.snapshot(), before);
-  assert.deepEqual(without.operations.status(), { busy: false, trash: false, open: true, deletion: 'recycle-bin-only', replace: 'never' });
+  assert.deepEqual(without.operations.status(), { busy: false, trash: false, open: true, noReplaceMove: true, deletion: 'recycle-bin-only', replace: 'never' });
 });
 
 test('Corbeille en échec : l’élément reste à sa place — aucune suppression de secours', async () => {
@@ -758,11 +779,161 @@ test('aucune opération ne modifie un emplacement non autorisé ou préservé : 
   const allowed = /^(?:C:\\Users\\Léo\\(?:Documents|Desktop|Pictures|Music|Downloads)|D:)\\/;
   for (const [name, from, to] of disk.writes()) {
     assert.match(name === 'mkdir' ? from : to, allowed, `${name} ${from} ${to ?? ''}`);
-    // La source d'une copie peut être un dossier du système ; celle d'un renommage, jamais.
-    if (name === 'rename') assert.match(from, allowed, `${name} ${from}`);
+    // La source d'une copie peut être un dossier du système ; celle d'un déplacement, jamais.
+    assert.notEqual(name, 'rename');
+    if (name === 'moveNoReplace') assert.match(from, allowed, `${name} ${from}`);
   }
   for (const item of disk.bin) assert.match(item.path, allowed);
   assert.deepEqual(disk.overwritten, []);
+});
+
+// ---------------------------------------------------------------------------------
+// Concurrence : un autre programme prend le nom d'arrivée à l'instant même
+// ---------------------------------------------------------------------------------
+
+/**
+ * Déplacement sans remplacement précédé d'un autre programme : après le constat
+ * « ce nom est libre » fait par le service, et juste avant que le système ne
+ * déplace, `intrude(drives, to)` modifie le disque — c'est l'instant qu'aucune
+ * vérification préalable ne peut couvrir.
+ */
+const racedBy = (intrude) => (disk) => async (from, to) => {
+  disk.mutate((drives) => intrude(drives, to));
+  return disk.moveNoReplace(from, to);
+};
+const documentsOf = (drives) => drives['C:\\'].tree.Users.Léo.Documents;
+
+/** Ce qu'un autre programme peut créer : un fichier, un dossier vide, un dossier plein, un lien. */
+const INTRUDERS = [
+  ['un fichier', () => file(777), 'Intrus.txt [777]'],
+  ['un dossier vide', () => ({}), 'Intrus.txt\\'],
+  ['un dossier', () => ({ 'dedans.txt': file(5) }), 'Intrus.txt\\'],
+  ['un lien', () => link('C:\\Windows'), 'Intrus.txt -> C:\\Windows'],
+];
+
+test('concurrence — renommer : un élément créé par un autre programme à l’instant du renommage n’est jamais remplacé', async () => {
+  for (const [label, intruder, line] of INTRUDERS) {
+    for (const source of ['Lettre.txt', 'Projets']) {
+      const { disk, operations } = pc({ move: racedBy((drives) => (documentsOf(drives)['Intrus.txt'] = intruder())) });
+      const before = disk.snapshot();
+
+      // Le service a constaté que le nom était libre ; c'est le système qui refuse, en déplaçant.
+      assert.equal(await codeOf(operations.rename(`${DOCS}\\${source}`, 'Intrus.txt')), 'collision', `${label}, ${source}`);
+
+      // Rien n'a été remplacé ni déplacé : le disque ne diffère que de l'élément créé par l'autre programme.
+      const after = disk.snapshot();
+      assert.ok(after.includes(`${DOCS}\\${line}`), `${label} : ${after.join(' | ')}`);
+      assert.deepEqual(after.filter((entry) => !entry.startsWith(`${DOCS}\\Intrus.txt`)), before, `${label}, ${source}`);
+      assert.deepEqual(disk.overwritten, []);
+      // Une seule demande au système, qui l'a refusée ; le renommage de Node n'a pas servi.
+      assert.deepEqual(disk.writes(), [['moveNoReplace', `${DOCS}\\${source}`, `${DOCS}\\Intrus.txt`]]);
+      assert.ok(!disk.touched.has('rename'));
+    }
+  }
+});
+
+test('concurrence — déplacer : l’élément dont le nom est pris à l’instant du déplacement reste à sa place, les autres sont déplacés', async () => {
+  for (const [label, intruder, line] of INTRUDERS) {
+    // Seul « Lettre.txt » est devancé ; « Budget.xlsx » et « Projets » ne le sont pas.
+    const { disk, files, operations } = pc({
+      move: racedBy((drives, to) => {
+        if (to === `${DOCS}\\Archives\\Lettre.txt`) documentsOf(drives).Archives['Lettre.txt'] = intruder();
+      }),
+    });
+    const before = disk.snapshot();
+    const report = await operations.move([`${DOCS}\\Lettre.txt`, `${DOCS}\\Budget.xlsx`, `${DOCS}\\Projets`], `${DOCS}\\Archives`, CONFIRMED);
+
+    assert.deepEqual(report.failed.map((item) => [item.name, item.code]), [['Lettre.txt', 'collision']], label);
+    assert.match(report.failed[0].message, /Rien n’a été remplacé/);
+    assert.deepEqual(report.done.map((item) => item.name), ['Budget.xlsx', 'Projets'], label);
+    // L'élément de l'autre programme est intact, et la lettre n'a pas quitté son dossier.
+    assert.ok(disk.snapshot().includes(`${DOCS}\\Archives\\${line.replace('Intrus.txt', 'Lettre.txt')}`), label);
+    assert.ok(before.includes(`${DOCS}\\Lettre.txt [120]`) && disk.snapshot().includes(`${DOCS}\\Lettre.txt [120]`), label);
+    assert.deepEqual(await namesIn(files, `${DOCS}\\Archives`), ['Budget.xlsx', 'Lettre.txt', 'Projets'], label);
+    assert.deepEqual(disk.overwritten, []);
+    assert.deepEqual(disk.bin, []);
+    assert.ok(!disk.touched.has('rename'));
+  }
+});
+
+test('concurrence — copier un dossier : si son nom est pris à l’instant où la copie s’achève, la copie garde son nom provisoire', async () => {
+  for (const [label, intruder, line] of INTRUDERS) {
+    const { disk, files, operations } = pc({
+      move: racedBy((drives, to) => {
+        if (to === 'D:\\Sauvegardes\\Projets') drives['D:\\'].tree.Sauvegardes.Projets = intruder();
+      }),
+    });
+    const before = disk.snapshot('C:\\');
+    const report = await operations.copy([`${DOCS}\\Projets`, `${DOCS}\\Lettre.txt`], 'D:\\Sauvegardes');
+
+    // Le système a refusé de donner au dossier copié un nom qui venait d'être pris : rien n'est remplacé.
+    assert.deepEqual(report.failed.map((item) => [item.name, item.code, item.partial, item.complete]), [['Projets', 'collision', 'Projets (copie en cours)', true]], label);
+    assert.deepEqual(report.done.map((item) => item.name), ['Lettre.txt'], label);
+    // L'élément de l'autre programme porte toujours le nom « Projets », intact ; la copie, entière, est à côté.
+    assert.ok(disk.snapshot('D:\\').includes(`D:\\Sauvegardes\\${line.replace('Intrus.txt', 'Projets')}`), label);
+    assert.deepEqual(await namesIn(files, 'D:\\Sauvegardes'), ['Lettre.txt', 'Projets', 'Projets (copie en cours)'], label);
+    assert.deepEqual(await namesIn(files, 'D:\\Sauvegardes\\Projets (copie en cours)'), ['plan.pdf', 'Été'], label);
+    assert.deepEqual(disk.snapshot('C:\\'), before, 'les originaux sont intacts');
+    assert.deepEqual(disk.overwritten, []);
+    assert.ok(!disk.touched.has('rename'));
+  }
+});
+
+test('concurrence — déplacer vers un autre lecteur : la copie est exclusive, et l’original ne part à la Corbeille que si elle a abouti', async () => {
+  // Un autre programme crée le fichier à destination juste avant la copie : elle est refusée, l'original reste.
+  const wrap = (disk) =>
+    new Proxy(disk.fs, {
+      get(target, property) {
+        if (property !== 'copyFile') return target[property];
+        return (from, to, mode, callback) => {
+          disk.mutate((drives) => (drives['D:\\'].tree.Sauvegardes['Budget.xlsx'] = file(555)));
+          target.copyFile(from, to, mode, callback);
+        };
+      },
+    });
+  const { disk, files, operations } = pc({ wrap });
+  const report = await operations.move([`${DOCS}\\Budget.xlsx`], 'D:\\Sauvegardes', CONFIRMED);
+  assert.deepEqual([report.done, report.failed.map((item) => [item.name, item.code])], [[], [['Budget.xlsx', 'collision']]]);
+  assert.equal((await files.list('D:\\Sauvegardes')).entries[0].size, 555, 'le fichier de l’autre programme est intact');
+  assert.ok((await namesIn(files, DOCS)).includes('Budget.xlsx'), 'l’original est resté à sa place');
+  assert.deepEqual([disk.bin, disk.overwritten], [[], []]);
+});
+
+test('sans déplacement sans remplacement fourni par l’hôte : renommer et déplacer sont refusés — rien n’est tenté d’une autre façon', async () => {
+  const { disk, files, operations } = pc({ move: null });
+  assert.equal(operations.status().noReplaceMove, false);
+  assert.equal(pc().operations.status().noReplaceMove, true);
+  const before = disk.snapshot();
+
+  const refusal = await operations.rename(`${DOCS}\\Lettre.txt`, 'Courrier.txt').then(() => null, (error) => error);
+  assert.ok(refusal instanceof ServiceError);
+  assert.equal(refusal.code, 'move-unavailable');
+  assert.equal(refusal.message, "Renommer et déplacer ne sont pas disponibles : la fonction du système qui garantit qu'aucun élément n'est remplacé n'a pas pu être chargée. Rien n'a été modifié.");
+  assert.equal(await codeOf(operations.rename(`${DOCS}\\Projets`, 'Projets 2026')), 'move-unavailable');
+  assert.equal(await codeOf(operations.rename(`${DOCS}\\Budget.xlsx`, 'BUDGET.xlsx')), 'move-unavailable');
+  assert.equal(await codeOf(operations.move([`${DOCS}\\Lettre.txt`], `${DOCS}\\Archives`, CONFIRMED)), 'move-unavailable');
+  assert.equal(await codeOf(operations.move([`${DOCS}\\Lettre.txt`], 'D:\\Sauvegardes', CONFIRMED)), 'move-unavailable');
+  // Les contrôles habituels passent d'abord : confirmation, forme des chemins, nom.
+  assert.equal(await codeOf(operations.move([`${DOCS}\\Lettre.txt`], `${DOCS}\\Archives`)), 'needs-confirmation');
+  assert.equal(await codeOf(operations.move(['Lettre.txt'], `${DOCS}\\Archives`, CONFIRMED)), 'invalid-path');
+  assert.equal(await codeOf(operations.rename(`${DOCS}\\Lettre.txt`, 'CON')), 'invalid-name');
+  // Même nom : rien à faire, donc rien à refuser.
+  assert.deepEqual(await operations.rename(`${DOCS}\\Lettre.txt`, 'Lettre.txt'), { path: `${DOCS}\\Lettre.txt`, name: 'Lettre.txt', unchanged: true });
+
+  // Un dossier ne reçoit son nom que par un déplacement sans remplacement : sa copie n'est pas commencée.
+  const copied = await operations.copy([`${DOCS}\\Projets`, `${DOCS}\\Lettre.txt`], 'D:\\Sauvegardes');
+  assert.deepEqual(copied.failed.map((item) => [item.name, item.code, item.partial]), [['Projets', 'move-unavailable', undefined]]);
+  assert.equal(copied.failed[0].message, "Ce dossier n'a pas été copié : la fonction du système qui garantit qu'aucun élément n'est remplacé n'a pas pu être chargée. Rien n'a été modifié.");
+  assert.deepEqual(copied.done.map((item) => item.name), ['Lettre.txt']);
+  assert.deepEqual(await namesIn(files, 'D:\\Sauvegardes'), ['Lettre.txt']);
+
+  // Rien n'a été modifié, hormis ce fichier copié — et le renommage de Node n'a pas servi de repli.
+  assert.deepEqual(disk.snapshot('C:\\'), before.filter((entry) => entry.startsWith('C:\\')));
+  assert.deepEqual(disk.writes().map(([name]) => name), ['copyFile']);
+  assert.ok(!disk.touched.has('rename'));
+  // Créer un dossier, envoyer à la Corbeille et ouvrir n'en dépendent pas.
+  assert.equal((await operations.createFolder(DOCS, 'Factures')).name, 'Factures');
+  assert.equal((await operations.trash([`${DOCS}\\Lettre.txt`], CONFIRMED)).done.length, 1);
 });
 
 // ---------------------------------------------------------------------------------
@@ -772,7 +943,7 @@ test('aucune opération ne modifie un emplacement non autorisé ou préservé : 
 test('erreurs du système : accès refusé, élément utilisé, disque plein — signalées en clair, sans dégât', async () => {
   const errors = {
     mkdir: { [`${DOCS}\\Interdit`]: 'EACCES', [`${DOCS}\\Protégé`]: 'EPERM', [`${DOCS}\\Lecture seule`]: 'EROFS' },
-    rename: { [`${DOCS}\\Lettre.txt`]: 'EBUSY', [`${DOCS}\\Budget.xlsx`]: 'EPERM' },
+    moveNoReplace: { [`${DOCS}\\Lettre.txt`]: 'EBUSY', [`${DOCS}\\Budget.xlsx`]: 'EPERM' },
     copyFile: { [`${DOCS}\\programme.exe`]: 'ENOSPC', [`${DESKTOP}\\Notes.txt`]: 'EIO' },
   };
   const { disk, operations } = pc({ errors });

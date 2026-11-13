@@ -6,6 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
 
@@ -364,7 +365,7 @@ test('la fenêtre de l’application est isolée du système', () => {
   assert.doesNotMatch(stripComments(readText('src/main/preload.js')), /\bshell\b|\bopenPath\b|\btrashItem\b/);
 });
 
-test('Windows n’est sollicité que pour deux gestes : envoyer à la Corbeille et ouvrir un fichier', () => {
+test('Windows n’est sollicité que pour trois gestes : envoyer à la Corbeille, ouvrir un fichier, déplacer sans rien remplacer', () => {
   const main = stripComments(readText('src/main/main.js'));
   // Deux fonctions du module « shell », chacune appelée à un seul endroit.
   assert.deepEqual([...main.matchAll(/\bshell\.(\w+)/g)].map((match) => match[1]).sort(), ['openPath', 'trashItem']);
@@ -375,12 +376,62 @@ test('Windows n’est sollicité que pour deux gestes : envoyer à la Corbeille 
   // Ces deux fonctions ne sont remises qu'aux opérations sur les fichiers, qui contrôlent chaque chemin avant de s'en servir.
   assert.equal([...main.matchAll(/\bsendToRecycleBin\b/g)].length, 2, 'une définition, un usage');
   assert.equal([...main.matchAll(/\bopenWithAssociatedApp\b/g)].length, 2, 'une définition, un usage');
-  assert.match(main, /operations: \{ trash: sendToRecycleBin, openPath: openWithAssociatedApp \},/);
+  assert.match(main, /operations: \{ trash: sendToRecycleBin, openPath: openWithAssociatedApp, moveNoReplace \},/);
   // Aucun autre fichier de l'application de bureau ne touche au module « shell ».
   for (const file of desktopFiles) {
     if (file.endsWith(path.join('main', 'main.js'))) continue;
     assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /\bshell\b|\btrashItem\b|\bopenExternal\b|\bshowItemInFolder\b/, relative(file));
   }
+
+  // Troisième geste : le déplacement sans remplacement, demandé à Windows par le module natif. Il est chargé une
+  // seule fois ; s'il ne peut pas l'être, la fonction reste absente — rien ne la remplace.
+  assert.equal([...main.matchAll(/\bloadAtomicMove\b/g)].length, 2, 'une importation, un appel');
+  assert.match(main, /let moveNoReplace = null;[\s\S]*?\ntry \{\s*moveNoReplace = loadAtomicMove\(\);\s*\} catch \(error\) \{\s*moveNoReplaceFailure = [^\n]+\n\s*console\.warn\([^\n]+\);\s*\}/);
+  // Elle n'est remise qu'aux opérations sur les fichiers, et à l'auto-test, qui l'éprouve sur le disque.
+  assert.equal([...main.matchAll(/\bmoveNoReplace\b/g)].length, 4, 'une déclaration, un chargement, deux usages');
+  // Un auto-test n'a pas lieu sans elle : l'exécutable ne serait pas publié.
+  assert.match(main, /if \(moveNoReplaceFailure\) return abortSelfTest\(moveNoReplaceFailure\);/);
+  // Aucun repli : le processus principal ne renomme ni ne déplace rien par lui-même.
+  assert.doesNotMatch(main, /\b\w*[fF]s\s*(?:\.\s*promises\s*)?\.\s*rename(?:Sync)?\b|\brenameSync\b|\bMoveFile/);
+  // Seul le chargeur connaît le module natif ; lui-même n'emploie pas le module de fichiers de Node.
+  for (const file of desktopFiles) {
+    if (file.endsWith(path.join('main', 'atomic-move.js'))) continue;
+    assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /evolve_fs|\bdlopen\b|\.node'/, relative(file));
+  }
+  const loader = stripComments(readText('src/main/atomic-move.js'));
+  assert.deepEqual([...loader.matchAll(/\brequire\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]), ['node:path', 'node:util']);
+  assert.match(loader, /const ADDON_FILE = nodePath\.join\(__dirname, '\.\.', '\.\.', 'native', 'build', 'Release', 'evolve_fs\.node'\);/);
+  // La couche de services, elle, ne connaît qu'une fonction remise par l'hôte : elle n'appelle jamais le renommage de Node.
+  for (const file of listFiles(fromRoot('src', 'services'), ['.js'])) {
+    const code = stripComments(readFileSync(file, 'utf8'));
+    if (file.endsWith('json-file.js')) continue; // fichier des réglages d'Evolve : remplacé volontairement par sa nouvelle version
+    assert.doesNotMatch(code, /\b\w*[fF]s\s*(?:\.\s*promises\s*)?\.\s*rename(?:Sync)?\b|\bdisk\.rename\b|\brenameSync\b/, relative(file));
+  }
+});
+
+test('module natif : source, compilation et empaquetage', () => {
+  // Description de la compilation (format gyp : du JSON, avec des commentaires).
+  const gyp = JSON.parse(readText('native/binding.gyp').replace(/^\s*#.*$/gm, ''));
+  assert.equal(gyp.targets.length, 1);
+  assert.deepEqual([gyp.targets[0].target_name, gyp.targets[0].sources], ['evolve_fs', ['evolve_fs.c']]);
+  assert.ok(existsSync(fromRoot('native', 'evolve_fs.c')));
+  // Compilé par un script npm, avec node-gyp, dépendance de développement figée (voir plus bas).
+  assert.equal(pkg.scripts['build:native'], 'node-gyp rebuild --directory=native');
+  assert.equal(pkg.scripts['check:native'], 'node scripts/check-native.mjs');
+  assert.match(pkg.devDependencies['node-gyp'], /^\d+\.\d+\.\d+$/);
+  // Le résultat de la compilation n'est pas versionné…
+  assert.match(readText('.gitignore'), /^native\/build\/$/m);
+  // … mais il est embarqué dans l'exécutable, hors de l'archive de l'application : Windows doit pouvoir le charger.
+  const addon = 'native/build/Release/evolve_fs.node';
+  assert.ok(pkg.build.files.includes(addon));
+  assert.deepEqual(pkg.build.asarUnpack, [addon]);
+  assert.equal(pkg.build.asar, true);
+  // C'est bien le fichier que l'application charge, et il a été compilé avant les tests.
+  const { ADDON_FILE } = createRequire(import.meta.url)('../src/main/atomic-move.js');
+  assert.equal(relative(ADDON_FILE), addon);
+  assert.ok(existsSync(ADDON_FILE), 'module natif absent : compilez-le avec « npm run build:native »');
+  // Rien d'autre du dossier « native » n'est embarqué : ni la source, ni les fichiers intermédiaires.
+  assert.deepEqual(pkg.build.files.filter((pattern) => pattern.startsWith('native')), [addon]);
 });
 
 // --- Inventaire de ce qui peut écrire sur le disque ------------------------------------
@@ -420,14 +471,20 @@ test('chaque écriture sur le disque est inventoriée : les fichiers de l’util
     'src/main/selftest.js': ['mkdirSync', 'writeFileSync'],
     // Auto-test : dossier d'essai de l'explorateur, créé dans le dossier de résultats.
     'src/main/selftest-explorer.js': ['mkdirSync', 'mkdtempSync', 'rmdirSync', 'utimesSync', 'writeFileSync'],
+    // Auto-test : éléments d'essai de la vérification « rien n'est remplacé », créés dans le dossier que l'appelant
+    // lui confie — des dossiers, des fichiers, un lien. Rien qui renomme ni supprime : les déplacements sont
+    // demandés à la fonction éprouvée.
+    'src/main/selftest-no-replace.js': ['mkdir', 'mkdirSync', 'symlinkSync', 'writeFile', 'writeFileSync'],
     // Auto-test : atelier des opérations, créé lui aussi dans le dossier de résultats — des dossiers, des fichiers,
     // un lien. Rien qui déplace, remplace ou supprime : les opérations elles-mêmes sont demandées à l'application.
     'src/main/selftest-operations.js': ['mkdirSync', 'symlinkSync', 'writeFileSync'],
     // Compte rendu de démarrage (option --status-file), pour la vérification du lancement.
     'src/main/status.js': ['mkdirSync', 'renameSync', 'writeFileSync'],
-    // Opérations sur les fichiers de l'utilisateur, à sa demande : créer un dossier, renommer ou déplacer, copier.
-    // Trois fonctions, dont aucune ne supprime ni ne remplace (voir tests/file-operations.test.mjs).
-    'src/services/file-operations.js': ['copyFile', 'mkdir', 'rename'],
+    // Opérations sur les fichiers de l'utilisateur, à sa demande : créer un dossier, copier un fichier. Deux
+    // fonctions, que le système refuse si le nom existe ; aucune ne supprime ni ne remplace. Le renommage de
+    // Node, qui remplace, n'y figure plus : renommer et déplacer passent par la fonction sans remplacement
+    // de l'hôte (voir tests/file-operations.test.mjs).
+    'src/services/file-operations.js': ['copyFile', 'mkdir'],
     // Fichier des réglages (%APPDATA%\Evolve\settings.json), écrit seulement après un réglage modifié.
     'src/services/json-file.js': ['fsyncSync', 'mkdirSync', 'openSync', 'renameSync', 'rmSync', 'writeFileSync'],
   };
@@ -590,7 +647,7 @@ test('configuration de la compilation Windows', () => {
   assert.equal(build.portable.requestExecutionLevel, 'user');
   assert.equal(build.portable.artifactName, 'Evolve-${version}-portable.exe');
   assert.equal(build.publish, null, 'aucune publication automatique');
-  assert.deepEqual(build.files, ['package.json', 'THIRD-PARTY-NOTICES.md', 'src/main/**/*', 'src/services/**/*', 'src/renderer/**/*', 'assets/**/*']);
+  assert.deepEqual(build.files, ['package.json', 'THIRD-PARTY-NOTICES.md', 'src/main/**/*', 'src/services/**/*', 'src/renderer/**/*', 'assets/**/*', 'native/build/Release/evolve_fs.node']);
   for (const pattern of build.files) assert.ok(existsSync(fromRoot(pattern.replace(/\/\*\*\/\*$/, ''))), `fichier ou dossier absent : ${pattern}`);
   // Dossier de décompression fixe et reconnaissable dans %TEMP% (voir README).
   assert.equal(build.portable.unpackDirName, 'Evolve-portable');
@@ -683,10 +740,15 @@ test('compilation automatique : les commandes citées existent', () => {
 
 test('compilation automatique : le .exe n’est publié qu’après toutes les vérifications', () => {
   const order = [
+    // Le module natif est compilé, puis éprouvé sur le disque, avant tout le reste.
+    'npm run build:native',
+    'check-native.mjs --record=native/build/evolve_fs.sha256',
     'npm test',
     'check-exe.mjs electron',
     'npm run build:win',
     'npm run check:manifest',
+    // Le module embarqué a l'empreinte de celui qui a été éprouvé avant les tests — et il est éprouvé de nouveau.
+    'check-native.mjs --module=dist/win-unpacked/resources/app.asar.unpacked/native/build/Release/evolve_fs.node --expect=native/build/evolve_fs.sha256',
     'check-exe.mjs --out=self-test-output/executable',
     'check-launch.mjs --out=self-test-output/lancement',
     'check-settings.mjs --out=self-test-output/reglages',
@@ -706,7 +768,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const lenient = steps.filter((step) => step.includes('continue-on-error: true'));
   assert.equal(lenient.length, 1);
   assert.match(lenient[0], /^Régler l'écran/);
-  assert.ok(!/check-exe|check-launch|check-settings|check-documents|build:win|check:manifest|npm test/.test(lenient[0]));
+  assert.ok(!/check-exe|check-launch|check-settings|check-documents|check-native|build:win|build:native|check:manifest|npm test/.test(lenient[0]));
 
   // Les réglages sont éprouvés là où ils seront réellement rangés : %APPDATA%\Evolve.
   const settingsStep = steps.find((step) => step.includes('check-settings.mjs'));

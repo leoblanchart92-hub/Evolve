@@ -15,7 +15,9 @@
  *
  * À côté de ce dossier, un second — l'« atelier » — reçoit les opérations
  * réelles : nouveau dossier, copier, coller, renommer, déplacer, envoyer à la
- * Corbeille, ouvrir (voir selftest-operations.js).
+ * Corbeille, ouvrir (voir selftest-operations.js). Un troisième sert à
+ * constater, sur le disque, que renommer ou déplacer ne remplace jamais rien,
+ * même en cas de concurrence (voir selftest-no-replace.js).
  *
  * Seul l'auto-test crée ces éléments d'essai, et uniquement dans son dossier
  * de sortie.
@@ -25,6 +27,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { CHECK: NO_REPLACE_CHECK, FOLDER_NAME: NO_REPLACE_FOLDER, verifyNoReplace } = require('./selftest-no-replace');
 const { createWorkshop, operationChecks } = require('./selftest-operations');
 
 /** Sous-dossier du dossier de sortie qui reçoit les dossiers d'essai. */
@@ -54,6 +57,9 @@ const ADDED_NAME = 'Ajouté pendant le test.txt';
 
 /** Dossier retiré pendant le test, alors que l'explorateur l'affiche encore. */
 const REMOVED_NAME = 'Retiré pendant le test';
+
+/** Courses de la vérification « rien n'est remplacé » menée dans l'application (voir selftest-no-replace.js). */
+const NO_REPLACE_ROUNDS = 10;
 
 /** Opérations que le service de consultation ne doit offrir sous aucun nom. */
 const WRITE_METHODS = Object.freeze(['write', 'create', 'mkdir', 'rename', 'move', 'copy', 'delete', 'remove', 'trash', 'open', 'read']);
@@ -235,7 +241,23 @@ function stepsTo(folder) {
  *        `env` désignent le système sur lequel l'application s'exécute, et
  *        `recycleBin` le dossier de sa Corbeille (voir selftest-operations.js)
  */
-async function checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, timings, recycleBin, platform = process.platform, env = process.env }) {
+async function checkExplorer({
+  check,
+  act,
+  until,
+  evaluate,
+  record,
+  capture,
+  report,
+  outDir,
+  describeServices,
+  moveNoReplace = null,
+  noReplaceRounds = NO_REPLACE_ROUNDS,
+  timings,
+  recycleBin,
+  platform = process.platform,
+  env = process.env,
+}) {
   const isWindows = platform === 'win32';
   const toggleHidden = `${PAGE_TOOLS}
     [...exWin().querySelectorAll('.ex-commands .btn')].find((el) => el.textContent.trim() === 'Affichage').click();
@@ -541,9 +563,11 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
       dedicated.methods.join(',') === 'createFolder,rename,copy,move,trash,open' &&
       dedicated.deletion === 'recycle-bin-only' &&
       dedicated.replace === 'never' &&
-      // La Corbeille et l'ouverture sont fournies par Windows : sans elles, rien n'est supprimé ni ouvert.
+      // La Corbeille, l'ouverture et le déplacement sans remplacement sont fournis par Windows : sans eux,
+      // rien n'est supprimé, ouvert, renommé ni déplacé.
       dedicated.trash === true &&
-      dedicated.open === true);
+      dedicated.open === true &&
+      dedicated.noReplaceMove === true);
   const readOnlyService = dedicatedOperations && (declared === null || (Array.isArray(declared) && declared.join(',') === 'places,list'));
   let refusedWrites;
   try {
@@ -566,6 +590,24 @@ async function checkExplorer({ check, act, until, evaluate, record, capture, rep
 
   // 15. Demandes que l'application doit refuser, présentées sans passer par l'interface.
   await operations.refuse();
+
+  // 15 bis. « Rien n'est remplacé », éprouvé ici même, dans l'application, sur le disque : la fonction
+  //     de déplacement qu'elle emploie reçoit directement — sans le constat préalable « ce nom est-il
+  //     libre ? » des opérations — des demandes vers un nom déjà pris, puis des demandes simultanées
+  //     vers un même nom. C'est le système qui doit refuser. Le dossier d'essai de ce contrôle est créé
+  //     à côté de l'atelier, auquel il ne touche pas.
+  let guaranteed;
+  try {
+    const base = path.join(run, NO_REPLACE_FOLDER);
+    fs.mkdirSync(base);
+    // Sans le cas du chemin de plus de 260 caractères : ce dossier d'essai est conservé, puis archivé avec le rapport.
+    const outcome = await verifyNoReplace(moveNoReplace, { base, rounds: noReplaceRounds, longPath: false });
+    report.noReplace = outcome.facts;
+    guaranteed = outcome.ok || { problemes: outcome.problems };
+  } catch (error) {
+    guaranteed = `exception : ${error?.message}`;
+  }
+  record(NO_REPLACE_CHECK, guaranteed);
 
   // 16. Rien n'a changé dans le dossier seulement parcouru…
   let unchanged;
