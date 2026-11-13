@@ -1,6 +1,12 @@
 /**
- * Evolve — Recherche du menu Démarrer : applications, fichiers d'exemple et
+ * Evolve — Recherche du menu Démarrer : applications, dossiers personnels et
  * paramètres rapides. Module pur (sans DOM), testé avec Node.
+ *
+ * Tout ce que la recherche propose existe : une application disponible se
+ * lance, une application seulement annoncée est signalée comme telle, un
+ * dossier personnel s'ouvre dans l'explorateur, un paramètre rapide ouvre son
+ * panneau. Aucun fichier n'est cherché sur le disque, et aucun fichier fictif
+ * n'est proposé.
  */
 
 import { normalize } from '../core/text.js';
@@ -16,6 +22,16 @@ export const QUICK_SETTING_ENTRIES = Object.freeze([
   { id: 'doNotDisturb', label: 'Ne pas déranger', glyph: 'bell-slash', keywords: ['notifications', 'silence'] },
   { id: 'energySaver', label: "Économie d'énergie", glyph: 'leaf', keywords: ['batterie', 'autonomie'] },
 ]);
+
+/** Mots qui mènent aussi à un dossier personnel, par identifiant (voir PLACES, apps/explorer-nav.js). */
+export const PLACE_KEYWORDS = Object.freeze({
+  desktop: ['desktop'],
+  documents: ['fichiers', 'textes', 'docs'],
+  downloads: ['downloads', 'téléchargé'],
+  pictures: ['photos', 'pictures'],
+  music: ['audio', 'chansons', 'music'],
+  videos: ['films', 'videos'],
+});
 
 /**
  * Score de correspondance : 0 = commence par la requête, 1 = un mot commence
@@ -42,32 +58,43 @@ function rank(query, entries, getLabel, getKeywords = () => []) {
 /**
  * Recherche dans toutes les sources.
  *
- * Le premier résultat est le « meilleur résultat » (meilleure correspondance,
- * toutes sources confondues) ; les suivants sont regroupés par type, dans
- * l'ordre applications → fichiers → paramètres.
+ * Le premier résultat est le « meilleur résultat » — celui que la touche
+ * Entrée ouvre : la meilleure correspondance parmi ce que l'on peut réellement
+ * ouvrir, toutes sources confondues. Une application seulement annoncée n'est
+ * en tête que si rien d'autre ne correspond. Les suivants sont regroupés par
+ * type : applications (les disponibles d'abord), dossiers personnels,
+ * paramètres.
  *
  * @param {string} query
- * @param {{ apps: object[], files: { search: (q: string, limit?: number) => object[] } }} sources
- * @returns {{ type: 'app'|'file'|'setting', item: object, score: number }[]}
+ * @param {object} sources
+ * @param {object[]} sources.apps  applications du registre (data/apps.js)
+ * @param {{ id: string, name: string }[]} [sources.places]  dossiers personnels (apps/explorer-nav.js)
+ * @param {(app: object) => boolean} [sources.isAvailable]  vrai pour une application que l'on peut lancer
+ * @returns {{ type: 'app'|'place'|'setting', item: object, score: number, available: boolean }[]}
  */
-export function search(query, { apps, files }) {
+export function search(query, { apps, places = [], isAvailable = () => true }) {
   if (!normalize(query)) return [];
   const results = [];
 
   const appMatches = rank(query, [...apps], (app) => app.name, (app) => app.keywords ?? []);
-  for (const { entry, score } of appMatches.slice(0, 6)) results.push({ type: 'app', item: entry, score });
-
-  for (const node of files.search(query, 5)) {
-    results.push({ type: 'file', item: node, score: Math.max(0, matchScore(query, node.name)) });
+  const launchable = appMatches.filter(({ entry }) => isAvailable(entry));
+  const upcoming = appMatches.filter(({ entry }) => !isAvailable(entry));
+  for (const { entry, score } of [...launchable, ...upcoming].slice(0, 6)) {
+    results.push({ type: 'app', item: entry, score, available: isAvailable(entry) });
   }
 
-  const settingMatches = rank(query, [...QUICK_SETTING_ENTRIES], (entry) => entry.label, (entry) => entry.keywords);
-  for (const { entry, score } of settingMatches.slice(0, 4)) results.push({ type: 'setting', item: entry, score });
+  const placeMatches = rank(query, [...places], (place) => place.name, (place) => PLACE_KEYWORDS[place.id] ?? []);
+  for (const { entry, score } of placeMatches.slice(0, 6)) results.push({ type: 'place', item: entry, score, available: true });
 
-  // Le meilleur résultat passe en tête (à score égal, l'ordre des sources prime).
+  const settingMatches = rank(query, [...QUICK_SETTING_ENTRIES], (entry) => entry.label, (entry) => entry.keywords);
+  for (const { entry, score } of settingMatches.slice(0, 4)) results.push({ type: 'setting', item: entry, score, available: true });
+
+  // Le meilleur résultat passe en tête : d'abord ce que l'on peut ouvrir, puis la meilleure
+  // correspondance ; à égalité, l'ordre des sources.
   let best = 0;
+  const better = (a, b) => (a.available !== b.available ? a.available : a.score < b.score);
   results.forEach((result, index) => {
-    if (result.score < results[best].score) best = index;
+    if (better(result, results[best])) best = index;
   });
   if (best > 0) results.unshift(...results.splice(best, 1));
   return results;

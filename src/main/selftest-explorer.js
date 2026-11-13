@@ -66,7 +66,7 @@ const WRITE_METHODS = Object.freeze(['write', 'create', 'mkdir', 'rename', 'move
 
 /** Outils exécutés dans la page : lecture de l'état de la fenêtre de l'explorateur. */
 const PAGE_TOOLS = `
-  const exWin = () => document.querySelector('.window[data-app="explorer"]');
+  const exWin = () => document.querySelector('.window.is-focused[data-app="explorer"]') ?? document.querySelector('.window[data-app="explorer"]');
   const exContent = () => exWin().querySelector('.ex-content');
   const exItems = () => [...exWin().querySelectorAll('.ex-item')];
   const exName = (el) => el.querySelector('.ex-tile__name, .ex-row__name > .truncate, .ex-drive__name')?.textContent ?? '';

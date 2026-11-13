@@ -800,7 +800,10 @@ test('les fichiers de script gardent des fins de ligne Unix (exécutés par bash
 test('le numéro de version est le même partout', async () => {
   const { PRODUCT } = await import('../src/renderer/js/config.js');
   assert.equal(PRODUCT.version, pkg.version, 'src/renderer/js/config.js');
-  assert.equal(JSON.parse(readText('package-lock.json')).version, pkg.version, 'package-lock.json');
-  // L'exécutable d'exemple recommandé par le menu Démarrer porte le nom du vrai fichier.
-  assert.ok(readText('src/renderer/js/data/demo-files.js').includes(`'Evolve-${pkg.version}-portable.exe'`));
+  const lock = JSON.parse(readText('package-lock.json'));
+  assert.equal(lock.version, pkg.version, 'package-lock.json');
+  assert.equal(lock.packages[''].version, pkg.version, 'package-lock.json (paquet racine)');
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
+  // Le nom du fichier .exe, lui, est composé à partir de ce numéro par la compilation.
+  assert.equal(pkg.build.portable.artifactName, 'Evolve-${version}-portable.exe');
 });

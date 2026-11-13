@@ -2,20 +2,25 @@
 
 **Evolve** est un environnement de bureau au style néon violet : bureau, barre des tâches, menu Démarrer, fenêtres, explorateur de fichiers.
 
-Cette version 0.4.1 reste un **aperçu de l'interface graphique**, mais son **explorateur de fichiers agit désormais réellement sur vos fichiers** : il crée des dossiers, renomme, copie, déplace, envoie à la Corbeille de Windows et ouvre un fichier avec son application habituelle. Trois règles ne souffrent aucune exception : **rien n'est supprimé définitivement**, **rien n'est remplacé**, et tout déplacement, tout envoi à la Corbeille, toute ouverture d'un programme sont **confirmés par vous**. Evolve prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie aucun réglage de Windows. Ce qu'il écrit de lui-même sur le PC se limite à un petit fichier de réglages et à des fichiers temporaires, [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
+Cette version 0.5.0 reste un **aperçu de l'interface graphique**, mais son **bureau fonctionne réellement** : plusieurs fenêtres à la fois, déplacées, redimensionnées, ancrées côte à côte, manœuvrées à la souris comme au clavier, avec une barre des tâches et un menu Démarrer qui ne proposent que ce qui existe. Les applications à venir y sont annoncées comme telles et n'ouvrent aucune fenêtre factice ; ce qui reste simulé — widgets matériels, paramètres rapides — est signalé à l'écran. Son **explorateur de fichiers agit réellement sur vos fichiers** : il crée des dossiers, renomme, copie, déplace, envoie à la Corbeille de Windows et ouvre un fichier avec son application habituelle. Trois règles ne souffrent aucune exception : **rien n'est supprimé définitivement**, **rien n'est remplacé**, et tout déplacement, tout envoi à la Corbeille, toute ouverture d'un programme sont **confirmés par vous**. Evolve prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie aucun réglage de Windows. Ce qu'il écrit de lui-même sur le PC se limite à un petit fichier de réglages et à des fichiers temporaires, [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
 
 ![Le bureau d'Evolve : fond d'écran, icônes, widgets et barre des tâches](docs/captures/bureau.jpg)
 
 | Menu Démarrer | Explorateur de fichiers |
 | :---: | :---: |
-| ![Le menu Démarrer d'Evolve](docs/captures/menu-demarrer.jpg) | ![L'explorateur de fichiers d'Evolve, en vue « Détails »](docs/captures/explorateur.jpg) |
+| ![Le menu Démarrer d'Evolve : l'explorateur, les applications à venir estompées, les dossiers personnels](docs/captures/menu-demarrer.jpg) | ![L'explorateur de fichiers d'Evolve, en vue « Détails »](docs/captures/explorateur.jpg) |
 
-*Captures réalisées sur un disque de démonstration.*
+| Deux fenêtres ancrées côte à côte | Passer d'une fenêtre à l'autre (`Ctrl` + `Tab`) |
+| :---: | :---: |
+| ![Deux fenêtres de l'explorateur, chacune sur une moitié de l'écran](docs/captures/fenetres.jpg) | ![La liste des fenêtres ouvertes, affichée par Ctrl + Tab](docs/captures/bascule.jpg) |
+
+*Captures de l'interface de la version 0.5.0, réalisées hors de Windows, sur un disque de démonstration.*
 
 ## Sommaire
 
 - [Télécharger et lancer Evolve](#télécharger-et-lancer-evolve)
 - [Ce qu'Evolve fait — et ne fait pas — sur votre PC](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc)
+- [Le bureau et les fenêtres](#le-bureau-et-les-fenêtres)
 - [L'explorateur de fichiers](#lexplorateur-de-fichiers)
 - [Vos réglages](#vos-réglages)
 - [Ce que contient cet aperçu](#ce-que-contient-cet-aperçu)
@@ -31,7 +36,7 @@ L'exécutable est fabriqué automatiquement par GitHub à chaque modification du
 
 1. Connectez-vous à GitHub, puis ouvrez la page **[Actions → Exécutable Windows](https://github.com/leoblanchart92-hub/Evolve/actions/workflows/build-windows.yml)**.
 2. Cliquez sur l'exécution la plus récente marquée d'une coche verte.
-3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.4.1-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
+3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.5.0-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
 4. Double-cliquez sur le fichier téléchargé. Evolve s'ouvre en plein écran.
 
 À savoir :
@@ -47,11 +52,11 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 
 | Engagement | En pratique |
 | --- | --- |
-| **Aucune installation** | Rien n'est ajouté au menu Démarrer de Windows, au bureau, à la liste des programmes ni au démarrage de l'ordinateur. Pour « désinstaller » Evolve, supprimez le fichier `.exe` et, si vous avez modifié des réglages, le dossier `%APPDATA%\Evolve`. |
+| **Aucune installation** | Rien n'est ajouté au menu Démarrer de Windows, au bureau, à la liste des programmes ni au démarrage de l'ordinateur. Pour « désinstaller » Evolve, supprimez le fichier `.exe` et, si vous avez modifié un réglage ou déplacé une fenêtre, le dossier `%APPDATA%\Evolve`. |
 | **Aucun droit administrateur** | Evolve s'exécute avec les droits de l'utilisateur et ne demande jamais pour lui-même l'élévation de Windows : ce point est contrôlé à chaque compilation. Depuis que l'explorateur agit sur les fichiers, deux situations peuvent néanmoins faire apparaître la demande d'autorisation de Windows, et c'est alors Windows qui vous pose la question : l'ouverture d'un programme qui exige lui-même ces droits, et l'envoi à la Corbeille d'un élément réservé aux administrateurs (voir les [limites connues](#limites-connues)). |
 | **Vos fichiers : modifiés seulement à votre demande** | L'explorateur n'agit que lorsque vous le lui demandez — nouveau dossier, renommer, copier, déplacer, envoyer à la Corbeille, ouvrir — et jamais de lui-même. Rien n'est supprimé définitivement : « supprimer » envoie à la Corbeille de Windows, d'où vous pouvez restaurer. Rien n'est remplacé : devant un nom déjà pris, vous choisissez de conserver les deux éléments ou d'ignorer — et c'est Windows lui-même qui refuse de renommer ou de déplacer vers un nom pris, même s'il vient de l'être par un autre programme. Déplacer, envoyer à la Corbeille et ouvrir un programme — ou un fichier d'un type inconnu d'Evolve — exigent votre confirmation. Les lecteurs, vos dossiers personnels eux-mêmes et les dossiers du système ne peuvent être ni renommés, ni déplacés, ni supprimés. Evolve n'examine jamais le contenu de vos fichiers, et ce que vous consultez n'est ni enregistré ni transmis. Un dossier personnel absent — Documents compris — est annoncé comme introuvable, jamais recréé (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)). Ces points sont contrôlés à chaque compilation. |
 | **Aucun réglage de Windows modifié** | Les paramètres rapides (Wi-Fi, Bluetooth, volume, luminosité…) sont purement visuels : ils n'agissent que sur l'interface d'Evolve, qui retient leur position sans rien changer à Windows. |
-| **Un seul dossier dans votre profil** | De lui-même, Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié : tant que vous ne changez aucun réglage et ne demandez aucune opération à l'explorateur, Evolve n'écrit rien dans votre profil. Ces deux points sont contrôlés à chaque compilation. |
+| **Un seul dossier dans votre profil** | De lui-même, Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié, ou à la première fenêtre déplacée, redimensionnée, agrandie ou ancrée — sa place est retenue. Tant que vous ne faites rien de tel et ne demandez aucune opération à l'explorateur, Evolve n'écrit rien dans votre profil. Deux points sont contrôlés à chaque compilation : un lancement sans réglage modifié ni fenêtre déplacée n'écrit rien dans le profil, et le dossier d'Evolve ne contient que ce fichier. |
 | **Aucune mesure réelle du matériel** | Les widgets processeur, mémoire et carte graphique affichent des valeurs simulées, signalées par la mention « DÉMO ». |
 | **Aucune connexion réseau** | L'interface est entièrement locale ; toute requête vers Internet y est bloquée. |
 
@@ -64,6 +69,47 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 | `Evolve` | cache technique du moteur d'affichage | environ 3 Mo | conservé d'un lancement à l'autre |
 
 Ces dossiers peuvent être supprimés sans risque lorsqu'Evolve est fermé. Leur taille et leur suppression à la fermeture sont relevées à chaque compilation (voir [Vérifications automatiques](#vérifications-automatiques)).
+
+## Le bureau et les fenêtres
+
+Depuis la version 0.5.0, le bureau ne montre que ce qui fonctionne : il n'y a plus ni fenêtre d'attente, ni fichier d'exemple.
+
+**Une seule application, et elle est réelle.** L'explorateur de fichiers est la seule application d'Evolve. Les dix-sept autres (Navigateur, Paramètres, Terminal…) sont seulement annoncées : le menu Démarrer les présente estompées, avec la mention « bientôt », et les choisir n'ouvre aucune fenêtre — un message indique qu'elles n'existent pas encore. Elles ne figurent ni sur le bureau, ni dans la barre des tâches.
+
+**Le bureau.** Quatre icônes — *Ce PC*, *Documents*, *Téléchargements*, *Images* — ouvrent l'explorateur à l'emplacement correspondant, par un double-clic ou par `Entrée`. Un clic droit sur une icône propose *Ouvrir* et *Ouvrir dans une nouvelle fenêtre* ; un clic droit sur le fond, d'actualiser, de masquer les icônes ou les widgets, et d'ouvrir une fenêtre de l'explorateur.
+
+**Le menu Démarrer.** Il réunit la grille des applications, vos six dossiers personnels, la liste de toutes les applications et une recherche : applications, dossiers personnels, paramètres rapides — ce qui existe y est proposé avant ce qui est seulement annoncé. Il se parcourt entièrement au clavier, flèches comprises, et s'ouvre par `Ctrl` + `Espace`.
+
+**La barre des tâches.** À gauche, le bouton *Widgets* ; au centre, le bouton Démarrer, la recherche et l'explorateur de fichiers ; à droite, les paramètres rapides, l'horloge, les notifications et, tout au bout, le bouton *Afficher le bureau*, qui réduit toutes les fenêtres puis les rétablit dans le même ordre. L'icône de l'explorateur se comporte comme dans Windows :
+
+| Geste sur l'icône de l'explorateur | Effet |
+| --- | --- |
+| clic, aucune fenêtre ouverte | ouvre l'explorateur |
+| clic, une seule fenêtre | la ramène au premier plan ; si elle y est déjà, la réduit |
+| clic, plusieurs fenêtres | en présente la liste, pour choisir |
+| `Maj` + clic, ou clic du bouton du milieu | ouvre une fenêtre de plus |
+| clic droit | nouvelle fenêtre ; afficher, réduire ou fermer les fenêtres ouvertes |
+
+**Les fenêtres.** L'explorateur peut avoir jusqu'à douze fenêtres à la fois ; chacune s'ouvre légèrement décalée de la précédente.
+
+| Pour… | À la souris | Au clavier |
+| --- | --- | --- |
+| déplacer une fenêtre | glisser sa barre de titre | — |
+| la redimensionner | glisser un bord ou un coin | — |
+| l'agrandir | double-clic sur la barre de titre, bouton *Agrandir*, ou la glisser contre le haut de l'écran | `Alt` + `Maj` + `↑` |
+| l'ancrer sur une moitié de l'écran | la glisser contre le bord gauche ou droit : un aperçu montre la place qu'elle prendra | `Alt` + `Maj` + `←` ou `→` |
+| lui rendre sa place | bouton *Restaurer* ou double-clic sur la barre de titre d'une fenêtre agrandie ; la glisser ailleurs ; menu de la fenêtre | `Alt` + `Maj` + `↓` |
+| la réduire | bouton *Réduire*, ou clic sur son icône de la barre des tâches | `Alt` + `Maj` + `↓`, une fois la fenêtre à sa place |
+| la fermer | bouton *Fermer* | `Ctrl` + `W` |
+| passer à une autre fenêtre | clic dans la fenêtre, ou barre des tâches | `Ctrl` + `Tab` |
+| ouvrir le menu de la fenêtre | clic droit sur la barre de titre, ou clic sur l'icône placée devant le titre | `Tab` jusqu'à cette icône, puis `Entrée` |
+
+- **Une fenêtre retrouve sa place à l'identique.** Agrandie ou ancrée, puis restaurée, elle reprend exactement la position et la taille qu'elle avait. La glisser alors qu'elle est agrandie ou ancrée la détache.
+- **Un geste s'annule.** `Échap` pendant un déplacement ou un redimensionnement remet la fenêtre où elle était.
+- **Pas de doublon involontaire.** Ouvrir un emplacement qu'une fenêtre affiche déjà ramène cette fenêtre au premier plan ; *Ouvrir dans une nouvelle fenêtre* et `Ctrl` + `N` en ouvrent une de plus.
+- **`Ctrl` + `Tab`** affiche la liste des fenêtres ouvertes : chaque `Tab` de plus passe à la suivante, `Maj` revient en arrière, relâcher `Ctrl` affiche la fenêtre choisie, `Échap` renonce.
+- **Le clavier ne se perd pas.** `Tab` circule dans la fenêtre active sans en sortir ; `F6` passe de la fenêtre à la barre des tâches, puis aux icônes du bureau. Quand un menu ou un panneau se ferme, le clavier revient là où il était ; quand une fenêtre est fermée ou réduite, il passe à la fenêtre suivante.
+- **Des raccourcis propres à Evolve.** Evolve est une application ordinaire de Windows : la touche Windows, `Alt` + `Tab` et `Ctrl` + `Échap` restent ceux de Windows, qui les traite avant toute application. Le bureau d'Evolve emploie donc `Alt` + `Maj` là où Windows emploie la touche Windows, et `Ctrl` + `Tab` pour passer d'une fenêtre à l'autre. La liste complète figure dans les [raccourcis utiles](#raccourcis-utiles).
 
 ## L'explorateur de fichiers
 
@@ -118,13 +164,14 @@ Ce qui le distingue encore de l'Explorateur de Windows est détaillé dans les [
 Evolve retient d'un lancement à l'autre :
 
 - l'affichage des **widgets** et des **icônes du bureau** (affichés ou masqués) ;
-- la position des **paramètres rapides** : Wi-Fi, Bluetooth, mode avion, économie d'énergie, éclairage nocturne, « Ne pas déranger », luminosité, volume et son coupé.
+- la position des **paramètres rapides** : Wi-Fi, Bluetooth, mode avion, économie d'énergie, éclairage nocturne, « Ne pas déranger », luminosité, volume et son coupé ;
+- la **place de la fenêtre de l'explorateur** : sa position, sa taille, et le fait qu'elle soit agrandie. Elle n'est retenue qu'à partir du moment où vous déplacez, redimensionnez, agrandissez ou ancrez une fenêtre — ouvrir puis fermer l'explorateur n'enregistre rien —, et c'est la première fenêtre de l'explorateur ouverte au lancement suivant qui la retrouve. Si l'écran a changé de taille entre-temps, la fenêtre est ramenée à l'intérieur de l'écran.
 
 Ils sont rangés dans le dossier `%APPDATA%\Evolve` — c'est-à-dire `C:\Users\<votre nom>\AppData\Roaming\Evolve` ; pour l'ouvrir, collez `%APPDATA%\Evolve` dans la barre d'adresse de l'explorateur de Windows.
 
 | Fichier dans `%APPDATA%\Evolve` | Contenu | Durée de vie |
 | --- | --- | --- |
-| `settings.json` | les réglages que vous avez modifiés, en texte lisible (moins de 1 Ko) | créé au premier réglage modifié, conservé ensuite |
+| `settings.json` | les réglages que vous avez modifiés et la place de la fenêtre de l'explorateur, en texte lisible (moins de 1 Ko) | créé au premier réglage modifié ou à la première fenêtre déplacée, conservé ensuite |
 | `settings.corrupt.json` | copie d'un fichier de réglages devenu inutilisable | n'existe qu'après un incident (voir ci-dessous) |
 | `settings.json.tmp` | enregistrement en cours | un instant, pendant l'enregistrement |
 
@@ -140,16 +187,16 @@ Avec l'option `--settings-dir=DOSSIER` (voir [Raccourcis utiles](#raccourcis-uti
 
 ## Ce que contient cet aperçu
 
-- **Bureau** — fond d'écran officiel du projet, icônes (double-clic pour ouvrir), menu contextuel au clic droit.
-- **Barre des tâches** — bouton Démarrer, recherche, applications épinglées avec témoin d'activité, zone de notification, horloge ; clic droit sur une application pour la réduire ou la fermer.
-- **Menu Démarrer** — applications épinglées, liste de toutes les applications, éléments recommandés (des exemples) et recherche instantanée : applications, dossiers personnels, fichiers d'exemple, paramètres.
-- **Paramètres rapides** et **centre de notifications** avec calendrier.
-- **Widgets** — horloge, processeur, mémoire et carte graphique (valeurs de démonstration), masquables depuis le bouton *Widgets*.
-- **Fenêtres** — déplacement, redimensionnement par les bords et les coins, agrandissement, réduction dans la barre des tâches, superposition de plusieurs fenêtres.
+- **Bureau** — fond d'écran officiel du projet, quatre icônes qui ouvrent l'explorateur (double-clic, ou flèches et `Entrée`), menus contextuels au clic droit.
+- **Barre des tâches** — bouton Démarrer, recherche, explorateur de fichiers avec témoin d'activité et liste de ses fenêtres, zone de notification, horloge, bouton *Afficher le bureau*.
+- **Menu Démarrer** — grille des applications, dossiers personnels, liste de toutes les applications et recherche instantanée : applications, dossiers personnels, paramètres rapides. Les applications à venir y sont estompées et n'ouvrent rien.
+- **Fenêtres** — plusieurs fenêtres de l'explorateur à la fois ; déplacement, redimensionnement par les bords et les coins, agrandissement, ancrage sur une moitié de l'écran, réduction dans la barre des tâches, bascule au clavier (voir [Le bureau et les fenêtres](#le-bureau-et-les-fenêtres)).
+- **Paramètres rapides** (visuels, voir plus haut) et **centre de notifications** avec calendrier ; ses messages sont ceux d'Evolve lui-même, sur cette version.
+- **Widgets** — horloge, processeur, mémoire et carte graphique (valeurs de démonstration, signalées « DÉMO »), masquables depuis le bouton *Widgets*.
 - **Explorateur de fichiers** — vos vrais dossiers et de vraies opérations : dossiers personnels et lecteurs, volet latéral, grandes icônes ou vue « Détails », tri, recherche dans le dossier, sélection multiple, navigation au clavier ; nouveau dossier, renommer, copier, couper, coller, envoyer à la Corbeille, ouvrir (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)).
 - **Adaptation à l'écran** — de 1024 × 768 à la 4K ; les animations sont réduites si Windows est réglé pour les limiter.
 
-Les autres applications (Navigateur, Paramètres, Terminal…) ouvrent pour l'instant une fenêtre d'attente : elles feront l'objet des prochaines étapes.
+Les autres applications (Navigateur, Paramètres, Terminal…) n'existent pas encore : annoncées dans le menu Démarrer, elles feront l'objet des prochaines étapes.
 
 ## Raccourcis utiles
 
@@ -158,8 +205,19 @@ Les autres applications (Navigateur, Paramètres, Terminal…) ouvrent pour l'in
 | Quitter Evolve | `Alt` + `F4` |
 | Basculer le plein écran | `F11` |
 | Fermer un menu ou un panneau | `Échap` |
+| Ouvrir ou fermer le menu Démarrer | `Ctrl` + `Espace` |
 | Chercher depuis le menu Démarrer | ouvrir le menu, puis taper directement |
+| Passer d'une fenêtre à l'autre | `Ctrl` + `Tab` (`Ctrl` + `Maj` + `Tab` en sens inverse) ; relâcher `Ctrl` pour afficher la fenêtre choisie, `Échap` pour renoncer |
+| Fermer la fenêtre active | `Ctrl` + `W` |
+| Ouvrir une fenêtre de l'explorateur | `Alt` + `Maj` + `E` ; `Ctrl` + `N` depuis une fenêtre, pour le même emplacement |
+| Afficher le bureau, puis rétablir les fenêtres | `Alt` + `Maj` + `D` |
 | Agrandir ou restaurer une fenêtre | double-clic sur sa barre de titre |
+| Agrandir la fenêtre active | `Alt` + `Maj` + `↑` |
+| Rendre sa place à la fenêtre active ; déjà à sa place, la réduire | `Alt` + `Maj` + `↓` |
+| Ancrer la fenêtre active à gauche, à droite | `Alt` + `Maj` + `←`, `Alt` + `Maj` + `→` |
+| Passer de la fenêtre à la barre des tâches, puis au bureau | `F6` (`Maj` + `F6` en sens inverse) |
+| Annuler le déplacement ou le redimensionnement en cours | `Échap` |
+| Bureau : aller d'une icône à l'autre, ouvrir, menu de l'icône | flèches, `Début`, `Fin` ; `Entrée` ; touche Menu ou `Maj` + `F10` |
 | Explorateur : précédent, suivant, dossier parent | `Alt` + `←`, `Alt` + `→`, `Alt` + `↑` |
 | Explorateur : actualiser le dossier affiché | `F5` |
 | Explorateur : rechercher dans le dossier affiché | `Ctrl` + `F` |
@@ -177,8 +235,8 @@ Le fichier `.exe` accepte aussi des options, à ajouter après son nom dans une 
 | --- | --- |
 | `--windowed` | démarre dans une fenêtre plutôt qu'en plein écran |
 | `--devtools` | autorise les outils de développement (touche `F12`) |
-| `--settings-dir=DOSSIER` | range les réglages dans `DOSSIER` au lieu de `%APPDATA%\Evolve` ; le dossier est créé au premier réglage modifié (voir [Vos réglages](#vos-réglages)) |
-| `--self-test` | lance l'auto-test décrit ci-dessous, puis quitte ; le rapport, les captures d'écran et les dossiers d'essai de l'explorateur sont enregistrés dans un dossier `self-test-output` créé à côté du fichier `.exe`. L'auto-test n'agit que sur ses propres fichiers d'essai, dans ce dossier : il les copie, les renomme et les déplace, envoie l'un de ses dossiers d'essai (« À jeter ») à la Corbeille de Windows — où il reste — et fait exécuter par Windows un petit script d'essai, qui n'écrit qu'un fichier témoin à côté de lui. Pendant l'auto-test, les réglages restent en mémoire : vos réglages ne sont ni lus ni modifiés |
+| `--settings-dir=DOSSIER` | range les réglages dans `DOSSIER` au lieu de `%APPDATA%\Evolve` ; le dossier est créé au premier réglage enregistré (voir [Vos réglages](#vos-réglages)) |
+| `--self-test` | lance l'auto-test décrit ci-dessous, puis quitte ; le rapport, les captures d'écran et les dossiers d'essai de l'explorateur sont enregistrés dans un dossier `self-test-output` créé à côté du fichier `.exe`. L'auto-test n'agit que sur ses propres fichiers d'essai, dans ce dossier : il les copie, les renomme et les déplace, envoie l'un de ses dossiers d'essai (« À jeter ») à la Corbeille de Windows — où il reste — et fait exécuter par Windows un petit script d'essai, qui n'écrit qu'un fichier témoin à côté de lui. Pendant l'auto-test, les réglages restent en mémoire : vos réglages ne sont ni lus ni modifiés. L'auto-test manœuvre lui-même les fenêtres, à la souris et au clavier : laissez-les jusqu'à la fermeture, qui survient au plus tard après trois minutes |
 | `--self-test-scenario=NOM` | avec `--self-test`, choisit ce qui est contrôlé : `full` (par défaut, le contrôle complet), ou `settings-write` puis `settings-read`, les deux lancements de la vérification des réglages décrite ci-dessous (ils exigent `--settings-dir`) |
 | `--status-file=FICHIER` | une fois l'interface démarrée, écrit dans `FICHIER` l'état de la fenêtre et enregistre à côté l'image affichée ; sert à la vérification du lancement décrite ci-dessous |
 
@@ -191,21 +249,32 @@ Evolve ne pouvant pas être essayé à la main à chaque modification, la compil
 3. **Fabrication** du fichier `.exe` portable.
 4. **Droits demandés** : lecture du manifeste de l'exécutable, qui doit indiquer le niveau `asInvoker` (aucun droit administrateur).
 5. **Module embarqué** : le module natif placé dans l'exécutable doit être, octet pour octet, celui qui a été compilé et éprouvé à la première étape — son empreinte, relevée alors, est comparée ; il est éprouvé une seconde fois, tel qu'il a été embarqué. Les bibliothèques dont il dépend sont lues dans le fichier : aucune ne doit manquer sur un Windows fraîchement installé.
-6. **Auto-test** : le `.exe` est réellement lancé avec l'option `--self-test`. L'application vérifie alors son propre affichage — fond d'écran identique à l'image d'origine, polices, barre des tâches, menu Démarrer, recherche, panneaux, fenêtres, services joignables depuis l'interface, absence d'erreur — et enregistre un rapport accompagné de captures d'écran. Elle met aussi l'**explorateur** à l'épreuve sur de vrais dossiers : elle crée un petit dossier d'essai dans son dossier de résultats, s'y rend comme le ferait un utilisateur (« Ce PC », le lecteur, puis chaque dossier au double-clic) et contrôle les noms, les types, les tailles et les dates affichés, la navigation, l'actualisation, puis le message « Dossier introuvable » devant un dossier supprimé entre-temps. Devant un dossier protégé de Windows, elle attend « Accès refusé » ; sur la machine de GitHub, dont le compte peut tout lire, aucun dossier ne refuse l'accès : ce contrôle-là y est omis (un avertissement le signale dans le rapport), et le refus d'accès n'est vérifié que par les tests automatiques, sur un disque simulé.
+6. **Auto-test** : le `.exe` est réellement lancé avec l'option `--self-test`. L'application vérifie alors son propre affichage — fond d'écran identique à l'image d'origine, polices, icônes du bureau (chaque nom entier, sur une seule ligne), barre des tâches, menu Démarrer où seules les applications qui existent peuvent être lancées, recherche, panneaux, fenêtres, services joignables depuis l'interface, absence d'erreur — et enregistre un rapport accompagné de captures d'écran. Elle met aussi l'**explorateur** à l'épreuve sur de vrais dossiers : elle crée un petit dossier d'essai dans son dossier de résultats, s'y rend comme le ferait un utilisateur (« Ce PC », le lecteur, puis chaque dossier au double-clic) et contrôle les noms, les types, les tailles et les dates affichés, la navigation, l'actualisation, puis le message « Dossier introuvable » devant un dossier supprimé entre-temps. Devant un dossier protégé de Windows, elle attend « Accès refusé » ; sur la machine de GitHub, dont le compte peut tout lire, aucun dossier ne refuse l'accès : ce contrôle-là y est omis (un avertissement le signale dans le rapport), et le refus d'accès n'est vérifié que par les tests automatiques, sur un disque simulé.
 
    Elle mène ensuite de **vraies opérations** dans un second dossier d'essai, l'« atelier », par les commandes et les fenêtres de dialogue de l'explorateur : créer un dossier (un nom réservé par Windows doit d'abord être refusé), coller un fichier là où un fichier du même nom existe déjà (*Ignorer* ne doit rien changer, *Conserver les deux* doit créer une copie sous un autre nom sans toucher à l'existant), renommer, déplacer et envoyer à la Corbeille (rien ne doit bouger tant que la confirmation n'est pas donnée), copier un dossier entier, ouvrir un script (rien ne doit s'exécuter sans confirmation, et *Annuler* doit être sélectionné). Après chaque opération, elle relit elle-même le disque et compare le contenu de l'atelier à ce que l'opération devait produire : rien de plus, rien de moins. Elle retrouve dans la Corbeille de Windows le dossier qu'elle y a envoyé, avec son contenu intact, puis constate que le script, une fois confirmé, a réellement été exécuté par Windows.
 
-   Enfin, elle présente directement à l'application des demandes qui doivent toutes être refusées — déplacer, jeter ou exécuter sans confirmation, remplacer un élément, supprimer définitivement, renommer un lecteur, un dossier personnel, un dossier du système ou un lien, employer un nom ou un chemin interdit. Elle éprouve elle-même, dans un troisième dossier d'essai, la fonction par laquelle elle renomme et déplace : déplacements vers un nom déjà pris, puis courses entre déplacements simultanés, comme à la première étape — mais cette fois dans l'exécutable, tel qu'il sera distribué. Sans cette fonction, l'auto-test n'a pas lieu et l'exécutable n'est pas publié. Elle vérifie pour finir que rien n'a changé dans le dossier qu'elle n'a fait que parcourir, et que l'atelier contient exactement ce que les opérations demandées devaient produire.
+   Elle présente ensuite directement à l'application des demandes qui doivent toutes être refusées — déplacer, jeter ou exécuter sans confirmation, remplacer un élément, supprimer définitivement, renommer un lecteur, un dossier personnel, un dossier du système ou un lien, employer un nom ou un chemin interdit. Elle éprouve elle-même, dans un troisième dossier d'essai, la fonction par laquelle elle renomme et déplace : déplacements vers un nom déjà pris, puis courses entre déplacements simultanés, comme à la première étape — mais cette fois dans l'exécutable, tel qu'il sera distribué. Sans cette fonction, l'auto-test n'a pas lieu et l'exécutable n'est pas publié. Elle vérifie pour finir que rien n'a changé dans le dossier qu'elle n'a fait que parcourir, et que l'atelier contient exactement ce que les opérations demandées devaient produire.
+
+   Enfin, elle met **le bureau et les fenêtres** à l'épreuve par de **vrais gestes** : au lieu d'appeler le code de l'interface, elle injecte dans le moteur d'affichage des mouvements de souris et des frappes de clavier, qui y suivent le même chemin que ceux d'un utilisateur. Une fenêtre est déplacée par sa barre de titre, de la distance exacte du geste ; redimensionnée par un coin, jusqu'à sa taille minimale ; agrandie puis remise à sa place, à l'identique, par deux double-clics ; glissée contre un bord de l'écran, où un aperçu doit annoncer la moitié qu'elle occupe ensuite ; et `Échap`, pendant un déplacement, doit la remettre exactement où elle était. Une seconde fenêtre est ouverte : la barre des tâches doit en proposer la liste, `Ctrl` + `Tab` passer de l'une à l'autre, les deux fenêtres ancrées se partager l'écran sans se recouvrir, `Tab` ne jamais sortir de la fenêtre active, et le clavier revenir à l'autre fenêtre quand l'une est réduite ou fermée. Le bureau et le menu Démarrer sont parcourus au clavier ; une application seulement annoncée ne doit ouvrir aucune fenêtre ; une treizième fenêtre doit être refusée.
+
+   Ces gestes ne prouvent quelque chose que s'ils parviennent réellement à la page. L'auto-test le constate d'abord, par un mouvement de souris et une pression sur `Maj`, sans effet sur l'interface. Si la page ne les voit pas — fenêtre restée à l'arrière-plan sur la machine de compilation, par exemple —, les contrôles qui en dépendent **ne sont pas menés**, plutôt que d'être tenus pour réussis : le rapport le signale, et le compte rendu de l'étape dit, sur sa ligne « Gestes réels », si la souris et le clavier ont été reçus. Les autres contrôles du bureau, qui passent par les boutons et les menus, sont menés dans tous les cas.
 
 7. **Lancement normal** : le `.exe` est lancé une seconde fois, sans option d'essai, comme par un double-clic. Un contrôle extérieur vérifie que la fenêtre s'ouvre en plein écran et couvre tout l'écran, compare une capture de l'écran à l'image dessinée par l'application, puis demande la fermeture comme le ferait `Alt` + `F4` : l'application doit se fermer sans erreur. Il vérifie aussi que les réglages sont bien destinés à `%APPDATA%\Evolve\settings.json` et que ce lancement, où aucun réglage n'est modifié, n'a rien écrit dans le profil de l'utilisateur : ni fichier, ni dossier. L'espace occupé dans le dossier temporaire, et ce qu'il en reste après la fermeture, sont relevés.
-8. **Réglages et redémarrage** : le `.exe` est lancé deux fois de suite sur le véritable dossier `%APPDATA%\Evolve` de la machine. Au premier lancement, l'application modifie cinq réglages depuis son interface, par les mêmes boutons et curseurs qu'un utilisateur, puis se ferme. Le contrôle lit alors lui-même `settings.json` : le fichier doit exister, être seul dans son dossier et contenir exactement ces cinq réglages. Au second lancement, l'interface doit les afficher sans aucune action — widgets masqués, éclairage nocturne et « Ne pas déranger » activés, luminosité et volume réglés —, et relire le fichier ne doit pas le modifier. Le fichier est ensuite retiré de la machine.
+8. **Réglages et redémarrage** : le `.exe` est lancé deux fois de suite sur le véritable dossier `%APPDATA%\Evolve` de la machine. Au premier lancement, l'application modifie cinq réglages depuis son interface, par les mêmes boutons et curseurs qu'un utilisateur ; elle ouvre ensuite l'explorateur — ce qui, seul, ne doit rien enregistrer —, déplace sa fenêtre en la glissant par la barre de titre, puis se ferme. Si la souris injectée n'est pas reçue, la fenêtre est agrandie depuis son menu : c'est alors son agrandissement qui est enregistré puis retrouvé, et le rapport le signale. Le contrôle lit alors lui-même `settings.json` : le fichier doit exister, être seul dans son dossier et contenir exactement ces cinq réglages et la place de la fenêtre, que le compte rendu cite. Au second lancement, l'interface doit les afficher sans aucune action — widgets masqués, éclairage nocturne et « Ne pas déranger » activés, luminosité et volume réglés —, la fenêtre de l'explorateur doit s'ouvrir à la place enregistrée, et relire le fichier ne doit pas le modifier. Le fichier est ensuite retiré de la machine.
 9. **Dossier Documents absent** : le dossier Documents du compte de la machine est mis de côté — renommé, sans que son contenu soit touché —, de sorte que Windows n'en connaît plus aucun. Le `.exe` est alors lancé et ouvre ce dossier comme le ferait un utilisateur, depuis l'accueil de l'explorateur, le volet latéral puis l'icône du bureau : il doit afficher chaque fois « Dossier « Documents » introuvable », y compris après *Actualiser*, et la navigation doit continuer. Le contrôle constate ensuite lui-même, sur le disque, que le dossier est toujours absent, que rien n'est apparu à côté de lui et que le contenu mis de côté est intact, puis il remet le dossier en place.
 
 Le fichier `.exe` n'est publié que si toutes ces étapes réussissent. Les rapports et les captures d'écran sont joints à chaque exécution, dans l'artefact `auto-test` ; l'essentiel est résumé en tête de la page de l'exécution.
 
 ## Limites connues
 
-- Cet aperçu est une application qui *ressemble* à un environnement de bureau : il ne remplace pas le bureau de Windows. Seul son explorateur de fichiers est fonctionnel ; les autres applications (Navigateur, Paramètres, Terminal…) n'ouvrent qu'une fenêtre d'attente.
+- Cet aperçu est une application qui *ressemble* à un environnement de bureau : il ne remplace pas le bureau de Windows. Une seule application existe, l'explorateur de fichiers ; les dix-sept autres (Navigateur, Paramètres, Terminal…) sont seulement annoncées dans le menu Démarrer et n'ouvrent rien.
+- Le bureau et les fenêtres ont leurs limites :
+  - la touche Windows, `Alt` + `Tab` et `Ctrl` + `Échap` restent ceux de Windows : ils agissent sur Windows, pas sur les fenêtres d'Evolve, qui ont leurs propres raccourcis (voir [Raccourcis utiles](#raccourcis-utiles)) ;
+  - une fenêtre s'ancre sur la moitié gauche ou droite de l'écran : il n'y a ni ancrage par quart d'écran, ni proposition d'une seconde fenêtre pour l'autre moitié ;
+  - douze fenêtres au plus peuvent être ouvertes à la fois ; au-delà, l'ouverture est refusée et signalée ;
+  - les icônes du bureau sont fixes : elles ne se déplacent pas, et le contenu de votre dossier Bureau n'y est pas affiché — il se consulte dans l'explorateur ;
+  - le centre de notifications ne présente que des messages d'Evolve sur cette version : aucune application ne lui en envoie ;
+  - les gestes de l'auto-test sont injectés dans le moteur d'affichage, pas dans Windows : il éprouve ce que fait Evolve d'un geste reçu, non le trajet de ce geste depuis une vraie souris ou un vrai clavier. La façon dont Windows traite lui-même ces combinaisons de touches — `Alt` + `Maj` sert aussi, sur certains PC, à changer de disposition de clavier — n'a pas été observée sur une vraie machine. Le déplacement au doigt ou au stylet n'est éprouvé par aucun contrôle.
 - Les opérations de l'explorateur ont leurs limites :
   - il n'y a pas d'annulation (`Ctrl` + `Z`) : une opération ne se défait pas depuis Evolve. Un élément envoyé à la Corbeille se restaure depuis la Corbeille de Windows ; celle d'Evolve reste annoncée comme non disponible ;
   - sur un lecteur sans Corbeille (certaines clés USB, par exemple), ou pour un élément trop volumineux pour elle, rien ne peut être supprimé depuis Evolve : l'élément reste à sa place ;
@@ -228,10 +297,9 @@ Le fichier `.exe` n'est publié que si toutes ces étapes réussissent. Les rapp
   - la recherche ne porte que sur le dossier affiché, pas sur ses sous-dossiers ; il n'y a ni miniatures d'images, ni saisie d'un chemin au clavier ;
   - un lecteur qui met plus de deux secondes à répondre n'apparaît qu'après *Actualiser* ; si plusieurs lettres de lecteur désignent des serveurs injoignables, les lecteurs des lettres suivantes n'apparaissent qu'une fois que Windows a renoncé à joindre ces serveurs ;
   - un dossier personnel absent, puis remis en place pendant qu'Evolve fonctionne, doit réapparaître après *Actualiser* : ce retour est contrôlé par les tests automatiques, mais il ne l'est pas sur une vraie machine Windows, contrairement à l'absence de toute création de dossier ; s'il n'apparaît pas, fermez puis rouvrez Evolve.
-- Les fichiers « recommandés » du menu Démarrer et ceux que propose sa recherche restent des exemples fictifs, signalés comme tels ; seuls les dossiers personnels y mènent à un vrai dossier.
 - Les paramètres rapides sont retenus, mais restent visuels : ils ne règlent ni le Wi-Fi, ni le son, ni la luminosité de Windows.
 - Si Evolve est fermé en mode avion, quitter ce mode après le redémarrage réactive le Wi-Fi et le Bluetooth tous les deux, même si l'un d'eux était désactivé avant le mode avion : cet état antérieur n'est pas retenu.
-- Les fenêtres ouvertes, leur position et le dossier affiché par l'explorateur ne sont pas retenus d'un lancement à l'autre.
+- D'un lancement à l'autre, seule la place de la fenêtre de l'explorateur est retenue — position, taille, agrandissement. Les fenêtres ouvertes, leur nombre, leur ancrage sur une moitié de l'écran et le dossier affiché ne le sont pas : d'une fenêtre ancrée, c'est la place libre qu'elle avait auparavant qui est retenue.
 - L'interface est en français uniquement.
 - L'exécutable n'est pas signé (voir l'avertissement de Windows ci-dessus) et n'existe que pour Windows 64 bits.
 - Si Evolve est interrompu brutalement (gestionnaire des tâches, coupure de courant), des fichiers temporaires peuvent subsister dans `%TEMP%` (dossiers `Evolve-portable` et `ns….tmp`). Ils peuvent être supprimés à la main. Un réglage modifié dans la seconde qui précède l'interruption peut ne pas avoir été enregistré.
@@ -266,6 +334,8 @@ Les opérations sur les fichiers ne sont volontairement pas un service : elles n
 
 Renommer ou déplacer **sans jamais rien remplacer** n'existe pas dans Node.js : sa fonction `fs.rename` remplace le fichier qui porte déjà le nom d'arrivée, et vérifier d'abord que ce nom est libre laisse un instant pendant lequel un autre programme peut le prendre. Evolve demande donc l'opération directement au système, par un module natif d'une seule fonction ([`native/evolve_fs.c`](native/evolve_fs.c), environ 200 lignes de C) : sous Windows, `MoveFileExW` sans l'option de remplacement ni celle de copie ; sous Linux, pour le développement, `renameat2` avec `RENAME_NOREPLACE`. La vérification « ce nom est libre » et le déplacement ne font alors qu'une seule opération du système de fichiers. [`src/main/atomic-move.js`](src/main/atomic-move.js) charge ce module et traduit ses codes d'erreur ; s'il est introuvable, il n'existe aucun repli : renommer et déplacer sont refusés. La même vérification ([`src/main/selftest-no-replace.js`](src/main/selftest-no-replace.js)) éprouve le module à la compilation et l'application pendant son auto-test.
 
+Le bureau est découpé de façon que ses décisions se vérifient sans écran : l'ordre des fenêtres ([`js/wm/stack.js`](src/renderer/js/wm/stack.js)), leur géométrie — redimensionnement, ancrage, retour dans l'écran — ([`js/wm/geometry.js`](src/renderer/js/wm/geometry.js)), la place retenue ([`js/wm/placement.js`](src/renderer/js/wm/placement.js)), les raccourcis ([`js/shell/shortcuts.js`](src/renderer/js/shell/shortcuts.js)), les boutons de la barre des tâches ([`js/shell/taskbar-model.js`](src/renderer/js/shell/taskbar-model.js)) et le déplacement au clavier d'un élément à l'autre ([`js/core/spatial.js`](src/renderer/js/core/spatial.js)) sont des modules sans affichage, que les tests exécutent directement avec Node. Ce que l'utilisateur voit et manœuvre est éprouvé par l'auto-test, dans l'application elle-même : [`src/main/selftest-desktop.js`](src/main/selftest-desktop.js) mène les contrôles, [`src/main/selftest-input.js`](src/main/selftest-input.js) injecte les gestes et constate qu'ils sont reçus.
+
 L'emplacement des dossiers personnels est demandé au moteur par [`src/main/personal-folders.js`](src/main/personal-folders.js), qui ne lui pose que des questions sans effet sur le disque. Le moteur crée en effet le dossier Documents absent dès qu'il en obtient le chemin. Sous Windows, il ne l'obtient pas : le système vérifie d'abord que le dossier existe, et répond par une erreur s'il est absent. Sur les autres systèmes (développement), le chemin lui est donné sans vérification : la question n'est donc jamais posée, et Evolve désigne lui-même le dossier `Documents` du compte. Un emplacement obtenu n'est plus redemandé de la session ; seul un dossier resté introuvable l'est de nouveau, à chaque actualisation.
 
 ```text
@@ -274,12 +344,12 @@ native/          module natif : renommer ou déplacer sans jamais rien remplacer
 src/main/        application de bureau (Electron) : fenêtre, sécurité, chargement du module natif, auto-test
 src/services/    services : point d'accès, réglages (schéma, fichier, emplacement), consultation des dossiers, opérations sur les fichiers
 src/renderer/    interface : page, feuilles de style et modules JavaScript
-  js/core/       outils communs (DOM, formats, horloge, pictogrammes, accès aux services)
-  js/shell/      bureau, barre des tâches, menu Démarrer, panneaux, fenêtres de dialogue
-  js/wm/         gestionnaire de fenêtres
+  js/core/       outils communs (DOM, formats, horloge, pictogrammes, accès aux services, déplacement au clavier)
+  js/shell/      bureau, barre des tâches, menu Démarrer, recherche, raccourcis, panneaux, fenêtres de dialogue
+  js/wm/         gestionnaire de fenêtres : géométrie, ordre des fenêtres, ancrage, bascule, place retenue
   js/widgets/    widgets matériels (processeur, mémoire, carte graphique)
   js/apps/       applications (explorateur de fichiers : affichage, navigation, opérations)
-  js/data/       applications et contenus de démonstration (menu Démarrer, notifications)
+  js/data/       registre des applications, messages du centre de notifications
 scripts/         outils : aperçu, pictogrammes, vérifications de l'exécutable
 tests/           tests automatiques
 packaging/       icône de l'exécutable

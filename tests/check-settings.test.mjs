@@ -17,7 +17,11 @@ import { after, test } from 'node:test';
 import { fromRoot } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
-const { CHANGED_SETTINGS } = require('../src/main/selftest-settings.js');
+const { CHANGED_SETTINGS, PLACEMENT_SETTINGS, readPlacement, describePlacement } = require('../src/main/selftest-settings.js');
+const { SETTINGS } = require('../src/services/settings-schema.js');
+
+/** Emplacement que la fausse application enregistre pour la fenêtre de l'explorateur (voir fixtures/fake-app.mjs). */
+const MOVED = { 'explorerWindow.x': 2300, 'explorerWindow.y': 681, 'explorerWindow.width': 6200, 'explorerWindow.height': 4000 };
 
 const SCRIPT = fromRoot('scripts', 'check-settings.mjs');
 const FAKE_APP = fromRoot('tests', 'fixtures', 'fake-app.mjs');
@@ -66,13 +70,81 @@ test('réussite : réglages enregistrés par le premier lancement, retrouvés pa
   assert.match(output, /settings\.json enregistré \(\d+ octets\), seul dans son dossier/);
   assert.match(output, /quick\.nightLight = true/);
   assert.match(output, /quick\.brightness = 60/);
-  assert.match(output, /✔ Réglages conservés après redémarrage/);
+  // L'emplacement de la fenêtre de l'explorateur, lu dans le fichier, est cité.
+  assert.ok(output.includes("      fenêtre de l'explorateur déplacée — position (2300 ; 681), taille 6200 × 4000 centièmes de rem\n"), output);
+  assert.match(output, /✔ Réglages conservés après redémarrage — 5 réglages modifiés depuis l'interface et l'emplacement de la fenêtre de l'explorateur \(déplacée\), enregistrés dans /);
   assert.doesNotMatch(output, /✖/);
 
   // Les deux rapports d'auto-test et une copie du fichier des réglages sont conservés.
   assert.equal(readJson(path.join(outDir, '1-modification', 'result.json')).scenario, 'settings-write');
   assert.equal(readJson(path.join(outDir, '2-relance', 'result.json')).scenario, 'settings-read');
-  assert.deepEqual(readJson(path.join(outDir, 'settings.json')).values, CHANGED_SETTINGS);
+  assert.deepEqual(readJson(path.join(outDir, 'settings.json')).values, { ...CHANGED_SETTINGS, ...MOVED });
+});
+
+test('réussite : fenêtre agrandie faute de souris — l’agrandissement enregistré est cité comme tel', () => {
+  const { code, output, launches } = run('settings-maximized');
+  assert.equal(code, 0, output);
+  assert.deepEqual(launches, ['settings-write', 'settings-read']);
+  assert.ok(output.includes("      fenêtre de l'explorateur agrandie — position (1900 ; 481), taille 6200 × 4000 centièmes de rem, agrandie\n"), output);
+  assert.match(output, /l'emplacement de la fenêtre de l'explorateur \(agrandie\)/);
+});
+
+test('échec : l’emplacement de la fenêtre de l’explorateur n’est pas enregistré, ou fait d’une valeur refusée', () => {
+  const cases = {
+    'settings-no-placement': /emplacement de la fenêtre de l'explorateur non enregistré — aucun emplacement n'est retenu pour la fenêtre de l'explorateur \(largeur ou hauteur nulle\)\.\n {2}constaté : \{\}/,
+    'settings-empty-placement': /emplacement de la fenêtre de l'explorateur non enregistré — aucun emplacement n'est retenu[^\n]*\n {2}constaté : \{[^\n]*"explorerWindow\.height":0/,
+    'settings-bad-placement': /emplacement de la fenêtre de l'explorateur non enregistré — valeur refusée pour « explorerWindow\.x » : 12\.5\./,
+  };
+  for (const [mode, message] of Object.entries(cases)) {
+    const { code, output, launches } = run(mode);
+    assert.equal(code, 1, output);
+    assert.match(output, message);
+    assert.match(output, /ne doit pas être distribué/);
+    assert.deepEqual(launches, ['settings-write'], `${mode} : inutile de relancer`);
+  }
+});
+
+test('emplacement relevé dans des réglages : chaque valeur est contrôlée, et une taille est exigée', () => {
+  assert.deepEqual([...PLACEMENT_SETTINGS], ['explorerWindow.x', 'explorerWindow.y', 'explorerWindow.width', 'explorerWindow.height', 'explorerWindow.maximized']);
+  // Ce sont de vrais réglages, et tous ceux de la fenêtre de l'explorateur.
+  for (const key of PLACEMENT_SETTINGS) assert.ok(Object.hasOwn(SETTINGS, key), key);
+  assert.deepEqual(Object.keys(SETTINGS).filter((key) => key.startsWith('explorerWindow.')), [...PLACEMENT_SETTINGS]);
+  // Aucun réglage n'est à la fois comparé à une valeur fixe et tenu pour dépendant de l'écran.
+  for (const key of Object.keys(CHANGED_SETTINGS)) assert.equal(PLACEMENT_SETTINGS.includes(key), false, key);
+
+  // Un réglage resté à sa valeur par défaut peut être absent du fichier : il vaut cette valeur.
+  assert.deepEqual(readPlacement(MOVED), { ok: true, placement: { x: 2300, y: 681, width: 6200, height: 4000, maximized: false } });
+  assert.deepEqual(readPlacement({ ...MOVED, 'explorerWindow.maximized': true }).placement.maximized, true);
+  // Position nulle ou négative : admise (une fenêtre peut dépasser à gauche).
+  assert.equal(readPlacement({ 'explorerWindow.x': -4000, 'explorerWindow.width': 6200, 'explorerWindow.height': 4000 }).ok, true);
+  // Les autres réglages ne comptent pas.
+  assert.equal(readPlacement({ ...CHANGED_SETTINGS, ...MOVED }).ok, true);
+
+  // Sans taille : aucun emplacement.
+  for (const values of [{}, null, undefined, CHANGED_SETTINGS, { ...MOVED, 'explorerWindow.width': 0 }, { 'explorerWindow.x': 10, 'explorerWindow.y': 10 }]) {
+    const found = readPlacement(values);
+    assert.equal(found.ok, false, JSON.stringify(values));
+    assert.match(found.problem, /^aucun emplacement n'est retenu/);
+  }
+  // Valeur d'une autre nature, non entière ou hors bornes : refusée, et nommée.
+  for (const [key, value] of [
+    ['explorerWindow.x', '2300'],
+    ['explorerWindow.y', 12.5],
+    ['explorerWindow.width', -1],
+    ['explorerWindow.height', 100001],
+    ['explorerWindow.x', -100001],
+    ['explorerWindow.maximized', 'true'],
+    ['explorerWindow.maximized', 1],
+    ['explorerWindow.width', null],
+    ['explorerWindow.height', Number.NaN],
+  ]) {
+    const found = readPlacement({ ...MOVED, [key]: value });
+    assert.equal(found.ok, false, `${key} = ${String(value)}`);
+    assert.ok(found.problem.startsWith(`valeur refusée pour « ${key} » : `), found.problem);
+  }
+
+  assert.equal(describePlacement({ x: 2300, y: 681, width: 6200, height: 4000, maximized: false }), 'position (2300 ; 681), taille 6200 × 4000 centièmes de rem');
+  assert.equal(describePlacement({ x: -50, y: 0, width: 6200, height: 4000, maximized: true }), 'position (-50 ; 0), taille 6200 × 4000 centièmes de rem, agrandie');
 });
 
 test('par défaut : dossier temporaire neuf, entièrement retiré à la fin', () => {
@@ -85,7 +157,7 @@ test('par défaut : dossier temporaire neuf, entièrement retiré à la fin', ()
   const failed = run('settings-read-fails');
   assert.equal(failed.code, 1, failed.output);
   assert.deepEqual(readdirSync(failed.temp), [], 'rien ne reste après un échec');
-  assert.deepEqual(readJson(path.join(failed.outDir, 'settings.json')).values, CHANGED_SETTINGS, 'le fichier est tout de même conservé pour examen');
+  assert.deepEqual(readJson(path.join(failed.outDir, 'settings.json')).values, { ...CHANGED_SETTINGS, ...MOVED }, 'le fichier est tout de même conservé pour examen');
 });
 
 test('--settings-dir : dossier inexistant créé puis retiré ; dossier existant conservé avec son contenu', () => {
@@ -239,6 +311,8 @@ test('sur GitHub Actions : résumé et annotation, en réussite comme en échec'
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
   assert.match(ok.stdout, /^::notice title=Réglages et redémarrage — node[^:]*::Réglages conservés après redémarrage/m);
   assert.match(readFileSync(summary, 'utf8'), /### ✅ Réglages et redémarrage : réussi[\s\S]*\| `quick\.volume` \| `35` \|/);
+  // L'emplacement de la fenêtre figure au résumé, valeur par valeur, puis en clair.
+  assert.match(readFileSync(summary, 'utf8'), /\| `explorerWindow\.x` \| `2300` \|\n\| `explorerWindow\.y` \| `681` \|\n\| `explorerWindow\.width` \| `6200` \|\n\| `explorerWindow\.height` \| `4000` \|\n\| `explorerWindow\.maximized` \| `false` \|\n\nEmplacement retrouvé : fenêtre de l'explorateur déplacée — position \(2300 ; 681\), taille 6200 × 4000 centièmes de rem\.\n/);
   // Chaque lancement publie aussi son propre résultat, sous un titre qui le distingue de l'auto-test complet.
   assert.deepEqual(
     [...ok.stdout.matchAll(/^::notice title=([^:]+?) — node[^:]*::/gm)].map((match) => match[1]),

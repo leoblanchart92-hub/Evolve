@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { appendFileSync, constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { rename as renameAsync } from 'node:fs/promises';
+import { lstat as lstatAsync, rename as renameAsync } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -19,7 +19,8 @@ import { fromRoot, loadNativeMove } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
 const { runSelfTest, countColors, DEFAULT_TIMINGS, DEFAULT_SCENARIO, MIN_CAPTURE_COLORS, WALLPAPER } = require('../src/main/selftest.js');
-const { CHANGED_SETTINGS, EXPECTED_SETTINGS } = require('../src/main/selftest-settings.js');
+const { CHANGED_SETTINGS, EXPECTED_SETTINGS, PLACEMENT_SETTINGS, PLACEMENT_CHECKS, shiftInside } = require('../src/main/selftest-settings.js');
+const desktopTest = require('../src/main/selftest-desktop.js');
 const documentsTest = require('../src/main/selftest-documents.js');
 const explorerTest = require('../src/main/selftest-explorer.js');
 const noReplaceTest = require('../src/main/selftest-no-replace.js');
@@ -36,7 +37,7 @@ after(() => rmSync(workDir, { recursive: true, force: true }));
 const nativeMove = loadNativeMove();
 
 /** Durées très courtes : les tests ne patientent pas. */
-const FAST = { total: 5_000, ready: 80, check: 80, response: 1_000, poll: 5, settle: 0 };
+const FAST = { total: 5_000, ready: 80, check: 80, response: 1_000, poll: 5, settle: 0, input: 0, probe: 80 };
 
 let sequence = 0;
 const freshDir = () => path.join(workDir, `essai-${(sequence += 1)}`);
@@ -168,24 +169,47 @@ function simulateExplorer({ bin, after = () => {} }) {
 
 let windows = 0;
 
+/** Code de page par lequel l'auto-test du bureau relève, après chaque pression de Tab, l'élément qui détient le clavier. */
+const TAB_PROBE = 'window.__evolveStops.indexOf(el)';
+/** Nombre d'éléments que Tab parcourt dans la fenêtre imitée par la fausse page. */
+const TAB_STOPS = 5;
+
 /**
  * Fausse fenêtre d'application. Les gestes de l'auto-test des opérations y ont
  * leur effet sur le disque (voir `simulateExplorer`) ; le reste dépend de `answer`.
+ *
+ * Elle reçoit les gestes de la souris et du clavier injectés par l'auto-test
+ * du bureau (`sendInputEvent`) et les consigne dans `webContents.inputs`. Comme
+ * dans une fenêtre conforme, Tab y passe d'un élément au suivant, en boucle,
+ * et Maj + Tab au précédent.
+ *
  * @param {(code: string, webContents: EventEmitter) => unknown} [answer]  réponse de la page au code exécuté
  * @param {object} [options]
  * @param {(gesture: string, state: object, dialog: string|null) => void} [options.after]  voir `simulateExplorer`
+ * @param {boolean} [options.input]  faux : la fenêtre ne sait pas recevoir de gestes injectés
  */
-function createWindow(answer = () => true, { capturePage, after } = {}) {
+function createWindow(answer = () => true, { capturePage, after, input = true } = {}) {
   const webContents = new EventEmitter();
   /** Fausse Corbeille de cette fenêtre : celle que l'auto-test examine quand il se croit sous Windows. */
   const recycleBin = path.join(workDir, `corbeille-${(windows += 1)}`);
   mkdirSync(recycleBin);
   const simulate = simulateExplorer({ bin: recycleBin, after });
   webContents.executed = [];
+  webContents.inputs = [];
+  let stop = 0;
+  if (input) {
+    webContents.sendInputEvent = (event) => {
+      webContents.inputs.push(event);
+      const held = event.modifiers ?? [];
+      if (event.type === 'keyDown' && event.keyCode === 'Tab' && !held.includes('control')) stop = (stop + (held.includes('shift') ? TAB_STOPS - 1 : 1)) % TAB_STOPS;
+    };
+  }
   webContents.executeJavaScript = async (code) => {
     webContents.executed.push(code);
     simulate(code);
-    return answer(code, webContents);
+    const reply = answer(code, webContents);
+    // L'élément qui détient le clavier : dans la fenêtre, au rang où les pressions de Tab l'ont mené.
+    return reply === true && code.includes(TAB_PROBE) ? { lieu: 'dedans', rang: stop } : reply;
   };
   return {
     webContents,
@@ -214,8 +238,12 @@ async function run(win, timings = FAST, options = {}) {
   return { code, report, outDir };
 }
 
-/** Nombre de contrôles du scénario complet. */
-const FULL_CHECKS = 54;
+/**
+ * Nombre de contrôles du scénario complet, quand la page reçoit les gestes de
+ * la souris et du clavier. Dix d'entre eux en dépendent : sans eux, ils ne
+ * sont pas menés (voir selftest-desktop.js).
+ */
+const FULL_CHECKS = 73;
 /** Sous Windows, trois de plus : dossier protégé, contenu de la Corbeille, script réellement exécuté. */
 const WINDOWS_CHECKS = FULL_CHECKS + 3;
 
@@ -230,11 +258,12 @@ const CAPTURES = [
   '07-nom-deja-pris.png',
   '08-corbeille.png',
   '09-fenetres.png',
+  '10-bascule-fenetres.png',
 ];
 
 const failed = (report) => report.checks.filter((item) => !item.ok).map((item) => item.name);
 
-test('tout est conforme : code 0, rapport complet, neuf captures', async () => {
+test('tout est conforme : code 0, rapport complet, dix captures', async () => {
   const win = createWindow();
   const { code, report, outDir } = await run(win);
 
@@ -304,10 +333,11 @@ test('un contrôle en échec : code 1, valeur observée consignée, les autres c
 
 test('seule la valeur `true` est une réussite', async () => {
   for (const value of [false, null, undefined, 1, 'true', {}, []]) {
-    const win = createWindow((code) => (code.includes('.desktop-icon') ? value : true));
+    // Le contrôle des icônes du bureau est le seul à compter celles que Tab atteint.
+    const win = createWindow((code) => (code.includes('icon.tabIndex === 0') ? value : true));
     const { code, report } = await run(win);
     assert.equal(code, 1, `valeur ${JSON.stringify(value)}`);
-    assert.deepEqual(failed(report), ['icônes du bureau']);
+    assert.deepEqual(failed(report), ['icônes du bureau, chaque nom sur une seule ligne']);
   }
 });
 
@@ -888,8 +918,12 @@ test('déplacement sans remplacement : sans cette fonction, ou avec une fonction
   assert.ok(replacing.report.noReplace.races.lost > 0);
 
   // L'ancienne façon de faire — vérifier que le nom est libre, puis renommer : démasquée par les courses.
+  // La vérification est demandée au système comme le renommage, sans bloquer : les déplacements simultanés d'une
+  // course ont ainsi tous constaté que le nom est libre avant que le premier renommage soit demandé. Avec une
+  // vérification immédiate (existsSync), l'issue dépendait de la charge de la machine : un renommage pouvait
+  // s'achever avant la vérification suivante, et la course, par chance, ne rien révéler.
   const checkThenRename = async (from, to) => {
-    if (existsSync(to)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+    if (await lstatAsync(to).then(() => true, () => false)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
     await renameAsync(from, to);
   };
   const racy = await run(createWindow(), FAST, { moveNoReplace: checkThenRename, noReplaceRounds: 4 });
@@ -1017,11 +1051,12 @@ test('explorateur : dossier d’essai impossible à créer — erreur consignée
   assert.match(report.errors[0], /^dossier d'essai de l'explorateur impossible à créer : /);
   assert.deepEqual(failed(report), []);
   const names = report.checks.map((item) => item.name);
-  // Les contrôles qui précèdent le dossier d'essai ont eu lieu, ceux des fenêtres aussi.
+  // Les contrôles qui précèdent le dossier d'essai ont eu lieu, ceux du bureau et des fenêtres aussi.
   assert.ok(names.includes(EXPLORER_CHECKS[2]));
   assert.ok(!names.includes(EXPLORER_CHECKS[4]));
-  assert.ok(names.includes('les fenêtres se ferment'));
+  for (const name of Object.values(desktopTest.CHECKS)) assert.ok(names.includes(name), name);
   assert.equal(report.captures.includes('06-explorateur.png'), false);
+  assert.equal(report.captures.includes('09-fenetres.png'), true);
 });
 
 test('explorateur : chaque exécution reçoit un dossier d’essai neuf ; un ancien essai ne fausse rien', async () => {
@@ -1743,38 +1778,166 @@ test('scénarios des réglages : les valeurs attendues sont de vrais réglages, 
   // Interrupteurs et curseurs, bureau et paramètres rapides : chaque nature de réglage est couverte.
   const kinds = new Set(Object.keys(CHANGED_SETTINGS).map((key) => `${key.split('.')[0]}:${SETTINGS[key].type}`));
   assert.deepEqual([...kinds].sort(), ['desktop:boolean', 'quick:boolean', 'quick:integer']);
-  assert.deepEqual(EXPECTED_SETTINGS, { ...defaults, ...CHANGED_SETTINGS });
-  assert.deepEqual(Object.keys(EXPECTED_SETTINGS), Object.keys(SETTINGS));
+  // Tous les réglages sont attendus à une valeur exacte, sauf l'emplacement de la fenêtre de l'explorateur :
+  // ses valeurs dépendent de l'écran, et sont comparées à la fenêtre elle-même.
+  const placement = Object.fromEntries(PLACEMENT_SETTINGS.map((key) => [key, defaults[key]]));
+  assert.deepEqual({ ...EXPECTED_SETTINGS, ...placement }, { ...defaults, ...CHANGED_SETTINGS });
+  assert.deepEqual([...Object.keys(EXPECTED_SETTINGS), ...PLACEMENT_SETTINGS], Object.keys(SETTINGS));
+  for (const key of PLACEMENT_SETTINGS) assert.equal(Object.hasOwn(EXPECTED_SETTINGS, key), false, key);
 });
 
-test('scénario « settings-write » : réglages modifiés par des gestes dans l’interface, puis confirmés par le service', async () => {
-  const win = createWindow();
+/** Contrôles du premier lancement qui précèdent le placement de la fenêtre. */
+const SETTINGS_WRITE_CHECKS = [
+  "l'interface a démarré",
+  'premier lancement : chaque réglage a sa valeur par défaut',
+  'les réglages sont enregistrés dans un fichier',
+  "le panneau des paramètres rapides s'ouvre",
+  "l'interface affiche les réglages modifiés",
+  'le service des réglages a reçu chaque changement',
+];
+
+/** Zone de travail d'une fenêtre de 1600 × 900, et place qu'y prend l'explorateur à sa première ouverture. */
+const WORK_AREA = { x: 0, y: 0, w: 1600, h: 852 };
+const OPENED_AT = { x: 304, y: 77, w: 992, h: 640 };
+
+/**
+ * Réponses d'une page où la fenêtre de l'explorateur occupe `rect` dans la
+ * zone de travail `area` ; les autres questions vont à `answer`.
+ */
+const placed = (rect = OPENED_AT, area = WORK_AREA, answer = () => true) => (script, webContents) => {
+  if (script.includes('return (pRect(pWin()));')) return rect;
+  if (script.includes('return (pArea());')) return area;
+  return answer(script, webContents);
+};
+
+test('scénario « settings-write » : réglages modifiés par des gestes dans l’interface, fenêtre déplacée à la souris, le tout confirmé par le service', async () => {
+  const win = createWindow(placed());
   const { code, report, outDir } = await run(win, FAST, { scenario: 'settings-write' });
   assert.equal(code, 0);
   assert.equal(report.scenario, 'settings-write');
-  assert.deepEqual(report.checks.map((item) => item.name), [
-    "l'interface a démarré",
-    'premier lancement : chaque réglage a sa valeur par défaut',
-    'les réglages sont enregistrés dans un fichier',
-    "le panneau des paramètres rapides s'ouvre",
-    "l'interface affiche les réglages modifiés",
-    'le service des réglages a reçu chaque changement',
-  ]);
-  assert.deepEqual(report.captures, ['01-reglages-modifies.png']);
-  assert.deepEqual(readdirSync(outDir).sort(), ['01-reglages-modifies.png', 'result.json']);
+  assert.deepEqual(report.checks.map((item) => item.name), [...SETTINGS_WRITE_CHECKS, PLACEMENT_CHECKS.untouched, PLACEMENT_CHECKS.moved, PLACEMENT_CHECKS.stored]);
+  assert.deepEqual(report.captures, ['01-reglages-modifies.png', '02-fenetre-placee.png']);
+  assert.deepEqual(readdirSync(outDir).sort(), ['01-reglages-modifies.png', '02-fenetre-placee.png', 'result.json']);
+  assert.deepEqual(report.input, { souris: true, clavier: true, pageActive: true });
+  assert.deepEqual(report.warnings, []);
 
-  const { executed } = win.webContents;
+  const { executed, inputs } = win.webContents;
   for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
   // Des gestes d'utilisateur — clics et curseurs — et non des appels directs au service.
   const actions = executed.filter((script) => /\.click\(\)|dispatchEvent/.test(script));
-  assert.equal(actions.length, 6);
-  for (const needle of ['.tb-tray', 'data-setting="nightLight"', 'data-setting="doNotDisturb"', "input.value = '60'", "input.value = '35'", '.tb-widgets']) {
+  assert.equal(actions.length, 8);
+  for (const needle of ['data-setting="nightLight"', 'data-setting="doNotDisturb"', "input.value = '60'", "input.value = '35'", '.tb-widgets', `.tb-app[data-app="explorer"]`]) {
     assert.equal(actions.filter((script) => script.includes(needle)).length, 1, needle);
   }
+  // Le panneau des paramètres rapides est ouvert, puis refermé avant d'ouvrir l'explorateur.
+  assert.equal(actions.filter((script) => script.includes('.tb-tray')).length, 2);
+  assert.ok(!executed.some((script) => /services\.call\('settings', '(?:set|reset)'/.test(script)), 'aucune écriture directe');
+
+  // La fenêtre est déplacée par un vrai glissement : bouton enfoncé sur la barre de titre, tenu, puis relâché plus loin.
+  const mouse = inputs.filter((event) => event.type.startsWith('mouse'));
+  const down = mouse.findIndex((event) => event.type === 'mouseDown');
+  const up = mouse.findIndex((event) => event.type === 'mouseUp');
+  assert.ok(down > 0 && up > down + 2, 'appui, déplacement, relâchement');
+  assert.ok(mouse.slice(down + 1, up).every((event) => event.type === 'mouseMove' && event.modifiers.includes('leftButtonDown')));
+  // Saisie dans la barre de titre (14 points sous le haut de la fenêtre, à 260 points de son bord gauche), lâchée 64 points à droite et 32 plus bas.
+  assert.deepEqual({ x: mouse[down].x, y: mouse[down].y }, { x: 304 + 260, y: 77 + 14 });
+  assert.deepEqual({ x: mouse[up].x, y: mouse[up].y }, { x: 304 + 260 + 64, y: 77 + 14 + 32 });
+  assert.equal(mouse.filter((event) => event.type === 'mouseDown').length, 1, 'un seul geste');
+  // Rien n'est retenu avant le geste ; après, la fenêtre puis le service doivent en être à la place exacte visée.
+  const moved = JSON.stringify({ x: 368, y: 109, w: 992, h: 640 });
+  assert.ok(executed.some((script) => script.includes(`stored.units?.w === 0 && stored.units?.h === 0 && stored.maximized === false`)));
+  assert.ok(executed.some((script) => script.includes(`!el.classList.contains('is-maximized') && pSame(pRect(el), ${moved}, 0)`)), 'au pixel près');
+  assert.ok(executed.some((script) => script.includes(`stored.kept === true && stored.maximized === false && pSame(stored.pixels, ${moved}, 1)`)));
+});
+
+test('scénario « settings-write » : la fenêtre est déplacée du côté où elle reste entière à l’écran', async () => {
+  // Plus de place à droite ni en bas : vers la gauche, sans descendre.
+  const cornered = { x: 700, y: 300, w: 900, h: 552 };
+  const win = createWindow(placed(cornered));
+  const { code, report } = await run(win, FAST, { scenario: 'settings-write' });
+  assert.equal(code, 0);
+  assert.deepEqual(report.warnings, []);
+  const mouse = win.webContents.inputs.filter((event) => event.type.startsWith('mouse'));
+  const down = mouse.find((event) => event.type === 'mouseDown');
+  const up = mouse.find((event) => event.type === 'mouseUp');
+  assert.deepEqual({ x: up.x - down.x, y: up.y - down.y }, { x: -64, y: 0 });
+  assert.ok(win.webContents.executed.some((script) => script.includes(`pSame(stored.pixels, ${JSON.stringify({ x: 636, y: 300, w: 900, h: 552 })}, 1)`)));
+
+  // Calcul du déplacement : vers la droite et le bas s'il y a la place, sinon vers la gauche, sinon du peu qui reste — jamais hors de la zone, jamais vers le haut.
+  const area = { w: 1600, h: 852 };
+  assert.deepEqual(shiftInside(OPENED_AT, area), { dx: 64, dy: 32 });
+  assert.deepEqual(shiftInside(cornered, area), { dx: -64, dy: 0 });
+  assert.deepEqual(shiftInside({ x: 1000, y: 0, w: 580, h: 830 }, area), { dx: -64, dy: 22 });
+  assert.deepEqual(shiftInside({ x: 20, y: 10, w: 920, h: 530 }, { w: 960, h: 552 }), { dx: 20, dy: 12 }, 'le peu de place à droite');
+  assert.deepEqual(shiftInside({ x: 30, y: 10, w: 920, h: 530 }, { w: 960, h: 552 }), { dx: -30, dy: 12 }, 'le peu de place à gauche');
+  assert.deepEqual(shiftInside({ x: 0, y: 0, w: 960, h: 552 }, { w: 960, h: 552 }), { dx: 0, dy: 0 });
+  assert.deepEqual(shiftInside({ x: -40, y: -10, w: 1100, h: 700 }, { w: 960, h: 552 }), { dx: 0, dy: 0 }, 'fenêtre plus grande que la zone');
+  assert.deepEqual(shiftInside(null, null), { dx: 0, dy: 0 });
+  for (const rect of [OPENED_AT, cornered, { x: 1000, y: 0, w: 580, h: 830 }, { x: 3, y: 840, w: 1590, h: 12 }]) {
+    const { dx, dy } = shiftInside(rect, area);
+    assert.ok(rect.x + dx >= 0 && rect.x + rect.w + dx <= area.w && dy >= 0 && rect.y + rect.h + dy <= area.h, JSON.stringify(rect));
+  }
+});
+
+test('scénario « settings-write », fenêtre sans place autour d’elle : elle n’est pas sortie de l’écran, mais agrandie — et le rapport le dit', async () => {
+  const win = createWindow(placed({ x: 0, y: 0, w: 1600, h: 852 }));
+  const { code, report } = await run(win, FAST, { scenario: 'settings-write' });
+  assert.equal(code, 0);
+  assert.deepEqual(report.checks.map((item) => item.name), [...SETTINGS_WRITE_CHECKS, PLACEMENT_CHECKS.untouched, PLACEMENT_CHECKS.maximized, PLACEMENT_CHECKS.stored]);
+  // La souris est bien reçue : ce n'est pas elle qui manque.
+  assert.equal(report.input.souris, true);
+  assert.equal(report.warnings.length, 1);
+  assert.match(report.warnings[0], /^fenêtre de l'explorateur non déplacée : sans place à sa droite, à sa gauche ni au-dessous, elle ne peut être déplacée sans sortir de la zone de travail\. Elle a été agrandie depuis son menu/);
+  assert.equal(win.webContents.inputs.some((event) => event.type === 'mouseDown'), false, 'aucun glissement');
+});
+
+test('scénario « settings-write » sans souris : la fenêtre est agrandie depuis son menu, et le rapport dit ce qui n’a pas été vérifié', async () => {
+  const win = createWindow(placed(), { input: false });
+  const { code, report } = await run(win, FAST, { scenario: 'settings-write' });
+  assert.equal(code, 0);
+  assert.deepEqual(report.checks.map((item) => item.name), [...SETTINGS_WRITE_CHECKS, PLACEMENT_CHECKS.untouched, PLACEMENT_CHECKS.maximized, PLACEMENT_CHECKS.stored]);
+  assert.equal(report.checks.some((item) => item.name === PLACEMENT_CHECKS.moved), false, 'un déplacement non fait n’est pas compté');
+  assert.deepEqual(report.input, { souris: false, clavier: false, pageActive: false });
+  assert.equal(report.warnings.length, 1);
+  assert.match(report.warnings[0], /^fenêtre de l'explorateur non déplacée : la page ne reçoit pas la souris injectée\. Elle a été agrandie depuis son menu/);
+  assert.deepEqual(report.captures, ['01-reglages-modifies.png', '02-fenetre-placee.png']);
+
+  const { executed } = win.webContents;
+  for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
+  assert.ok(executed.some((script) => script.endsWith(`dMenuPick('Agrandir'); })()`)), 'commande « Agrandir » du menu de la fenêtre');
+  // La fenêtre doit occuper toute la zone de travail.
+  assert.ok(executed.some((script) => script.includes(`el.classList.contains('is-maximized') && pSame(pRect(el), ${JSON.stringify({ x: 0, y: 0, w: 1600, h: 852 })})`)));
+  // Retenus : l'agrandissement, et la place que la fenêtre retrouvera une fois restaurée — celle qu'elle avait.
+  assert.ok(executed.some((script) => script.includes(`stored.kept === true && stored.maximized === true && pSame(stored.pixels, ${JSON.stringify(OPENED_AT)}, 1)`)));
   assert.ok(!executed.some((script) => /services\.call\('settings', '(?:set|reset)'/.test(script)), 'aucune écriture directe');
 });
 
-test('scénario « settings-read » : aucune modification, seulement des constats et l’ouverture du panneau', async () => {
+test('scénario « settings-write » : une fenêtre qui ne prend pas la place demandée, ou un emplacement non reçu par le service, fait échouer', async () => {
+  // Le déplacement n'a pas lieu : le contrôle échoue avec la place attendue, et l'enregistrement n'est pas examiné.
+  const still = { attendu: { x: 368, y: 109, w: 992, h: 640 }, fenetre: OPENED_AT };
+  const stuck = createWindow(placed(OPENED_AT, WORK_AREA, (script) => (script.includes(`!el.classList.contains('is-maximized') && pSame(pRect(el), `) ? still : true)));
+  const first = await run(stuck, FAST, { scenario: 'settings-write' });
+  assert.equal(first.code, 1);
+  assert.deepEqual(failed(first.report), [PLACEMENT_CHECKS.moved]);
+  assert.deepEqual(first.report.checks.find((item) => !item.ok).value, still);
+  assert.equal(first.report.checks.some((item) => item.name === PLACEMENT_CHECKS.stored), false);
+
+  // Le service n'a rien reçu.
+  const nothing = { attendu: { x: 368, y: 109, w: 992, h: 640 }, retenu: { units: { x: 0, y: 0, w: 0, h: 0 }, maximized: false, kept: false } };
+  const deaf = createWindow(placed(OPENED_AT, WORK_AREA, (script) => (script.includes('stored.kept === true && stored.maximized === false') ? nothing : true)));
+  const second = await run(deaf, FAST, { scenario: 'settings-write' });
+  assert.equal(second.code, 1);
+  assert.deepEqual(failed(second.report), [PLACEMENT_CHECKS.stored]);
+
+  // Un emplacement déjà retenu avant tout geste (ouvrir l'explorateur aurait écrit) : échec, et le geste n'est pas tenté.
+  const early = createWindow(placed(OPENED_AT, WORK_AREA, (script) => (script.includes('stored.units?.w === 0') ? { retenu: { units: { x: 1900, y: 481, w: 6200, h: 4000 } } } : true)));
+  const third = await run(early, FAST, { scenario: 'settings-write' });
+  assert.equal(third.code, 1);
+  assert.deepEqual(failed(third.report), [PLACEMENT_CHECKS.untouched]);
+  assert.equal(early.webContents.inputs.length, 0, 'aucun geste injecté');
+});
+
+test('scénario « settings-read » : aucune modification — des constats, l’ouverture du panneau, puis celle de l’explorateur', async () => {
   const win = createWindow();
   const { code, report } = await run(win, FAST, { scenario: 'settings-read' });
   assert.equal(code, 0);
@@ -1785,19 +1948,44 @@ test('scénario « settings-read » : aucune modification, seulement des constat
     'le service des réglages restitue les valeurs enregistrées',
     'le fichier des réglages a été relu sans incident',
     "le panneau des paramètres rapides s'ouvre",
+    PLACEMENT_CHECKS.restored,
   ]);
-  assert.deepEqual(report.captures, ['01-reglages-restaures.png']);
+  assert.deepEqual(report.captures, ['01-reglages-restaures.png', '02-fenetre-retrouvee.png']);
+  assert.equal(report.input, null, 'aucun geste de souris ni de clavier dans ce lancement');
 
-  const { executed } = win.webContents;
+  const { executed, inputs } = win.webContents;
   for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
+  // Ni geste injecté, ni événement fabriqué, ni saisie, ni écriture directe : la fenêtre n'est ni déplacée ni agrandie.
+  assert.deepEqual(inputs, []);
   assert.ok(!executed.some((script) => /dispatchEvent|\.value = |services\.call\('settings', '(?:set|reset)'/.test(script)), 'aucun réglage touché');
+  // Trois clics seulement : le panneau ouvert, puis refermé, puis l'explorateur ouvert depuis la barre des tâches.
   const clicks = executed.filter((script) => script.includes('.click()'));
-  assert.equal(clicks.length, 1);
-  assert.match(clicks[0], /\.tb-tray/);
-  // Le constat précède toute action : l'ouverture du panneau vient en dernier.
+  assert.deepEqual(clicks.map((script) => (script.includes('.tb-tray') ? 'panneau' : script.includes(`.tb-app[data-app="explorer"]`) ? 'explorateur' : 'autre')), ['panneau', 'panneau', 'explorateur']);
+  // Le constat précède toute action : l'ouverture du panneau vient après le dernier contrôle des réglages.
   const firstClick = executed.findIndex((script) => script.includes('.click()'));
   const lastSettingsCheck = executed.findLastIndex((script) => script.includes("services.call('settings', 'state')"));
   assert.ok(firstClick > lastSettingsCheck);
+
+  // La place attendue de la fenêtre vient du service des réglages, convertie pour cet écran ; elle est comparée à la fenêtre.
+  const restored = executed.filter((script) => script.includes('if (stored.kept !== true) return'));
+  assert.equal(restored.length >= 1, true);
+  assert.ok(restored[0].includes(`el.classList.contains('is-maximized') && pSame(rect, { x: 0, y: 0, w: area.w, h: area.h })`));
+  assert.ok(restored[0].includes(`!el.classList.contains('is-maximized') && pSame(rect, stored.pixels)`));
+});
+
+test('scénario « settings-read » : une fenêtre rouverte ailleurs, ou sans emplacement retenu, fait échouer', async () => {
+  const elsewhere = { attendu: { units: { x: 2300, y: 681, w: 6200, h: 4000 }, pixels: { x: 368, y: 109, w: 992, h: 640 }, maximized: false, kept: true }, fenetre: { x: 304, y: 77, w: 992, h: 640 }, agrandie: false };
+  const moved = createWindow((script) => (script.includes('if (stored.kept !== true) return') ? elsewhere : true));
+  const first = await run(moved, FAST, { scenario: 'settings-read' });
+  assert.equal(first.code, 1);
+  assert.deepEqual(failed(first.report), [PLACEMENT_CHECKS.restored]);
+  assert.deepEqual(first.report.checks.find((item) => !item.ok).value, elsewhere);
+
+  const none = { 'aucun emplacement retenu': { units: { x: 0, y: 0, w: 0, h: 0 }, maximized: false, kept: false } };
+  const forgotten = createWindow((script) => (script.includes('if (stored.kept !== true) return') ? none : true));
+  const second = await run(forgotten, FAST, { scenario: 'settings-read' });
+  assert.equal(second.code, 1);
+  assert.deepEqual(second.report.checks.find((item) => !item.ok).value, none);
 });
 
 test('scénarios des réglages : un réglage non retrouvé fait échouer le test, valeur observée à l’appui', async () => {
@@ -1860,7 +2048,8 @@ test('scénario « documents-missing » : le dossier absent est ouvert par trois
   const { executed } = win.webContents;
   for (const script of executed) assert.doesNotThrow(() => new vm.Script(script), `code invalide : ${script.slice(0, 120)}…`);
 
-  // Les gestes d'un utilisateur, dans l'ordre : explorateur, tuile, précédent, volet, « Ce PC », icône du bureau, actualiser, autre dossier.
+  // Les gestes d'un utilisateur, dans l'ordre : explorateur, tuile, précédent, volet, icône du bureau (la fenêtre
+  // affiche déjà le dossier), « Ce PC », icône du bureau (plus aucune fenêtre ne l'affiche), actualiser, autre dossier.
   const gestures = executed
     .map((script) => script.slice(script.indexOf(documentsTest.NOTHING_CREATED) + 1 || 0))
     .map((script) => {
@@ -1875,11 +2064,14 @@ test('scénario « documents-missing » : le dossier absent est ouvert par trois
       return null;
     })
     .filter(Boolean);
-  assert.deepEqual(gestures, ['explorateur', 'tuile', 'précédent', 'volet', 'ce pc', 'bureau', 'actualiser', 'autre dossier']);
+  assert.deepEqual(gestures, ['explorateur', 'tuile', 'précédent', 'volet', 'bureau', 'ce pc', 'bureau', 'actualiser', 'autre dossier']);
 
-  // Le message attendu est contrôlé après chacun des trois chemins, puis après l'actualisation.
+  // Le message attendu est contrôlé après chacun des trois chemins — deux fois pour l'icône du bureau —, puis après l'actualisation.
   const expectations = executed.filter((script) => script.includes('return missing();') || script.includes('const shown = missing();'));
-  assert.ok(expectations.length >= 4, String(expectations.length));
+  assert.ok(expectations.length >= 5, String(expectations.length));
+  // Icône du bureau : une seule fenêtre quand elle affiche déjà le dossier ; deux, dont l'autre restée sur « Ce PC », sinon.
+  assert.equal(expectations.filter((script) => script.includes(`windows === 1 && exWin().classList.contains('is-focused')`)).length, 1);
+  assert.equal(expectations.filter((script) => script.includes(`windows.length === 2 && exWin().classList.contains('is-focused') && others.join() === 'pc'`)).length, 1);
   for (const script of expectations) {
     assert.ok(script.includes(JSON.stringify(documentsTest.MESSAGE_TITLE)) && script.includes(JSON.stringify(documentsTest.NOTHING_CREATED)));
     assert.match(script, /state\.code === 'place-unavailable'/);
@@ -1943,6 +2135,8 @@ test('scénario « documents-missing » : un dossier affiché à la place du mes
   assert.equal(code, 1);
   assert.deepEqual(failed(report), [documentsTest.CHECKS.tile, documentsTest.CHECKS.sidebar, documentsTest.CHECKS.desktop, documentsTest.CHECKS.refresh]);
   assert.deepEqual(report.checks.find((item) => !item.ok).value, observed);
+  // Icône du bureau : l'étape en défaut est nommée, avec ce que l'explorateur affichait.
+  assert.deepEqual(report.checks.find((item) => item.name === documentsTest.CHECKS.desktop).value, { etape: 'une fenêtre affiche déjà ce dossier', obtenu: observed });
   // Les autres contrôles ont tout de même été menés.
   assert.equal(report.checks.length, DOCUMENTS_CHECKS.length);
 });

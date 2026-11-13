@@ -26,8 +26,8 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(42rem, calc(100vw - 1.25rem));
-  /* 43,75 rem : hauteur de la vue d'accueil complète (18 applications épinglées
-     et 3 lignes de recommandations), sans défilement. */
+  /* 43,75 rem : hauteur de la vue d'accueil complète (18 applications et
+     3 lignes de dossiers personnels), sans défilement. */
   height: min(var(--start-h, 43.75rem), calc(100vh - var(--taskbar-h) - var(--taskbar-gap) - var(--flyout-gap) - 0.75rem));
   border-radius: var(--r-xl);
   translate: -50% 0;
@@ -169,6 +169,24 @@
   --icon-size: 0.875rem;
 }
 
+.start__head-end {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+}
+
+/* Mention « bientôt » : l'application est annoncée, mais n'existe pas encore. */
+.chip--soon {
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: inset 0 0 0 1px var(--stroke);
+  color: var(--text-3);
+  font-size: 0.625rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 /* --- Grille d'applications épinglées --------------------------------------- */
 
 .start__grid {
@@ -217,6 +235,30 @@
 .start-app:active .app-icon {
   scale: 0.92;
   translate: 0 0;
+}
+
+/* Application seulement annoncée : estompée, et sans effet de survol engageant. */
+.start-app.is-upcoming .app-icon,
+.start-row.is-upcoming .app-icon {
+  filter: grayscale(0.75) brightness(0.72);
+  opacity: 0.5;
+}
+
+.start-app.is-upcoming .start-app__label,
+.start-row.is-upcoming .start-row__name {
+  color: var(--text-3);
+}
+
+.start-app.is-upcoming:hover .app-icon,
+.start-app.is-upcoming:active .app-icon {
+  scale: 1;
+  translate: 0 0;
+  filter: grayscale(0.75) brightness(0.72);
+}
+
+.start-app.is-upcoming:hover,
+.start-row.is-upcoming:hover {
+  background: var(--fill-1);
 }
 
 /* Apparition en cascade à l'ouverture du menu. */

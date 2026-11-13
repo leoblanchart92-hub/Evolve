@@ -3,7 +3,9 @@
  * centre de notifications).
  *
  * Un seul panneau est ouvert à la fois. Il se referme par un clic à
- * l'extérieur, par la touche Échap ou en recliquant sur son bouton.
+ * l'extérieur, par la touche Échap ou en recliquant sur son bouton. À la
+ * fermeture, le clavier retourne à l'élément qui l'avait avant l'ouverture —
+ * la fenêtre active, le plus souvent.
  */
 
 import { Emitter } from '../core/events.js';
@@ -54,14 +56,21 @@ export class FlyoutController extends Emitter {
   #flyouts = new Map();
   /** @type {Flyout|null} */
   #current = null;
+  /** Élément qui avait le clavier avant l'ouverture du premier panneau. */
+  #returnFocus = null;
+  #restoreFocus;
 
   /**
    * @param {HTMLElement} layer  calque qui reçoit les panneaux
-   * @param {{ isMenuTarget: (node: Node) => boolean }} options
+   * @param {object} options
+   * @param {(node: Node) => boolean} options.isMenuTarget  vrai pour un élément du menu ouvert depuis le panneau
+   * @param {(previous: Element|null) => void} [options.restoreFocus]  rend le clavier, à la fermeture, à
+   *        l'élément qui l'avait avant l'ouverture (`previous`) — ou, à défaut, à qui de droit
    */
-  constructor(layer, { isMenuTarget }) {
+  constructor(layer, { isMenuTarget, restoreFocus = () => {} }) {
     super();
     this.layer = layer;
+    this.#restoreFocus = restoreFocus;
 
     document.addEventListener(
       'pointerdown',
@@ -103,6 +112,8 @@ export class FlyoutController extends Emitter {
   open(name, options) {
     const flyout = this.#flyouts.get(name);
     if (!flyout) return;
+    // Premier panneau ouvert : on retient où était le clavier. D'un panneau à l'autre, ce souvenir est gardé.
+    if (!this.#current) this.#returnFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     if (this.#current && this.#current !== flyout) this.#current.close();
     this.#current = flyout;
     flyout.open(options);
@@ -111,9 +122,14 @@ export class FlyoutController extends Emitter {
 
   close() {
     if (!this.#current) return;
+    const hadKeyboard = this.#current.el.contains(document.activeElement);
     this.#current.close();
     this.#current = null;
+    const previous = this.#returnFocus;
+    this.#returnFocus = null;
     this.emit('change', null);
+    // Le clavier était dans le panneau (ou nulle part) : il retourne où il était avant l'ouverture.
+    if (hadKeyboard || !document.activeElement || document.activeElement === document.body) this.#restoreFocus(previous);
   }
 
   toggle(name, options) {

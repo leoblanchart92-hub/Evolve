@@ -301,6 +301,24 @@ export class Navigator {
     return (this.#known?.drives ?? []).map(driveNode);
   }
 
+  /**
+   * Emplacement courant (copie), sous une forme que `open` accepte : une
+   * autre fenêtre peut s'y rendre. `null` avant la première navigation.
+   */
+  get location() {
+    return this.#current ? { ...this.#current } : null;
+  }
+
+  /**
+   * Vrai si l'emplacement désigné est celui qui est affiché (ou en cours de
+   * chargement). Un dossier personnel se reconnaît aussi bien à son nom
+   * (« documents ») qu'à son chemin réel.
+   */
+  isAt(input) {
+    if (!this.#current) return false;
+    return locationKey(this.#canonical(toLocation(input))) === locationKey(this.#canonical(this.#current));
+  }
+
   /** Affiche un emplacement et l'inscrit dans l'historique. */
   open(input) {
     const target = this.#canonical(toLocation(input));

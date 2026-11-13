@@ -4,15 +4,18 @@
  *
  * Lance l'application deux fois de suite sur le même dossier de réglages :
  *
- *   1. premier lancement : l'application part des valeurs par défaut et
+ *   1. premier lancement : l'application part des valeurs par défaut,
  *      modifie des réglages depuis son interface, comme le ferait
- *      l'utilisateur, puis se ferme ;
+ *      l'utilisateur, donne une nouvelle place à la fenêtre de l'explorateur,
+ *      puis se ferme ;
  *   2. ce script lit lui-même le fichier settings.json laissé sur le disque ;
  *   3. second lancement (nouveau processus) : l'interface doit afficher les
- *      réglages modifiés, sans aucune action.
+ *      réglages modifiés, sans aucune action, et la fenêtre de l'explorateur
+ *      doit s'ouvrir où elle avait été laissée.
  *
  * Il vérifie aussi que le dossier des réglages ne reçoit rien d'autre que
- * settings.json et que le relire ne le modifie pas.
+ * settings.json et que le relire — fenêtre de l'explorateur rouverte
+ * comprise — ne le modifie pas.
  *
  * Utilisation :
  *   node scripts/check-settings.mjs [EXÉCUTABLE] [options] [-- ARGUMENTS…]
@@ -47,7 +50,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 // Ce que l'application doit avoir enregistré : mêmes définitions qu'elle.
-const { CHANGED_SETTINGS } = require('../src/main/selftest-settings.js');
+const { CHANGED_SETTINGS, PLACEMENT_SETTINGS, readPlacement, describePlacement } = require('../src/main/selftest-settings.js');
 const { SCHEMA_VERSION } = require('../src/services/settings-schema.js');
 const { SETTINGS_FILE } = require('../src/services/platform.js');
 
@@ -147,7 +150,10 @@ function launch(step, scenario) {
 
 /**
  * Lit le fichier des réglages laissé sur le disque et le compare à ce que
- * l'application devait enregistrer. Renvoie son contenu brut.
+ * l'application devait enregistrer : les réglages modifiés, à leur valeur
+ * exacte, et un emplacement valide pour la fenêtre de l'explorateur — ses
+ * valeurs dépendent de l'écran. Renvoie le contenu brut du fichier et
+ * l'emplacement relevé.
  */
 function inspect(moment) {
   const entries = createdEntries();
@@ -171,16 +177,25 @@ function inspect(moment) {
   }
 
   const sorted = (values) => JSON.stringify(Object.entries(values ?? {}).sort(([a], [b]) => a.localeCompare(b)));
-  if (sorted(content.values) !== sorted(CHANGED_SETTINGS)) {
+  const values = content.values && typeof content.values === 'object' ? content.values : {};
+  // Les réglages modifiés depuis l'interface : exactement eux, à leur valeur exacte.
+  const changed = Object.fromEntries(Object.entries(values).filter(([key]) => !PLACEMENT_SETTINGS.includes(key)));
+  if (sorted(changed) !== sorted(CHANGED_SETTINGS)) {
     fail(
       `${moment} : ${SETTINGS_FILE} ne contient pas exactement les réglages modifiés.\n` +
-        `  attendu  : ${JSON.stringify(CHANGED_SETTINGS)}\n  constaté : ${JSON.stringify(content.values)}`,
+        `  attendu  : ${JSON.stringify(CHANGED_SETTINGS)}\n  constaté : ${JSON.stringify(changed)}`,
     );
+  }
+  // L'emplacement donné à la fenêtre de l'explorateur : présent, et fait de valeurs admises.
+  const found = readPlacement(values);
+  if (!found.ok) {
+    const kept = Object.fromEntries(Object.entries(values).filter(([key]) => PLACEMENT_SETTINGS.includes(key)));
+    fail(`${moment} : emplacement de la fenêtre de l'explorateur non enregistré — ${found.problem}.\n  constaté : ${JSON.stringify(kept)}`);
   }
   if (content.schema !== SCHEMA_VERSION) fail(`${moment} : format du fichier inattendu (${JSON.stringify(content.schema)}).`);
   if (content.app !== pkg.version) fail(`${moment} : version notée dans le fichier inattendue (${JSON.stringify(content.app)}).`);
   if (!Number.isFinite(Date.parse(content.savedAt))) fail(`${moment} : date d'enregistrement invalide (${JSON.stringify(content.savedAt)}).`);
-  return text;
+  return { text, placement: found.placement };
 }
 
 // --- Vérification ----------------------------------------------------------------
@@ -200,22 +215,26 @@ console.log(`Dossier des réglages : ${settingsDir}\n`);
 console.log('── 1. Premier lancement : réglages modifiés depuis l’interface ──');
 if (!launch('1-modification', 'settings-write')) fail('Premier lancement en échec : les réglages n’ont pas pu être modifiés (voir le rapport ci-dessus).');
 
-const saved = inspect('Après le premier lancement');
+const { text: saved, placement } = inspect('Après le premier lancement');
+/** Ce que le premier lancement a fait de la fenêtre : déplacée à la souris, sinon agrandie depuis son menu. */
+const windowLine = `fenêtre de l'explorateur ${placement.maximized ? 'agrandie' : 'déplacée'} — ${describePlacement(placement)}`;
 console.log(`\n  ✔ ${SETTINGS_FILE} enregistré (${Buffer.byteLength(saved)} octets), seul dans son dossier :`);
 for (const [key, value] of Object.entries(CHANGED_SETTINGS)) console.log(`      ${key} = ${JSON.stringify(value)}`);
+console.log(`      ${windowLine}`);
 
 console.log('\n── 2. Nouveau lancement : réglages retrouvés ──');
 if (!launch('2-relance', 'settings-read')) fail('Second lancement en échec : l’interface n’a pas retrouvé les réglages enregistrés (voir le rapport ci-dessus).');
 
-const reread = inspect('Après le second lancement');
+const { text: reread } = inspect('Après le second lancement');
 if (reread !== saved) fail(`Le second lancement a modifié ${SETTINGS_FILE} alors qu'aucun réglage n'a changé.`);
 
 cleanUp();
 
 const count = Object.keys(CHANGED_SETTINGS).length;
 const overview =
-  `${count} réglages modifiés depuis l'interface, enregistrés dans ${settingsFile} (${Buffer.byteLength(saved)} octets), ` +
-  `puis retrouvés par un nouveau lancement. Le dossier ne contient que ${SETTINGS_FILE} ; le relire ne le modifie pas.`;
+  `${count} réglages modifiés depuis l'interface et l'emplacement de la fenêtre de l'explorateur (${placement.maximized ? 'agrandie' : 'déplacée'}), ` +
+  `enregistrés dans ${settingsFile} (${Buffer.byteLength(saved)} octets), puis retrouvés par un nouveau lancement. ` +
+  `Le dossier ne contient que ${SETTINGS_FILE} ; le relire ne le modifie pas.`;
 console.log(`\n✔ Réglages conservés après redémarrage — ${overview}`);
 annotate('notice', `Réglages conservés après redémarrage — ${overview}`);
 summarize(
@@ -227,6 +246,9 @@ summarize(
     '| Réglage | Valeur enregistrée |',
     '| --- | --- |',
     ...Object.entries(CHANGED_SETTINGS).map(([key, value]) => `| \`${key}\` | \`${JSON.stringify(value)}\` |`),
+    ...Object.entries(placement).map(([name, value]) => `| \`explorerWindow.${name}\` | \`${JSON.stringify(value)}\` |`),
+    '',
+    `Emplacement retrouvé : ${windowLine}.`,
     '',
   ].join('\n'),
 );

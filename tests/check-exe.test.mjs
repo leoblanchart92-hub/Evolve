@@ -20,10 +20,10 @@ const workDir = mkdtempSync(path.join(tmpdir(), 'evolve-check-exe-'));
 after(() => rmSync(workDir, { recursive: true, force: true }));
 
 /** Lance le script contre la fausse application dans le mode donné. */
-function run(mode, { timeout = 30, outDir = path.join(workDir, mode), env = {}, appArgs = [] } = {}) {
+function run(mode, { timeout = 30, outDir = path.join(workDir, mode), env = {}, appArgs = [], options = [] } = {}) {
   const result = spawnSync(
     process.execPath,
-    [SCRIPT, process.execPath, `--out=${outDir}`, `--timeout=${timeout}`, '--', FAKE_APP, mode, ...appArgs],
+    [SCRIPT, process.execPath, `--out=${outDir}`, `--timeout=${timeout}`, ...options, '--', FAKE_APP, mode, ...appArgs],
     { encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '', GITHUB_ACTIONS: '', ...env }, timeout: 60_000 },
   );
   return { code: result.status, output: `${result.stdout}\n${result.stderr}`, outDir };
@@ -256,6 +256,56 @@ test('les constats de la vérification « renommer ou déplacer ne remplace jama
     assert.equal(other.code, 0, other.output);
     assert.doesNotMatch(other.output, /Sans remplacement/);
   }
+});
+
+test('les gestes réels reçus par la page figurent dans le compte rendu', () => {
+  const summary = path.join(workDir, 'resume-gestes.md');
+  const passed = run('pass-with-input', { env: { GITHUB_ACTIONS: 'true', GITHUB_STEP_SUMMARY: summary } });
+  assert.equal(passed.code, 0, passed.output);
+  const line = 'Gestes réels : souris reçue · clavier reçu';
+  assert.ok(passed.output.includes(`  ${line}\n`), passed.output);
+  assert.match(passed.output, /^::notice title=[^:]+::Auto-test réussi — [^\n]*%0AGestes réels (?::|%3A) souris reçue · clavier reçu$/m);
+  assert.ok(readFileSync(summary, 'utf8').includes(`\n${line}\n`));
+
+  // Clavier non reçu : dit en toutes lettres, avec l'avertissement de l'application — sans échec.
+  const partial = run('pass-without-keyboard', { env: { GITHUB_ACTIONS: 'true' } });
+  assert.equal(partial.code, 0, partial.output);
+  assert.ok(partial.output.includes('  Gestes réels : souris reçue · clavier NON reçu — les contrôles qui en dépendent n’ont pas été menés\n'), partial.output);
+  assert.match(partial.output, /^::notice title=[^:]+::Auto-test réussi[^\n]*%0AGestes réels (?::|%3A) souris reçue · clavier NON reçu[^\n]*%0A! avertissement (?::|%3A) raccourcis clavier non vérifiés/m);
+
+  // Information mal formée : rien n'est tenu pour reçu.
+  const odd = run('pass-with-odd-input');
+  assert.equal(odd.code, 0, odd.output);
+  assert.match(odd.output, /Gestes réels : souris NON reçue · clavier NON reçu/);
+
+  // Rapport qui n'en dit rien (autres scénarios) : aucune ligne.
+  const silent = run('pass');
+  assert.equal(silent.code, 0, silent.output);
+  assert.doesNotMatch(silent.output, /Gestes réels/);
+});
+
+test('--require-input : des gestes non reçus valent un échec, jamais une réussite silencieuse', () => {
+  // Reçus : réussite.
+  const received = run('pass-with-input', { options: ['--require-input'], outDir: path.join(workDir, 'exige-recus') });
+  assert.equal(received.code, 0, received.output);
+  assert.match(received.output, /Auto-test réussi/);
+
+  // Clavier non reçu : échec, et la raison est dite — tous les contrôles menés ont pourtant réussi.
+  const partial = run('pass-without-keyboard', { options: ['--require-input'], outDir: path.join(workDir, 'exige-partiel'), env: { GITHUB_ACTIONS: 'true' } });
+  assert.equal(partial.code, 1, partial.output);
+  assert.match(partial.output, /Contrôles : 1\/1/);
+  assert.match(partial.output, /✖ erreur : gestes réels exigés \(--require-input\) : la souris ou le clavier injectés ne sont pas parvenus à la page/);
+  assert.match(partial.output, /^::error title=[^:]+::Auto-test en échec[^\n]*%0A✖ erreur (?::|%3A) gestes réels exigés[^\n]*%0AGestes réels (?::|%3A) souris reçue · clavier NON reçu/m);
+  assert.doesNotMatch(partial.output, /Auto-test réussi/);
+
+  // Rapport muet ou mal formé : échec aussi — l'absence de constat ne vaut pas constat.
+  for (const mode of ['pass', 'pass-with-odd-input']) {
+    const other = run(mode, { options: ['--require-input'], outDir: path.join(workDir, `exige-${mode}`) });
+    assert.equal(other.code, 1, other.output);
+    assert.match(other.output, /gestes réels exigés \(--require-input\)/);
+  }
+  const silent = run('pass', { options: ['--require-input'], outDir: path.join(workDir, 'exige-muet') });
+  assert.match(silent.output, /le rapport ne dit pas si la page les a reçus/);
 });
 
 test('les mesures des captures figurent dans le compte rendu', () => {

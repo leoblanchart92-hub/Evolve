@@ -60,7 +60,7 @@ async function start() {
   shell.toasts.show({
     key: 'welcome',
     title: `Bienvenue dans ${PRODUCT.name}`,
-    message: "Aperçu de l'interface : ouvrez le menu Démarrer, déplacez les fenêtres, explorez les panneaux.",
+    message: "Ouvrez l'explorateur depuis le bureau ou le menu Démarrer. Ctrl + Tab passe d'une fenêtre à l'autre.",
     glyph: 'planet',
     colors: ['#e2c6ff', '#7c3aed'],
     timeout: 6500,

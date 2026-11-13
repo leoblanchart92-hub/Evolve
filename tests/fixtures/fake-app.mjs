@@ -82,6 +82,30 @@ switch (mode) {
     });
     process.exit(1);
     break;
+  case 'pass-with-input': // réussite : la page a reçu la souris et le clavier injectés
+    report(true, [{ name: 'contrôle un', ok: true }], [], { input: { souris: true, clavier: true, pageActive: true } });
+    process.exit(0);
+    break;
+  case 'pass-without-keyboard': // réussite, mais le clavier injecté n'est pas parvenu à la page
+    writeFileSync(
+      path.join(outDir, 'result.json'),
+      JSON.stringify({
+        ok: true,
+        checks: [{ name: 'contrôle un', ok: true }],
+        errors: [],
+        warnings: ['raccourcis clavier non vérifiés : la fenêtre ne reçoit pas le clavier injecté'],
+        captures: [],
+        window: { width: 1600, height: 900 },
+        versions: {},
+        input: { souris: true, clavier: false, pageActive: false },
+      }),
+    );
+    process.exit(0);
+    break;
+  case 'pass-with-odd-input': // information mal formée : rien n'est tenu pour reçu
+    report(true, [{ name: 'contrôle un', ok: true }], [], { input: { souris: 'oui', clavier: 1 } });
+    process.exit(0);
+    break;
   case 'pass-with-odd-no-replace': // information mal formée : ignorée
     report(true, [{ name: 'contrôle un', ok: true }], [], { noReplace: { free: 'cinq', taken: null, races: 40 } });
     process.exit(0);
@@ -122,7 +146,11 @@ switch (mode) {
 
 /**
  * Modes « settings-… » : le comportement dépend du scénario demandé.
- *   settings-ok              application conforme ;
+ *   settings-ok              application conforme : réglages modifiés, fenêtre de l'explorateur déplacée ;
+ *   settings-maximized       application conforme, fenêtre de l'explorateur agrandie (souris non reçue) ;
+ *   settings-no-placement    n'enregistre pas l'emplacement de la fenêtre de l'explorateur ;
+ *   settings-bad-placement   enregistre un emplacement fait d'une valeur refusée ;
+ *   settings-empty-placement enregistre un emplacement sans taille ;
  *   settings-not-saved       ne crée aucun fichier de réglages ;
  *   settings-wrong-values    enregistre d'autres valeurs que celles modifiées ;
  *   settings-missing-value   oublie un réglage modifié ;
@@ -151,7 +179,9 @@ function settingsMode() {
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, typeof content === 'string' ? content : `${JSON.stringify(content, null, 2)}\n`);
   };
-  const content = (overrides = {}) => ({ schema: 1, app: version, savedAt: '2026-11-10T08:30:00.000Z', values: { ...CHANGED_SETTINGS }, ...overrides });
+  /** Emplacement d'une fenêtre déplacée à la souris : position et taille en centièmes de rem. */
+  const PLACEMENT = { 'explorerWindow.x': 2300, 'explorerWindow.y': 681, 'explorerWindow.width': 6200, 'explorerWindow.height': 4000 };
+  const content = (overrides = {}) => ({ schema: 1, app: version, savedAt: '2026-11-10T08:30:00.000Z', values: { ...CHANGED_SETTINGS, ...PLACEMENT }, ...overrides });
   const pass = () => {
     report(true, [{ name: `scénario ${scenario}`, ok: true }], [], { scenario });
     process.exit(0);
@@ -167,13 +197,25 @@ function settingsMode() {
       case 'settings-not-saved':
         break;
       case 'settings-wrong-values':
-        save(content({ values: { ...CHANGED_SETTINGS, 'quick.volume': 64 } }));
+        save(content({ values: { ...CHANGED_SETTINGS, ...PLACEMENT, 'quick.volume': 64 } }));
         break;
       case 'settings-missing-value': {
         const { 'quick.nightLight': _omitted, ...values } = CHANGED_SETTINGS;
-        save(content({ values }));
+        save(content({ values: { ...values, ...PLACEMENT } }));
         break;
       }
+      case 'settings-maximized':
+        save(content({ values: { ...CHANGED_SETTINGS, 'explorerWindow.x': 1900, 'explorerWindow.y': 481, 'explorerWindow.width': 6200, 'explorerWindow.height': 4000, 'explorerWindow.maximized': true } }));
+        break;
+      case 'settings-no-placement':
+        save(content({ values: { ...CHANGED_SETTINGS } }));
+        break;
+      case 'settings-bad-placement':
+        save(content({ values: { ...CHANGED_SETTINGS, ...PLACEMENT, 'explorerWindow.x': 12.5 } }));
+        break;
+      case 'settings-empty-placement':
+        save(content({ values: { ...CHANGED_SETTINGS, ...PLACEMENT, 'explorerWindow.height': 0 } }));
+        break;
       case 'settings-bad-json':
         save('{ "schema": 1, "values": { "quick.vol');
         break;

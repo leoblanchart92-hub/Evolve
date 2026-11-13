@@ -8,7 +8,6 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { WALLPAPER_URL } from '../src/renderer/js/config.js';
-import { WALLPAPER_FILE } from '../src/renderer/js/data/demo-files.js';
 import { fromRoot, readText, stripComments } from './helpers.mjs';
 
 const WALLPAPER_PATH = 'assets/wallpapers/panorama-cosmique-violet-sur-lac-miroir.png';
@@ -46,10 +45,4 @@ test("l'image n'est ni déformée, ni filtrée, ni recolorée par les styles", (
     assert.doesNotMatch(rule, new RegExp(`(^|[;\\s])${property}\\s*:`), `propriété « ${property} » interdite sur le fond d'écran`);
   }
   assert.equal([...css.matchAll(/\.wallpaper__image\b/g)].length, 1, 'une seule règle doit cibler le fond d’écran');
-});
-
-test("l'explorateur d'exemple décrit le fond d'écran avec ses vraies caractéristiques", () => {
-  assert.equal(WALLPAPER_FILE.name, 'panorama-cosmique-violet-sur-lac-miroir.png');
-  assert.equal(WALLPAPER_FILE.size, bytes.length);
-  assert.equal(WALLPAPER_FILE.dimensions, '1672 × 941');
 });

@@ -13,6 +13,12 @@
  * définitivement ni remplacé. La navigation est tenue par explorer-nav.js,
  * le déroulement des opérations par explorer-actions.js.
  *
+ * Plusieurs fenêtres de l'explorateur peuvent être ouvertes à la fois : chacune
+ * a sa navigation, sa sélection et son affichage. Elles partagent le
+ * presse-papiers des fichiers — on copie dans l'une, on colle dans l'autre —,
+ * et une opération menée dans l'une fait relire aux autres le dossier qu'elles
+ * affichent.
+ *
  * Dans un simple navigateur (aperçu de développement), aucun dossier n'est
  * lisible et aucune opération n'existe : l'explorateur l'annonce et n'affiche
  * aucun fichier fictif.
@@ -46,6 +52,9 @@ const LOADING_DELAY_MS = 250;
  * de la fenêtre de l'explorateur. Celui de Windows n'est ni lu ni modifié.
  */
 const clipboard = createFileClipboard();
+
+/** Fenêtres de l'explorateur ouvertes : après une opération sur les fichiers, les autres relisent leur dossier. */
+const openExplorers = new Set();
 
 class Explorer {
   #win;
@@ -114,7 +123,11 @@ class Explorer {
       view: {
         // Pendant une lecture, aucun dossier n'est affiché : aucune commande ne s'applique.
         page: () => (this.#nav.loading ? null : this.#nav.page),
-        reload: () => this.#nav.reload(),
+        reload: () => {
+          // Le disque a changé : les autres fenêtres de l'explorateur relisent aussi leur dossier.
+          for (const other of openExplorers) if (other !== this) other.#reloadQuietly();
+          return this.#nav.reload();
+        },
         select: (paths) => this.#selectPaths(paths),
         changed: () => this.#syncToolbar(),
       },
@@ -130,6 +143,7 @@ class Explorer {
     );
     this.el.addEventListener('keydown', (event) => this.#onKeyDown(event));
     win.body.append(this.el);
+    openExplorers.add(this);
     this.#unwatchClipboard = clipboard.onChange(() => this.#syncClipboard());
     this.#syncClipboard();
 
@@ -152,8 +166,30 @@ class Explorer {
     this.show(params ?? {});
   }
 
+  /** Vrai si cette fenêtre affiche déjà l'emplacement demandé : elle est réactivée, plutôt que doublée. */
+  shows({ location = 'home' } = {}) {
+    return this.#nav.isAt(location);
+  }
+
+  /** Emplacement à ouvrir dans une nouvelle fenêtre demandée depuis celle-ci (Ctrl + N) : le même. */
+  newWindowParams() {
+    const location = this.#nav.location;
+    return location ? { location } : undefined;
+  }
+
+  /**
+   * Donne le clavier à la liste des éléments : les flèches, Entrée, F2 ou
+   * Suppr agissent aussitôt que la fenêtre est ouverte ou réactivée.
+   * @returns {boolean} vrai : le clavier a été pris
+   */
+  focusDefault() {
+    this.#content.focus({ preventScroll: true });
+    return true;
+  }
+
   destroy() {
     this.#destroyed = true;
+    openExplorers.delete(this);
     clearTimeout(this.#loadingTimer);
     this.#crumbsObserver.disconnect();
     this.#unwatchClipboard();
@@ -969,6 +1005,17 @@ class Explorer {
 
   // --- Actions ----------------------------------------------------------------------
 
+  /** Relit le dossier affiché après une opération menée dans une autre fenêtre (sans rien faire pendant une lecture). */
+  #reloadQuietly() {
+    if (this.#destroyed || this.#nav.loading || !this.#nav.page) return;
+    this.#nav.reload();
+  }
+
+  /** Ouvre un dossier, un lecteur ou un lien dans une nouvelle fenêtre de l'explorateur. */
+  #openInNewWindow(node) {
+    if (node.location) this.#shell.launch('explorer', { params: { location: node.location }, target: 'new' });
+  }
+
   #open(node) {
     // Dossier, lecteur ou lien : on s'y rend. Le service vérifie où un lien mène réellement.
     if (node.location) {
@@ -1061,6 +1108,7 @@ class Explorer {
           disabled: !can.open,
           onSelect: () => this.#open(node),
         },
+        single && node.location && { label: 'Ouvrir dans une nouvelle fenêtre', glyph: 'app-window', disabled: !can.open, onSelect: () => this.#openInNewWindow(node) },
         single && { separator: true },
         { label: 'Couper', glyph: 'scissors', hint: 'Ctrl+X', disabled: !can.cut, onSelect: () => this.#actions.cut(nodes) },
         { label: 'Copier', glyph: 'copy', hint: 'Ctrl+C', disabled: !can.copy, onSelect: () => this.#actions.copy(nodes) },
@@ -1102,6 +1150,7 @@ class Explorer {
         ...this.#sortItems(),
         { separator: true },
         { label: 'Actualiser', glyph: 'arrow-clockwise', hint: 'F5', onSelect: () => this.#nav.refresh() },
+        { label: 'Nouvelle fenêtre', glyph: 'app-window', hint: 'Ctrl+N', onSelect: () => this.#shell.launch('explorer', { params: this.newWindowParams(), target: 'new' }) },
         { separator: true },
         { label: 'Coller', glyph: 'clipboard-text', hint: 'Ctrl+V', disabled: !can.paste, onSelect: () => this.#actions.paste() },
         { label: 'Nouveau dossier', glyph: 'folder-plus', hint: 'Ctrl+Maj+N', disabled: !can.newFolder, onSelect: () => this.#actions.newFolder() },
