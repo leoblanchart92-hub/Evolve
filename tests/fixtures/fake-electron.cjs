@@ -16,6 +16,9 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 
+/** Nombre d'écouteurs qu'un canal accepte, côté page, avant que le vrai Electron ne signale une fuite possible. */
+const MAX_RENDERER_LISTENERS = 10;
+
 /** Événement annulable, comme ceux d'Electron. */
 function cancellable() {
   return {
@@ -322,6 +325,11 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
       },
       on(channel, listener) {
         const list = webContents.rendererListeners.get(channel) ?? [];
+        // Le vrai `ipcRenderer` signale une fuite possible au onzième écouteur d'un même canal
+        // (MaxListenersExceededWarning). Ici, c'est une erreur : un canal ne doit pas en accumuler.
+        if (list.length >= MAX_RENDERER_LISTENERS) {
+          throw new Error(`faux electron : plus de ${MAX_RENDERER_LISTENERS} écouteurs sur « ${channel} » — le vrai Electron signalerait une fuite possible`);
+        }
         webContents.rendererListeners.set(channel, [...list, listener]);
       },
       removeListener(channel, listener) {

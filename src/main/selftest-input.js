@@ -19,7 +19,12 @@
  * ils ne sont jamais tenus pour réussis.
  */
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Attend `ms` millisecondes. Une durée nulle — celle des tests, qui ne patientent pas — rend seulement la
+ * main, sans minuterie : sous Windows, la plus courte minuterie dure un battement de l'horloge du système
+ * (jusqu'à 16 ms), et ces gestes en demandent des centaines.
+ */
+const sleep = (ms) => new Promise((resolve) => (ms > 0 ? setTimeout(resolve, ms) : setImmediate(resolve)));
 
 /** Code de page : compte les mouvements de souris et les touches authentiques reçus. */
 const PROBE = `

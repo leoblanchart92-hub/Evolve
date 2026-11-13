@@ -107,9 +107,14 @@ jobs:
             Write-Host "Reglage impossible, definition par defaut conservee : $($_.Exception.Message)"
           }
 
+      # L'auto-test manœuvre le bureau et les fenêtres par de vrais gestes,
+      # souris et clavier injectés dans le moteur d'affichage. S'ils ne
+      # parvenaient pas à la page, les contrôles qui en dépendent ne seraient
+      # pas menés : --require-input en fait alors un échec, pour qu'aucun
+      # exécutable ne soit publié sans eux.
       - name: Auto-test de l'application (avant fabrication du .exe)
         timeout-minutes: 8
-        run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --out=self-test-output/application -- .
+        run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --require-input --out=self-test-output/application -- .
 
       - name: Fabriquer l'exécutable portable
         run: bash scripts/ci-run.sh fabrication-executable npm run build:win
@@ -127,7 +132,7 @@ jobs:
 
       - name: Auto-test de l'exécutable portable
         timeout-minutes: 8
-        run: bash scripts/ci-run.sh auto-test-executable node scripts/check-exe.mjs --out=self-test-output/executable
+        run: bash scripts/ci-run.sh auto-test-executable node scripts/check-exe.mjs --out=self-test-output/executable --require-input
 
       # L'auto-test ouvre une fenêtre ordinaire ; ici, l'exécutable est lancé
       # sans aucune option d'essai, exactement comme par un double-clic.

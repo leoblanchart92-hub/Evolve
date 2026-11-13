@@ -618,11 +618,13 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   // Opérations sur les fichiers : un canal par opération, écrit en toutes lettres des deux côtés, une seule fois.
   // La page ne choisit jamais un canal : aucun nom de canal n'est calculé.
   for (const channel of [...channels(preload)].filter((name) => name.startsWith('evolve:files-'))) {
-    assert.equal(preload.split(`'${channel}'`).length - 1, channel === 'evolve:files-progress' ? 2 : 1, `preload.js : ${channel}`);
+    assert.equal(preload.split(`'${channel}'`).length - 1, 1, `preload.js : ${channel}`);
     assert.equal(main.split(`'${channel}'`).length - 1, 1, `main.js : ${channel}`);
   }
   const requested = [...preload.matchAll(/\bipcRenderer\.(?:invoke|send|on|removeListener)\(\s*([^,)]+)/g)].map((match) => match[1].trim());
   assert.ok(requested.length >= 14);
+  // L'avancement des opérations : un seul écouteur, posé une fois pour toutes — jamais un par fenêtre de l'explorateur.
+  assert.match(preload, /^ipcRenderer\.on\('evolve:files-progress', /m, "l'écouteur de l'avancement doit être posé au chargement de la passerelle");
   for (const name of requested) assert.match(name, /^'evolve:[a-z-]+'$/, `canal calculé : ${name}`);
   const handled = [...main.matchAll(/\bipcMain\.(?:handle|on)\(\s*([^,)]+)/g)].map((match) => match[1].trim());
   assert.equal(handled.length, 11);
@@ -769,6 +771,16 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   assert.equal(lenient.length, 1);
   assert.match(lenient[0], /^Régler l'écran/);
   assert.ok(!/check-exe|check-launch|check-settings|check-documents|check-native|build:win|build:native|check:manifest|npm test/.test(lenient[0]));
+
+  // Les deux auto-tests complets exigent les gestes réels (souris et clavier injectés) : sans eux, les contrôles du
+  // bureau qui en dépendent ne seraient pas menés, et la compilation réussirait sans les avoir faits. L'option est
+  // lue par le script : elle précède le séparateur « -- », après lequel tout est transmis à l'application.
+  const selfTests = steps.filter((step) => /check-exe\.mjs/.test(step));
+  assert.equal(selfTests.length, 2);
+  for (const step of selfTests) {
+    const command = step.match(/node scripts\/check-exe\.mjs[^\n]*/)[0];
+    assert.match(command.split(' -- ')[0], / --require-input(?: |$)/, command);
+  }
 
   // Les réglages sont éprouvés là où ils seront réellement rangés : %APPDATA%\Evolve.
   const settingsStep = steps.find((step) => step.includes('check-settings.mjs'));

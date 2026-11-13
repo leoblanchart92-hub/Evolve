@@ -33,6 +33,26 @@ async function answer(send) {
   }
 }
 
+/**
+ * Abonnés à l'avancement des opérations sur les fichiers. Chaque fenêtre de
+ * l'explorateur s'abonne en s'ouvrant et se désabonne en se fermant : un seul
+ * écouteur est posé sur le canal, quel que soit leur nombre, et leur répète
+ * chaque annonce.
+ */
+const progressSubscribers = new Set();
+ipcRenderer.on('evolve:files-progress', (_event, progress) => {
+  for (const subscriber of [...progressSubscribers]) {
+    // Un abonné désabonné pendant cette annonce (fenêtre fermée) n'est plus appelé.
+    if (!progressSubscribers.has(subscriber)) continue;
+    try {
+      subscriber.callback(progress);
+    } catch (error) {
+      // Un abonné en panne ne prive pas les autres de l'annonce ; la panne reste visible.
+      console.error("Evolve : un abonné à l'avancement des opérations a échoué.", error);
+    }
+  }
+});
+
 contextBridge.exposeInMainWorld('evolve', {
   isDesktopApp: true,
 
@@ -113,9 +133,12 @@ contextBridge.exposeInMainWorld('evolve', {
      */
     onProgress: (callback) => {
       if (typeof callback !== 'function') return () => {};
-      const listener = (_event, progress) => callback(progress);
-      ipcRenderer.on('evolve:files-progress', listener);
-      return () => ipcRenderer.removeListener('evolve:files-progress', listener);
+      // Un abonnement par appel, même pour une fonction déjà abonnée.
+      const subscriber = { callback };
+      progressSubscribers.add(subscriber);
+      return () => {
+        progressSubscribers.delete(subscriber);
+      };
     },
   },
 });

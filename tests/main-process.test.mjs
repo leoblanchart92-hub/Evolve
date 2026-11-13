@@ -1563,6 +1563,86 @@ test('opérations : l’avancement est transmis à la fenêtre, et une opératio
   assert.equal(fake.window.webContents.sent.length, sentAtClose);
 });
 
+test('opérations : douze fenêtres de l’explorateur suivent l’avancement par un seul écouteur du canal', async (t) => {
+  const { fake, documents, files } = await launchForOperations();
+  const listeners = () => fake.window.webContents.rendererListeners.get('evolve:files-progress') ?? [];
+  // L'écouteur est posé au chargement de la passerelle, avant tout abonnement.
+  assert.equal(listeners().length, 1);
+
+  // Douze fenêtres ouvertes à la fois — le plus grand nombre que le bureau accepte : chacune s'abonne.
+  // (Avec un écouteur par abonné, le vrai Electron signalait une fuite possible à la onzième ; le faux refuse.)
+  const seen = Array.from({ length: 12 }, () => []);
+  const stops = seen.map((list) => files.onProgress((progress) => list.push(progress)));
+  assert.equal(listeners().length, 1);
+
+  assert.equal((await files.createFolder(documents, 'Un')).ok, true);
+  for (const list of seen) assert.deepEqual(list.map((progress) => [progress.kind, progress.state]), [['create-folder', 'finished']]);
+
+  // Une fenêtre se ferme : elle seule n'est plus informée.
+  stops[4]();
+  stops[4](); // se désabonner deux fois est sans effet
+  assert.equal((await files.createFolder(documents, 'Deux')).ok, true);
+  assert.deepEqual(seen.map((list) => list.length), [2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2]);
+  assert.equal(listeners().length, 1);
+
+  // Une même fonction abonnée deux fois est appelée deux fois ; chaque abonnement se retire séparément.
+  const twice = [];
+  const note = (progress) => twice.push(progress.state);
+  const [first, second] = [files.onProgress(note), files.onProgress(note)];
+  assert.equal((await files.createFolder(documents, 'Trois')).ok, true);
+  assert.deepEqual(twice, ['finished', 'finished']);
+  first();
+  assert.equal((await files.createFolder(documents, 'Quatre')).ok, true);
+  assert.deepEqual(twice, ['finished', 'finished', 'finished']);
+  second();
+
+  // Un abonné qui échoue ne prive pas les suivants de l'annonce ; sa panne est écrite dans la console.
+  const reported = t.mock.method(console, 'error', () => {});
+  const broken = files.onProgress(() => {
+    throw new Error('abonné en panne');
+  });
+  const after = [];
+  const last = files.onProgress((progress) => after.push(progress.state));
+  const before = seen[0].length;
+  assert.equal((await files.createFolder(documents, 'Cinq')).ok, true);
+  assert.equal(seen[0].length, before + 1);
+  assert.deepEqual(after, ['finished']);
+  assert.equal(reported.mock.callCount(), 1);
+  assert.match(String(reported.mock.calls[0].arguments[0]), /abonné à l'avancement/);
+  assert.equal(reported.mock.calls[0].arguments[1].message, 'abonné en panne');
+  broken();
+  last();
+
+  // Une fenêtre qui se ferme pendant une annonce — ici, la première ferme la dernière — n'est plus appelée.
+  const closing = [];
+  let stopLate = () => {};
+  const stopEarly = files.onProgress(() => {
+    closing.push('première');
+    stopLate();
+  });
+  stopLate = files.onProgress(() => closing.push('dernière'));
+  assert.equal((await files.createFolder(documents, 'Six')).ok, true);
+  assert.deepEqual(closing, ['première']);
+  stopEarly();
+
+  // Toutes les fenêtres fermées : plus personne n'est informé, et l'écouteur unique reste en place.
+  for (const stop of stops) stop();
+  const counts = seen.map((list) => list.length);
+  assert.equal((await files.createFolder(documents, 'Sept')).ok, true);
+  assert.deepEqual(seen.map((list) => list.length), counts);
+  assert.equal(listeners().length, 1);
+  assert.equal(reported.mock.callCount(), 1);
+});
+
+test('faux Electron : un onzième écouteur sur un même canal est refusé, comme le vrai le signalerait', async () => {
+  const fake = await launch();
+  const renderer = fake.rendererFor(fake.window.webContents);
+  for (let index = 0; index < 10; index += 1) renderer.on('evolve:essai', () => {});
+  assert.throws(() => renderer.on('evolve:essai', () => {}), /plus de 10 écouteurs sur « evolve:essai »/);
+  // Un autre canal n'est pas concerné.
+  renderer.on('evolve:autre', () => {});
+});
+
 test('opérations : l’inventaire des services les décrit — Corbeille seulement, aucun remplacement', async () => {
   let describe;
   const fake = await launch({

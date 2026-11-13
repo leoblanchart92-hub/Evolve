@@ -85,7 +85,8 @@ const IN_VIEW = `const inView = (el) => {
     && box.right <= innerWidth + 0.5 && box.bottom <= innerHeight + 0.5;
 };`;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Attend `ms` millisecondes ; une durée nulle (tests) rend seulement la main, sans minuterie (voir selftest-input.js). */
+const sleep = (ms) => new Promise((resolve) => (ms > 0 ? setTimeout(resolve, ms) : setImmediate(resolve)));
 
 /**
  * Nombre de couleurs distinctes d'une image, estimé sur un échantillon de
