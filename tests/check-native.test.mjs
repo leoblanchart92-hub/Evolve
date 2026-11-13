@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 
-import { findOtherVolume, importedLibraries, NOT_IN_WINDOWS, parseOptions, sha256 } from '../scripts/check-native.mjs';
+import { describeVolumes, fileSystems, findOtherVolume, importedLibraries, NOT_IN_WINDOWS, parseOptions, sha256 } from '../scripts/check-native.mjs';
 import { fromRoot, loadNativeMove } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
@@ -259,6 +259,73 @@ test('script — recherche d’un autre lecteur : le premier dossier accessible 
   }
 });
 
+test('script — système de fichiers des lecteurs éprouvés : demandé au système, jamais supposé', () => {
+  // Sous Windows : une seule question, pour les racines des lecteurs, transmises hors de la ligne de commande.
+  const calls = [];
+  const windows = (stdout, status = 0) => (command, args, options) => {
+    calls.push({ command, args, volumes: options.env.EVOLVE_VOLUMES, options });
+    return { status, stdout, stderr: '' };
+  };
+  const folders = ['C:\\Users\\Léa\\AppData\\Local\\Temp', 'D:\\a\\_temp', 'c:\\Autre dossier', 'E:\\'];
+  assert.deepEqual(fileSystems(folders, { platform: 'win32', run: windows('bruit\r\nEVOLVE:C:\\=NTFS\r\nEVOLVE:D:\\=ReFS\r\n\r\n') }), [
+    { place: 'C:\\', fileSystem: 'NTFS' },
+    { place: 'D:\\', fileSystem: 'ReFS' },
+    { place: 'E:\\', fileSystem: null },
+  ]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'powershell');
+  assert.equal(calls[0].volumes, 'C:\\|D:\\|E:\\');
+  assert.deepEqual(calls[0].args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
+  const script = Buffer.from(calls[0].args[5], 'base64').toString('utf16le');
+  assert.match(script, /\[System\.IO\.DriveInfo\]::new\(\$root\)\.DriveFormat/);
+  assert.ok(!/[A-Z]:\\/.test(script) && !calls[0].args.join(' ').includes('Temp'), 'aucun chemin dans la commande');
+  assert.ok(calls[0].options.timeout > 0 && calls[0].options.windowsHide === true);
+
+  // Réponse absente, étrangère ou inattendue : le système de fichiers reste « non relevé ».
+  const silent = [
+    windows(''),
+    windows('EVOLVE:C:\\=\r\n'),
+    windows('EVOLVE:C:\\=NTFS ; rm\r\n'),
+    windows('EVOLVE:Z:\\=NTFS\r\n'),
+    windows('C:\\=NTFS\r\n'),
+    () => ({ status: null, stdout: null, error: new Error('ENOENT') }),
+    () => {
+      throw new Error('lancement impossible');
+    },
+  ];
+  for (const run of silent) assert.deepEqual(fileSystems(['C:\\Temp'], { platform: 'win32', run }), [{ place: 'C:\\', fileSystem: null }]);
+  // Un chemin qui ne désigne pas un lecteur par sa lettre n'est pas soumis à Windows.
+  calls.length = 0;
+  assert.deepEqual(fileSystems(['\\\\serveur\\partage\\dossier'], { platform: 'win32', run: windows('EVOLVE:C:\\=NTFS\r\n') }), [{ place: '\\\\SERVEUR\\PARTAGE\\', fileSystem: null }]);
+  assert.equal(calls.length, 0);
+
+  // Ailleurs : « stat », dossier par dossier.
+  const asked = [];
+  const stat = (command, args) => {
+    asked.push([command, ...args]);
+    return args.at(-1) === '/tmp' ? { status: 0, stdout: 'ext2/ext3\n' } : args.at(-1) === '/dev/shm' ? { status: 0, stdout: 'tmpfs\n' } : { status: 1, stdout: '' };
+  };
+  assert.deepEqual(fileSystems(['/tmp', '/dev/shm', '/tmp', '/absent'], { platform: 'linux', run: stat }), [
+    { place: '/tmp', fileSystem: 'ext2/ext3' },
+    { place: '/dev/shm', fileSystem: 'tmpfs' },
+    { place: '/absent', fileSystem: null },
+  ]);
+  assert.deepEqual(asked, [
+    ['stat', '-f', '-c', '%T', '--', '/tmp'],
+    ['stat', '-f', '-c', '%T', '--', '/dev/shm'],
+    ['stat', '-f', '-c', '%T', '--', '/absent'],
+  ]);
+  assert.deepEqual(fileSystems(['/tmp'], { platform: 'linux', run: () => ({ status: 0, stdout: 'deux mots\n' }) }), [{ place: '/tmp', fileSystem: null }]);
+
+  // Sur cette machine, pour de bon : le système répond pour le dossier temporaire.
+  const [here] = fileSystems([fs.realpathSync.native(tmpdir())]);
+  assert.ok(typeof here.fileSystem === 'string' && /^[\w./+-]{2,30}$/.test(here.fileSystem), `système de fichiers de ${here.place} : ${here.fileSystem}`);
+
+  // La ligne du compte rendu ; un lecteur non identifié la fait commencer par « ! » (avertissement).
+  assert.equal(describeVolumes([{ place: 'C:\\', fileSystem: 'NTFS' }, { place: 'D:\\', fileSystem: 'NTFS' }]), 'Lecteurs éprouvés : C:\\ (NTFS) ; D:\\ (NTFS)');
+  assert.equal(describeVolumes([{ place: 'C:\\', fileSystem: 'NTFS' }, { place: 'D:\\', fileSystem: null }]), '! Lecteurs éprouvés : C:\\ (NTFS) ; D:\\ (système de fichiers non relevé)');
+});
+
 test('script — options de la ligne de commande', () => {
   assert.deepEqual(parseOptions([]), { module: null, record: null, expect: null, rounds: 40, otherVolume: null });
   assert.deepEqual(parseOptions(['--module=dist/x.node', '--record=a.sha256', '--expect=b.sha256', '--rounds=5', '--other-volume=D:\\a']), {
@@ -310,6 +377,16 @@ test('script — module compilé : vérification réussie, compte rendu, annotat
     assert.deepEqual(importedLibraries(ADDON_FILE).required, required);
     rest = rest.slice(libraries[0].length);
   }
+  // Puis les lecteurs éprouvés, avec leur système de fichiers tel que le système l'annonce :
+  // celui du dossier temporaire et, s'il existe, l'autre lecteur.
+  const volumes = /^Lecteurs éprouvés : (.+)\n/.exec(rest);
+  assert.ok(volumes, shown(out));
+  const expectedVolumes = fileSystems([fs.realpathSync.native(tmpdir()), ...(otherVolume ? [fs.realpathSync.native(otherVolume)] : [])]);
+  assert.equal(volumes[1], expectedVolumes.map(({ place, fileSystem }) => `${place} (${fileSystem})`).join(' ; '));
+  assert.equal(expectedVolumes.length, otherVolume ? 2 : 1);
+  for (const { place, fileSystem } of expectedVolumes) assert.ok(typeof fileSystem === 'string' && /^[\w./+-]{2,30}$/.test(fileSystem), `système de fichiers de ${place} : ${fileSystem}`);
+  if (process.platform === 'win32') assert.match(volumes[1], /^[A-Z]:\\ \([A-Za-z0-9]+\)(?: ; [A-Z]:\\ \([A-Za-z0-9]+\))?$/);
+  rest = rest.slice(volumes[0].length);
   assert.ok(rest.startsWith('✔ nom libre : 5 déplacements aboutis'), shown(out));
   assert.match(out, /\n✔ nom déjà pris : refusé par le système dans les \d cas/);
   assert.match(out, /\n✔ seule la casse du nom change : accepté \(2 cas\)\n/);

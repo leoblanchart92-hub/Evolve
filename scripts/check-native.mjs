@@ -15,6 +15,10 @@
  * que Windows doit charger avec lui : aucune ne doit manquer sur un Windows
  * fraîchement installé, puisque l'exécutable est portable.
  *
+ * Refuser de remplacer est l'affaire du système de fichiers : le compte rendu
+ * cite donc celui de chaque lecteur éprouvé (« NTFS »…), tel que le système
+ * l'annonce. La vérification ne vaut que pour ceux-là.
+ *
  * Utilisation :
  *   node scripts/check-native.mjs [--module=FICHIER] [--record=FICHIER] [--expect=FICHIER] [--rounds=N] [--other-volume=DOSSIER]
  *
@@ -30,6 +34,7 @@
  *                           puis retiré (par défaut : recherché parmi quelques dossiers usuels)
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -109,6 +114,65 @@ export function importedLibraries(file) {
     return found;
   };
   return { required: namesIn(1, 20, 12), delayed: namesIn(13, 32, 4) };
+}
+
+/** Demande à Windows le système de fichiers de chaque lecteur cité dans EVOLVE_VOLUMES (« C:\|D:\ »). */
+const VOLUMES_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "foreach ($root in ($env:EVOLVE_VOLUMES -split '\\|')) {",
+  "  try { 'EVOLVE:' + $root + '=' + [System.IO.DriveInfo]::new($root).DriveFormat } catch { }",
+  '}',
+].join('\r\n');
+
+/**
+ * Système de fichiers des lecteurs qui contiennent ces dossiers, tel que le
+ * système l'annonce : « NTFS », « exFAT »… sous Windows (demandé à Windows par
+ * PowerShell) ; « ext2/ext3 », « tmpfs »… sous Linux (demandé à « stat »).
+ * @param {string[]} folders  dossiers existants, désignés par leur chemin complet
+ * @param {object} [options]
+ * @param {string} [options.platform]
+ * @param {typeof spawnSync} [options.run]  lancement d'un programme
+ * @returns {{ place: string, fileSystem: string|null }[]} un lecteur par dossier — sous Windows, sa
+ *          racine (« C:\ ») —, sans répétition ; `fileSystem` vaut `null` si le système n'a pas répondu
+ */
+export function fileSystems(folders, { platform = process.platform, run = spawnSync } = {}) {
+  const isWindows = platform === 'win32';
+  const places = [...new Set(folders.map((folder) => (isWindows ? path.win32.parse(folder).root.toUpperCase() : folder)))];
+  /** @type {Map<string, string>} */
+  const names = new Map();
+  try {
+    if (isWindows) {
+      // Seules des racines « X:\ » sont transmises, et par une variable d'environnement : rien n'est interprété.
+      const roots = places.filter((place) => /^[A-Z]:\\$/.test(place));
+      const result = roots.length
+        ? run('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(VOLUMES_SCRIPT, 'utf16le').toString('base64')], {
+            env: { ...process.env, EVOLVE_VOLUMES: roots.join('|') },
+            encoding: 'utf8',
+            timeout: 60_000,
+            windowsHide: true,
+          })
+        : null;
+      for (const line of String(result?.stdout ?? '').split(/\r?\n/)) {
+        const [, root, name] = /^EVOLVE:([A-Z]:\\)=([A-Za-z0-9]{2,16})$/.exec(line.trim()) ?? [];
+        if (root && roots.includes(root)) names.set(root, name);
+      }
+    } else {
+      for (const place of places) {
+        const result = run('stat', ['-f', '-c', '%T', '--', place], { encoding: 'utf8', timeout: 20_000 });
+        const name = String(result?.stdout ?? '').trim();
+        if (result?.status === 0 && /^[\w./+-]{2,30}$/.test(name)) names.set(place, name);
+      }
+    }
+  } catch {
+    /* sans réponse : les systèmes de fichiers ne sont pas relevés */
+  }
+  return places.map((place) => ({ place, fileSystem: names.get(place) ?? null }));
+}
+
+/** Ligne du compte rendu citant les lecteurs éprouvés ; elle commence par « ! » si l'un d'eux n'a pas pu être identifié. */
+export function describeVolumes(volumes) {
+  const unknown = volumes.some(({ fileSystem }) => !fileSystem);
+  return `${unknown ? '! ' : ''}Lecteurs éprouvés : ${volumes.map(({ place, fileSystem }) => `${place} (${fileSystem ?? 'système de fichiers non relevé'})`).join(' ; ')}`;
 }
 
 /**
@@ -234,6 +298,8 @@ export async function main(argv) {
   try {
     const volume = options.otherVolume ? path.resolve(options.otherVolume) : findOtherVolume(base);
     if (volume) elsewhere = fs.realpathSync.native(fs.mkdtempSync(path.join(volume, 'evolve-natif-')));
+    // Les lecteurs sur lesquels la vérification a lieu, et leur système de fichiers : c'est lui qui refuse.
+    header.push(describeVolumes(fileSystems([base, ...(elsewhere ? [elsewhere] : [])].map((folder) => path.dirname(folder)))));
     result = await verifyNoReplace(move, { base, rounds: options.rounds, otherVolume: elsewhere });
   } catch (error) {
     return fail([...header, `✖ Vérification impossible : ${error?.message ?? error}`]);
