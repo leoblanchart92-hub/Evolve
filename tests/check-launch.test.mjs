@@ -520,7 +520,7 @@ test('fichier des réglages après un lancement sans réglage modifié : ni cré
 // Sous Windows, la demande de fermeture passe par la fenêtre de l'application :
 // la fausse application, sans fenêtre, ne peut pas la recevoir. Le déroulement
 // réel y est exercé par la compilation automatique, sur le véritable exécutable.
-const posixOnly = { skip: process.platform === 'win32' };
+const posixOnly = { skip: process.platform === 'win32' ? 'script de lancement essayé contre une fausse application, sans fenêtre : sous Windows, la compilation automatique lance le véritable exécutable' : false };
 
 /**
  * Lance le script contre la fausse application dans le mode donné. Chaque essai

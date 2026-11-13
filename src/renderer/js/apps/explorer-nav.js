@@ -4,7 +4,8 @@
  * Tient l'emplacement courant et l'historique (précédent, suivant), demande le
  * contenu des dossiers au service « files » de l'application de bureau — qui
  * lit les vrais dossiers de l'ordinateur, en lecture seule — et prépare la
- * « page » à afficher : titre, fil d'Ariane, éléments ou message.
+ * « page » à afficher : titre, fil d'Ariane, éléments ou message. Les
+ * opérations sur les fichiers sont tenues par explorer-actions.js.
  *
  * Dans un simple navigateur (aperçu de développement), aucun service
  * n'existe : chaque page annonce que l'accès aux fichiers nécessite
@@ -47,7 +48,7 @@ const PAGES = Object.freeze({
     message: {
       glyph: 'trash',
       title: 'Corbeille non disponible',
-      text: 'Evolve ne lit pas encore la corbeille de Windows. Vos éléments supprimés restent dans la corbeille de Windows.',
+      text: "Evolve n'affiche pas encore le contenu de la Corbeille. Les éléments que vous y envoyez depuis l'explorateur se retrouvent dans la Corbeille de Windows, où vous pouvez les restaurer.",
     },
   },
 });
@@ -77,7 +78,7 @@ const ERRORS = Object.freeze({
   'not-a-directory': {
     glyph: 'file',
     title: "Cet élément n'est pas un dossier",
-    text: "Il ne peut pas être parcouru. L'ouverture des fichiers arrivera dans une prochaine étape.",
+    text: 'Il ne peut pas être parcouru comme un dossier. Revenez en arrière, puis actualisez.',
   },
   'outside-allowed': {
     glyph: 'warning-circle',
@@ -108,8 +109,8 @@ const ERRORS = Object.freeze({
 
 /**
  * Dossier personnel absent (Bureau, Documents…) : le message le nomme, explique
- * pourquoi il peut manquer, et précise qu'Evolve ne l'a pas créé — l'explorateur
- * est en lecture seule, un dossier absent le reste.
+ * pourquoi il peut manquer, et précise qu'Evolve ne l'a pas créé — un dossier
+ * n'est créé qu'à la demande de l'utilisateur, un dossier absent le reste.
  */
 function missingPlaceMessage(name) {
   return {
@@ -197,6 +198,8 @@ function entryNode(entry) {
   const name = place ? place.name : entry.name;
   const node = {
     id: entry.path,
+    // Chemin réel : seuls les éléments lus dans un dossier en ont un (opérations sur les fichiers).
+    path: entry.path,
     kind: entry.kind,
     name,
     ext: entry.kind === 'file' ? extensionOf(entry.name) : '',
@@ -204,7 +207,11 @@ function entryNode(entry) {
     modified: typeof entry.modified === 'number' ? new Date(entry.modified) : null,
     hidden: entry.hidden === true,
   };
-  if (place) node.icon = place.icon;
+  if (place) {
+    node.icon = place.icon;
+    // Dossier personnel : il se parcourt, mais ne se renomme, ne se déplace et ne se supprime pas.
+    node.place = entry.place;
+  }
   // Un lien s'ouvre comme un dossier : le service vérifie où il mène réellement.
   if (entry.kind === 'folder' || entry.kind === 'link') node.location = folderLocation(entry.path, name);
   return node;
@@ -331,6 +338,11 @@ export class Navigator {
   /** Relit l'emplacement courant (et recherche à nouveau les lecteurs). */
   refresh() {
     return this.#current ? this.#load({ probe: true }) : Promise.resolve();
+  }
+
+  /** Relit l'emplacement courant, sans rechercher à nouveau les lecteurs (après une opération sur les fichiers). */
+  reload() {
+    return this.#current ? this.#load() : Promise.resolve();
   }
 
   /** Un dossier personnel connu est désigné par son chemin réel. */

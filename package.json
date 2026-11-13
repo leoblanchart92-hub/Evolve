@@ -1,7 +1,7 @@
 {
   "name": "evolve",
   "productName": "Evolve",
-  "version": "0.3.1",
+  "version": "0.4.1",
   "description": "Evolve — environnement de bureau futuriste pour Windows 10/11 (aperçu de l'interface graphique).",
   "private": true,
   "author": "leoblanchart92-hub",
@@ -20,18 +20,21 @@
     "preview": "node scripts/preview-server.mjs",
     "test": "node --test --test-reporter=spec",
     "icons": "node scripts/build-icons.mjs",
+    "build:native": "node-gyp rebuild --directory=native",
     "build:win": "electron-builder --win portable --x64 --publish never",
     "check:dev": "node scripts/check-exe.mjs electron -- .",
     "check:exe": "node scripts/check-exe.mjs",
     "check:launch": "node scripts/check-launch.mjs",
     "check:settings": "node scripts/check-settings.mjs",
     "check:documents": "node scripts/check-documents.mjs",
-    "check:manifest": "node scripts/check-manifest.mjs"
+    "check:manifest": "node scripts/check-manifest.mjs",
+    "check:native": "node scripts/check-native.mjs"
   },
   "devDependencies": {
     "@phosphor-icons/core": "2.1.1",
     "electron": "45.2.3",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "node-gyp": "12.4.0"
   },
   "build": {
     "appId": "io.github.leoblanchart92hub.evolve",
@@ -47,7 +50,11 @@
       "src/main/**/*",
       "src/services/**/*",
       "src/renderer/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "native/build/Release/evolve_fs.node"
+    ],
+    "asarUnpack": [
+      "native/build/Release/evolve_fs.node"
     ],
     "electronLanguages": [
       "fr",

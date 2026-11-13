@@ -2,22 +2,30 @@
  * Evolve — Explorateur de fichiers (interface graphique).
  *
  * L'explorateur parcourt les vrais dossiers de l'ordinateur — Bureau,
- * Documents, Téléchargements, Images, Musique, Vidéos et lecteurs — EN LECTURE
- * SEULE : il n'ouvre, ne crée, ne modifie, ne déplace et ne supprime rien.
- * Il ne touche jamais au disque lui-même : il interroge le service « files »
- * de l'application de bureau (src/services/files.js), qui contrôle chaque
- * chemin demandé. La navigation est tenue par explorer-nav.js.
+ * Documents, Téléchargements, Images, Musique, Vidéos et lecteurs — et y
+ * effectue de vraies opérations : nouveau dossier, renommer, couper, copier,
+ * coller, envoyer à la Corbeille, ouvrir un fichier.
+ *
+ * Il ne touche jamais au disque lui-même. Il interroge le service « files »
+ * de l'application de bureau pour lire les dossiers (src/services/files.js),
+ * et lui demande chaque opération (src/services/file-operations.js) : c'est
+ * elle qui contrôle chaque chemin et qui agit. Rien n'est jamais supprimé
+ * définitivement ni remplacé. La navigation est tenue par explorer-nav.js,
+ * le déroulement des opérations par explorer-actions.js.
  *
  * Dans un simple navigateur (aperçu de développement), aucun dossier n'est
- * lisible : l'explorateur l'annonce et n'affiche aucun fichier fictif.
+ * lisible et aucune opération n'existe : l'explorateur l'annonce et n'affiche
+ * aucun fichier fictif.
  */
 
 import { h, highlight } from '../core/dom.js';
+import { fileOperations } from '../core/file-operations.js';
 import { describeNode, sortNodes } from '../core/file-types.js';
 import { formatFileDate, formatNumber, formatSize, plural } from '../core/format.js';
 import { icon } from '../core/icons.js';
 import { services } from '../core/services.js';
 import { nodeIcon } from '../shell/file-icon.js';
+import { createFileClipboard, FileActions } from './explorer-actions.js';
 import { Navigator, PLACES, visibleNodes } from './explorer-nav.js';
 
 const COLUMNS = [
@@ -32,11 +40,21 @@ const SORT_LABELS = { name: 'Nom', modified: 'Date de modification', type: 'Type
 /** Délai avant d'annoncer un chargement : une lecture rapide ne fait pas clignoter le contenu. */
 const LOADING_DELAY_MS = 250;
 
+/**
+ * Éléments coupés ou copiés, en attente d'être collés. Ce presse-papiers est
+ * interne à Evolve et dure le temps de la session : il survit à la fermeture
+ * de la fenêtre de l'explorateur. Celui de Windows n'est ni lu ni modifié.
+ */
+const clipboard = createFileClipboard();
+
 class Explorer {
   #win;
   #shell;
   /** Navigation : emplacement courant, historique, page à afficher. */
   #nav;
+  /** Opérations sur les fichiers : nouveau dossier, renommer, couper, copier, coller, Corbeille, ouvrir. */
+  #actions;
+  #unwatchClipboard;
   /** Emplacement de la page affichée (pour distinguer une actualisation d'un déplacement). */
   #shownKey = null;
   #view = 'grid';
@@ -73,6 +91,8 @@ class Explorer {
   #content;
   #statusText;
   #statusSelection;
+  /** Pastille de la barre d'état : éléments coupés ou copiés, en attente d'être collés. */
+  #clipboardChip;
   #viewButtons = {};
 
   constructor(win, shell) {
@@ -86,6 +106,19 @@ class Explorer {
       },
       onChange: () => this.#onNavigation(),
     });
+    this.#actions = new FileActions({
+      operations: fileOperations,
+      dialogs: shell.dialogs,
+      toasts: shell.toasts,
+      clipboard,
+      view: {
+        // Pendant une lecture, aucun dossier n'est affiché : aucune commande ne s'applique.
+        page: () => (this.#nav.loading ? null : this.#nav.page),
+        reload: () => this.#nav.reload(),
+        select: (paths) => this.#selectPaths(paths),
+        changed: () => this.#syncToolbar(),
+      },
+    });
 
     this.el = h(
       'div',
@@ -97,6 +130,8 @@ class Explorer {
     );
     this.el.addEventListener('keydown', (event) => this.#onKeyDown(event));
     win.body.append(this.el);
+    this.#unwatchClipboard = clipboard.onChange(() => this.#syncClipboard());
+    this.#syncClipboard();
 
     // Fenêtre redimensionnée : le fil d'Ariane replie ou déplie ses premiers dossiers.
     this.#crumbsObserver = new ResizeObserver(() => this.#fitCrumbs());
@@ -121,6 +156,8 @@ class Explorer {
     this.#destroyed = true;
     clearTimeout(this.#loadingTimer);
     this.#crumbsObserver.disconnect();
+    this.#unwatchClipboard();
+    this.#actions.dispose();
     this.#shell.menus.close();
   }
 
@@ -183,14 +220,17 @@ class Explorer {
   #buildCommands() {
     const create = h(
       'button',
-      { class: 'btn btn--accent', type: 'button' },
+      { class: 'btn btn--accent', type: 'button', 'data-tip': 'Nouveau dossier (Ctrl+Maj+N)', dataset: { command: 'new-folder' } },
       icon('plus'),
-      h('span', { class: 'btn__label', text: 'Nouveau' }),
+      h('span', { class: 'btn__label', text: 'Nouveau dossier' }),
     );
-    create.addEventListener('click', () => this.#preview('Nouveau'));
+    create.addEventListener('click', () => {
+      if (create.getAttribute('aria-disabled') !== 'true') this.#actions.newFolder();
+    });
+    this.#buttons.create = create;
 
-    const command = (key, glyph, label, extra = {}) => {
-      this.#buttons[key] = this.#iconButton(glyph, label, () => this.#preview(label), extra);
+    const command = (key, glyph, label, run, extra = {}) => {
+      this.#buttons[key] = this.#iconButton(glyph, label, run, { ...extra, 'data-command': key });
       return this.#buttons[key];
     };
 
@@ -217,12 +257,11 @@ class Explorer {
       { class: 'ex-commands', role: 'toolbar', 'aria-label': 'Commandes' },
       create,
       h('span', { class: 'ex-commands__sep' }),
-      command('cut', 'scissors', 'Couper'),
-      command('copy', 'copy', 'Copier'),
-      command('paste', 'clipboard-text', 'Coller', { 'data-optional': '' }),
-      command('rename', 'pencil-simple-line', 'Renommer'),
-      command('share', 'share-fat', 'Partager', { 'data-optional': '' }),
-      command('delete', 'trash', 'Supprimer'),
+      command('cut', 'scissors', 'Couper (Ctrl+X)', () => this.#actions.cut(this.#selectedNodes())),
+      command('copy', 'copy', 'Copier (Ctrl+C)', () => this.#actions.copy(this.#selectedNodes())),
+      command('paste', 'clipboard-text', 'Coller (Ctrl+V)', () => this.#actions.paste()),
+      command('rename', 'pencil-simple-line', 'Renommer (F2)', () => this.#renameSelected()),
+      command('delete', 'trash', 'Envoyer à la Corbeille (Suppr)', () => this.#actions.trash(this.#selectedNodes())),
       h('span', { class: 'ex-commands__spacer' }),
       this.#buttons.sort,
       this.#buttons.view,
@@ -320,12 +359,10 @@ class Explorer {
     this.#viewButtons.list = this.#iconButton('list-bullets', 'Détails', () => this.#setView('list'));
     this.#viewButtons.grid = this.#iconButton('squares-four', 'Grandes icônes', () => this.#setView('grid'));
 
-    const mode = services.available
-      ? h('span', {
-          class: 'chip chip--accent',
-          text: 'Lecture seule',
-          'data-tip': 'Evolve consulte vos dossiers sans jamais rien modifier',
-        })
+    // Éléments coupés ou copiés : affichée seulement quand il y a quelque chose à coller.
+    this.#clipboardChip = h('span', { class: 'chip chip--accent ex-status__clipboard', hidden: true });
+    const preview = services.available
+      ? null
       : h('span', {
           class: 'chip chip--demo',
           text: 'Aperçu',
@@ -337,7 +374,8 @@ class Explorer {
       { class: 'ex-status' },
       h('span', { class: 'ex-status__text' }, this.#statusText, this.#statusSelection),
       h('span', { class: 'ex-status__spacer' }),
-      mode,
+      this.#clipboardChip,
+      preview,
       this.#viewButtons.list,
       this.#viewButtons.grid,
     );
@@ -643,7 +681,9 @@ class Explorer {
   #itemProps(node, className) {
     // Estompés : les éléments masqués par Windows, et un dossier personnel introuvable.
     const dimmed = node.hidden || node.available === false ? ' is-dimmed' : '';
-    return { class: `ex-item ${className}${dimmed}`, role: 'option', 'aria-selected': 'false', dataset: { id: node.id, kind: node.kind } };
+    // Coupé : en attente d'être déplacé par « Coller ».
+    const cut = clipboard.isCut(node.path) ? ' is-cut' : '';
+    return { class: `ex-item ${className}${dimmed}${cut}`, role: 'option', 'aria-selected': 'false', dataset: { id: node.id, kind: node.kind } };
   }
 
   #grid(nodes) {
@@ -809,15 +849,16 @@ class Explorer {
     this.#statusSelection.textContent = ` · ${label}${size}`;
   }
 
+  /** Une commande inutilisable est désactivée : sélection vide, page sans dossier réel, rien à coller, opération en cours. */
   #syncToolbar() {
-    const count = this.#selection.size;
+    const can = this.#actions.commands(this.#selectedNodes());
     const setDisabled = (key, disabled) => this.#buttons[key].setAttribute('aria-disabled', String(disabled));
-    setDisabled('cut', count === 0);
-    setDisabled('copy', count === 0);
-    setDisabled('paste', true); // aucune opération sur les fichiers : lecture seule
-    setDisabled('rename', count !== 1);
-    setDisabled('share', count === 0);
-    setDisabled('delete', count === 0);
+    setDisabled('create', !can.newFolder);
+    setDisabled('cut', !can.cut);
+    setDisabled('copy', !can.copy);
+    setDisabled('paste', !can.paste);
+    setDisabled('rename', !can.rename);
+    setDisabled('delete', !can.trash);
 
     this.#viewButtons.grid.classList.toggle('is-on', this.#view === 'grid');
     this.#viewButtons.list.classList.toggle('is-on', this.#view === 'list');
@@ -848,14 +889,26 @@ class Explorer {
       });
     }
     if (key === 'Escape' && this.#selection.size) return this.#handled(event, () => this.#clearSelection(), true);
+    // Échap, sans sélection : les éléments coupés ne sont plus en attente d'être déplacés.
+    if (key === 'Escape' && clipboard.mode === 'cut') return this.#handled(event, () => clipboard.clear(), true);
     if (key === 'Backspace') return this.#handled(event, () => this.#nav.goBack());
+
+    // Opérations sur les fichiers (AltGr, qui vaut Ctrl+Alt, n'en déclenche aucune).
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const letter = key.toLowerCase();
+      if (letter === 'c') return this.#handled(event, () => this.#actions.copy(this.#selectedNodes()));
+      if (letter === 'x') return this.#handled(event, () => this.#actions.cut(this.#selectedNodes()));
+      if (letter === 'v') return this.#handled(event, () => this.#actions.paste());
+      if (letter === 'n' && event.shiftKey) return this.#handled(event, () => this.#actions.newFolder());
+    }
     if (key === 'Enter') {
       const node = this.#items.find((item) => item.id === this.#cursor && this.#selection.has(item.id));
       if (node) return this.#handled(event, () => this.#open(node));
       return undefined;
     }
-    if (key === 'Delete' && this.#selection.size) return this.#handled(event, () => this.#preview('Supprimer'));
-    if (key === 'F2' && this.#selection.size === 1) return this.#handled(event, () => this.#preview('Renommer'));
+    // Suppr envoie à la Corbeille, après confirmation ; il n'existe aucune suppression définitive.
+    if (key === 'Delete' && this.#selection.size) return this.#handled(event, () => this.#actions.trash(this.#selectedNodes()));
+    if (key === 'F2' && this.#selection.size === 1) return this.#handled(event, () => this.#renameSelected());
 
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) {
       return this.#handled(event, () => this.#moveCursor(key, event.shiftKey));
@@ -922,22 +975,57 @@ class Explorer {
       this.#nav.open(node.location);
       return;
     }
+    // Fichier : confié à l'application que Windows lui associe (après confirmation, sauf pour un simple contenu).
+    if (node.kind === 'file') {
+      this.#actions.open(node);
+      return;
+    }
     this.#shell.toasts.show({
       key: 'explorer-open',
       title: node.name,
-      message: "L'ouverture des fichiers arrivera dans une prochaine étape : cette version consulte vos dossiers en lecture seule.",
+      message: "Cet élément n'est ni un fichier ni un dossier : il ne peut pas être ouvert.",
       glyph: describeNode(node).icon,
     });
   }
 
-  /** Commande présente à l'écran mais sans effet : l'explorateur ne modifie aucun fichier. */
-  #preview(action) {
-    this.#shell.toasts.show({
-      key: 'explorer-preview',
-      title: `${action} — bientôt disponible`,
-      message: "Cette version de l'explorateur consulte vos fichiers sans jamais les modifier. Les opérations sur les fichiers arriveront dans une prochaine étape.",
-      glyph: 'sparkle',
-    });
+  #renameSelected() {
+    const [node] = this.#selectedNodes();
+    if (node && this.#selection.size === 1) this.#actions.rename(node);
+  }
+
+  /** Sélectionne les éléments désignés par leur chemin : ceux qui viennent d'être créés, renommés ou collés. */
+  #selectPaths(paths) {
+    const wanted = new Set(paths.map((path) => path.toLowerCase()));
+    const shown = () => this.#items.filter((node) => typeof node.path === 'string' && wanted.has(node.path.toLowerCase())).map((node) => node.id);
+    let ids = shown();
+    // Écartés par la recherche en cours : elle est effacée, pour qu'ils apparaissent.
+    if (!ids.length && this.#filter) {
+      this.#setFilter('');
+      ids = shown();
+    }
+    if (!ids.length) return;
+    this.#selection = new Set(ids);
+    this.#cursor = ids[0];
+    this.#syncSelection({ reveal: ids[0] });
+    // Le clavier agit aussitôt sur ces éléments (F2, Suppr, Ctrl+C…), sauf s'il est occupé ailleurs.
+    const active = document.activeElement;
+    if (!active || active === document.body || this.el.contains(active)) this.#content.focus({ preventScroll: true });
+  }
+
+  /** Presse-papiers modifié : pastille de la barre d'état, éléments coupés estompés, bouton « Coller ». */
+  #syncClipboard() {
+    const count = clipboard.size;
+    const cut = clipboard.mode === 'cut';
+    this.#clipboardChip.hidden = count === 0;
+    if (count) {
+      this.#clipboardChip.textContent = `${plural(count, 'élément')} à ${cut ? 'déplacer' : 'coller'}`;
+      this.#clipboardChip.dataset.mode = clipboard.mode;
+      this.#clipboardChip.dataset.tip = cut
+        ? 'Éléments coupés : « Coller » (Ctrl+V) les déplace dans le dossier affiché'
+        : 'Éléments copiés : « Coller » (Ctrl+V) les copie dans le dossier affiché';
+    }
+    for (const node of this.#items) this.#itemEls.get(node.id)?.classList.toggle('is-cut', clipboard.isCut(node.path));
+    this.#syncToolbar();
   }
 
   #showProperties(node) {
@@ -958,6 +1046,9 @@ class Explorer {
 
   #showItemMenu(node, x, y) {
     const single = this.#selection.size === 1;
+    const nodes = this.#selectedNodes();
+    // Une commande inutilisable reste visible, mais désactivée.
+    const can = this.#actions.commands(nodes);
     this.#shell.menus.show({
       x,
       y,
@@ -967,13 +1058,14 @@ class Explorer {
           label: 'Ouvrir',
           glyph: node.location ? 'folder-open' : 'arrow-square-out',
           hint: 'Entrée',
+          disabled: !can.open,
           onSelect: () => this.#open(node),
         },
         single && { separator: true },
-        { label: 'Couper', glyph: 'scissors', hint: 'Ctrl+X', onSelect: () => this.#preview('Couper') },
-        { label: 'Copier', glyph: 'copy', hint: 'Ctrl+C', onSelect: () => this.#preview('Copier') },
-        single && { label: 'Renommer', glyph: 'pencil-simple-line', hint: 'F2', onSelect: () => this.#preview('Renommer') },
-        { label: 'Supprimer', glyph: 'trash', hint: 'Suppr', danger: true, onSelect: () => this.#preview('Supprimer') },
+        { label: 'Couper', glyph: 'scissors', hint: 'Ctrl+X', disabled: !can.cut, onSelect: () => this.#actions.cut(nodes) },
+        { label: 'Copier', glyph: 'copy', hint: 'Ctrl+C', disabled: !can.copy, onSelect: () => this.#actions.copy(nodes) },
+        single && { label: 'Renommer', glyph: 'pencil-simple-line', hint: 'F2', disabled: !can.rename, onSelect: () => this.#actions.rename(node) },
+        { label: 'Envoyer à la Corbeille', glyph: 'trash', hint: 'Suppr', danger: true, disabled: !can.trash, onSelect: () => this.#actions.trash(nodes) },
         single && { separator: true },
         single && { label: 'Propriétés', glyph: 'info', onSelect: () => this.#showProperties(node) },
       ],
@@ -998,6 +1090,7 @@ class Explorer {
   }
 
   #showBackgroundMenu(x, y) {
+    const can = this.#actions.commands([]);
     this.#shell.menus.show({
       x,
       y,
@@ -1009,7 +1102,9 @@ class Explorer {
         ...this.#sortItems(),
         { separator: true },
         { label: 'Actualiser', glyph: 'arrow-clockwise', hint: 'F5', onSelect: () => this.#nav.refresh() },
-        { label: 'Nouveau dossier', glyph: 'folder-plus', onSelect: () => this.#preview('Nouveau dossier') },
+        { separator: true },
+        { label: 'Coller', glyph: 'clipboard-text', hint: 'Ctrl+V', disabled: !can.paste, onSelect: () => this.#actions.paste() },
+        { label: 'Nouveau dossier', glyph: 'folder-plus', hint: 'Ctrl+Maj+N', disabled: !can.newFolder, onSelect: () => this.#actions.newFolder() },
       ],
     });
   }

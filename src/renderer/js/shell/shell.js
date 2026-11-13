@@ -9,6 +9,7 @@ import { mounterFor } from '../apps/index.js';
 import { WindowManager } from '../wm/window-manager.js';
 import { MenuLayer } from './context-menu.js';
 import { Desktop } from './desktop.js';
+import { Dialogs } from './dialogs.js';
 import { FlyoutController } from './flyouts.js';
 import { NotificationCenter } from './notification-center.js';
 import { QuickSettings } from './quick-settings.js';
@@ -31,6 +32,8 @@ export class Shell {
     this.files = createDemoFileSystem();
 
     this.menus = new MenuLayer($('menus'));
+    // Une fenêtre de dialogue qui s'ouvre referme le menu d'où elle vient.
+    this.dialogs = new Dialogs($('dialogs'), { onOpen: () => this.menus.close() });
     this.toasts = new Toasts($('toasts'));
     this.tooltips = installTooltips($('tooltip'));
     this.flyouts = new FlyoutController($('flyouts'), {
