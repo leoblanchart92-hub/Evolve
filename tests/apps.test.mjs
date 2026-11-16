@@ -9,13 +9,13 @@ import { LOCATION_IDS } from '../src/renderer/js/apps/explorer-nav.js';
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 test('chaque application est complètement décrite', () => {
-  assert.ok(APPS.length >= 12);
+  assert.ok(APPS.length >= 2);
   assert.equal(new Set(APPS.map((app) => app.id)).size, APPS.length, 'identifiants uniques');
   assert.equal(new Set(APPS.map((app) => app.name)).size, APPS.length, 'noms uniques');
   for (const app of APPS) {
     assert.match(app.id, /^[a-z][a-z0-9-]*$/);
     assert.ok(app.name.length > 0);
-    assert.ok(['explorer', 'placeholder'].includes(app.kind), `type inconnu pour ${app.id}`);
+    assert.ok(['explorer', 'settings'].includes(app.kind), `type inconnu pour ${app.id}`);
     assert.ok(typeof app.glyph === 'string' && app.glyph.length > 0);
     assert.equal(app.colors.length, 2);
     for (const color of app.colors) assert.match(color, HEX_COLOR);
@@ -25,11 +25,22 @@ test('chaque application est complètement décrite', () => {
   assert.equal(getApp('inconnue'), undefined);
 });
 
-test("seul l'explorateur de fichiers possède une interface complète", () => {
+test("chaque application inscrite possède une interface complète — aucune fenêtre d'attente", () => {
+  // Evolve ne présente que des applications réellement utilisables : le registre
+  // ne contient ni fenêtre d'attente, ni application à moitié construite.
+  for (const app of APPS) assert.notEqual(app.kind, 'placeholder', `${app.id} : application non développée`);
   assert.deepEqual(APPS.filter((app) => app.kind === 'explorer').map((app) => app.id), ['explorer']);
+  assert.deepEqual(APPS.filter((app) => app.kind === 'settings').map((app) => app.id), ['settings']);
+});
+
+test("l'explorateur et les Paramètres sont les deux seules applications", () => {
+  assert.deepEqual(APPS.map((app) => app.id), ['explorer', 'settings']);
+  assert.deepEqual(TASKBAR_PINNED, ['explorer', 'settings']);
+  assert.deepEqual(START_PINNED, ['explorer', 'settings']);
 });
 
 test('les applications épinglées existent et ne sont pas en double', () => {
+  assert.ok(TASKBAR_PINNED.length >= 2);
   for (const list of [TASKBAR_PINNED, START_PINNED]) {
     assert.equal(new Set(list).size, list.length);
     for (const id of list) assert.ok(getApp(id), `application épinglée inconnue : ${id}`);

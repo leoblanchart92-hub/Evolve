@@ -6,6 +6,7 @@
 import { PRODUCT, TIMING } from './config.js';
 import { wait } from './core/dom.js';
 import { installIcons } from './core/icons.js';
+import { services } from './core/services.js';
 import { startSettingsSync } from './shell/settings-sync.js';
 import { Shell } from './shell/shell.js';
 
@@ -43,6 +44,20 @@ async function start() {
   await settings.ready;
 
   const shell = new Shell();
+
+  // Une mise à jour trouvée au démarrage est annoncée une seule fois ; un clic
+  // ouvre les Paramètres sur la page « Mises à jour ».
+  services.on('updates', 'available', (latest) => {
+    shell.toasts.show({
+      key: 'updates-available',
+      title: latest?.version ? `Version ${latest.version} disponible` : 'Mise à jour disponible',
+      message: "Ouvrez les Paramètres, page Mises à jour, pour la télécharger et l'installer.",
+      glyph: 'arrows-clockwise',
+      colors: ['#8fd8ff', '#6557f5'],
+      timeout: 12_000,
+      onClick: () => shell.launch('settings', { params: { page: 'updates' } }),
+    });
+  });
 
   await assetsReady();
   await wait(Math.max(0, TIMING.bootMin - (performance.now() - startedAt)));

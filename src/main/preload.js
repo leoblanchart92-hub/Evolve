@@ -19,6 +19,12 @@ contextBridge.exposeInMainWorld('evolve', {
   /** Ferme l'application. */
   quit: () => ipcRenderer.send('evolve:quit'),
 
+  /**
+   * Ouvre une adresse dans le navigateur du système. Seules les pages du
+   * projet Evolve sont acceptées ; toute autre adresse est refusée.
+   */
+  openExternal: (url) => ipcRenderer.invoke('evolve:open-external', String(url)),
+
   /** Bascule entre plein écran et mode fenêtré. */
   toggleFullscreen: () => ipcRenderer.invoke('evolve:toggle-fullscreen'),
 

@@ -26,6 +26,7 @@ export const PERSISTED = Object.freeze({
   brightness: 'quick.brightness',
   volume: 'quick.volume',
   muted: 'quick.muted',
+  updatesAutoCheck: 'updates.autoCheck',
 });
 
 /** Attente maximale des réglages au démarrage : au-delà, le bureau s'ouvre sans eux. */

@@ -24,8 +24,10 @@ export class Toasts {
    * @param {string} [options.key]      une même clé remplace la notification
    *                                    existante au lieu d'en empiler une autre
    * @param {number} [options.timeout]
+   * @param {() => void} [options.onClick]  action au clic sur la notification
+   *        (« Ouvrir les paramètres », par exemple) ; elle la referme aussitôt
    */
-  show({ title, message = '', glyph = 'info', colors = ['#d3b0ff', '#7c3aed'], key, timeout = TIMING.toast }) {
+  show({ title, message = '', glyph = 'info', colors = ['#d3b0ff', '#7c3aed'], key, timeout = TIMING.toast, onClick }) {
     if (key && this.#byKey.has(key)) this.#dismiss(this.#byKey.get(key), { immediate: true });
 
     const tile = h('span', { class: 'app-icon', style: { '--g1': colors[0], '--g2': colors[1] } }, icon(glyph, 'fill'));
@@ -52,6 +54,16 @@ export class Toasts {
     close.addEventListener('click', () => this.#dismiss(toast));
     el.addEventListener('pointerenter', () => clearTimeout(toast.timer));
     el.addEventListener('pointerleave', arm);
+
+    // Une notification cliquable ouvre ce qu'elle annonce, puis se referme.
+    if (typeof onClick === 'function') {
+      el.classList.add('is-clickable');
+      el.addEventListener('click', (event) => {
+        if (event.target.closest('.toast__close')) return;
+        this.#dismiss(toast);
+        onClick();
+      });
+    }
 
     if (key) this.#byKey.set(key, toast);
     this.#container.append(el);

@@ -35,11 +35,10 @@ const NAMES = [
   'share-fat', 'trash', 'arrows-down-up', 'list-bullets', 'link', 'lock',
   // Emplacements et matériel
   'house', 'desktop', 'download-simple', 'folder', 'folder-open', 'folder-plus', 'images',
-  'music-notes', 'film-strip', 'hard-drive', 'network', 'cpu', 'memory', 'graphics-card', 'monitor',
-  // Applications
-  'gear-six', 'compass', 'terminal-window', 'storefront', 'envelope-simple', 'calendar-dots', 'image',
-  'film-slate', 'note-pencil', 'calculator', 'cloud-sun', 'clock', 'camera', 'map-trifold',
-  'game-controller', 'pulse', 'app-window',
+  'music-notes', 'film-strip', 'hard-drive', 'network', 'cpu', 'memory', 'graphics-card',
+  // Applications — Evolve n'embarque que l'explorateur et les Paramètres :
+  // tout pictogramme d'une application qui n'existe plus doit être retiré d'ici.
+  'gear-six', 'terminal-window', 'pulse', 'app-window',
   // Types de fichiers
   'file', 'file-text', 'file-doc', 'file-xls', 'file-ppt', 'file-pdf', 'file-image', 'file-audio',
   'file-video', 'file-zip', 'file-code',

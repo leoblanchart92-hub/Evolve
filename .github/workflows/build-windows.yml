@@ -1,26 +1,31 @@
-# Evolve — Fabrication de l'exécutable Windows portable.
+# Evolve — Fabrication des fichiers publiés pour Windows.
 #
 # À chaque envoi de code, une machine Windows de GitHub :
 #   1. lance les tests automatiques ;
 #   2. démarre l'application et vérifie que l'interface répond (auto-test) ;
-#   3. fabrique le fichier .exe portable ;
-#   4. vérifie ce fichier : aucun droit administrateur demandé, puis démarrage
-#      réel et nouveau passage de l'auto-test ;
-#   5. lance ce fichier normalement, comme un double-clic : fenêtre en plein
+#   3. fabrique l'exécutable portable et les deux programmes d'installation
+#      (l'un pour l'utilisateur courant, sans droits d'administrateur ; l'autre
+#      pour tous les utilisateurs, dans « Program Files ») ;
+#   4. vérifie les droits que chacun de ces fichiers demande à Windows, relève
+#      leur empreinte SHA-256 et rassemble le tout dans une image .iso ;
+#   5. démarre l'exécutable portable et lui fait repasser l'auto-test ;
+#   6. lance ce fichier normalement, comme un double-clic : fenêtre en plein
 #      écran, écran comparé à l'image dessinée par l'application, fermeture
 #      normale, fichiers temporaires, rien d'écrit dans le profil ;
-#   6. lance ce fichier deux fois de suite : des réglages modifiés au premier
+#   7. lance ce fichier deux fois de suite : des réglages modifiés au premier
 #      lancement doivent être sur le disque, puis retrouvés au second ;
-#   7. publie le .exe, téléchargeable depuis la page de l'exécution
-#      (rubrique « Artifacts »), ainsi que les rapports et les captures
-#      d'écran des vérifications.
+#   8. lance le programme d'installation en silence : l'application installée
+#      doit passer l'auto-test, puis être entièrement désinstallée ;
+#   9. publie les quatre fichiers et leurs empreintes, téléchargeables depuis
+#      la page de l'exécution (rubrique « Artifacts »), ainsi que les rapports
+#      et les captures d'écran des vérifications.
 #
-# Le .exe n'est publié que si toutes les vérifications ont réussi.
+# Rien n'est publié tant que toutes les vérifications n'ont pas réussi.
 #
 # Les étapes passent par scripts/ci-run.sh : en cas d'échec, la fin de leur
 # sortie est affichée en tête de la page de l'exécution.
 
-name: Exécutable Windows
+name: Fichiers publiés pour Windows
 
 on:
   push:
@@ -41,7 +46,7 @@ concurrency:
 
 jobs:
   build:
-    name: Tester et fabriquer le .exe portable
+    name: Tester et fabriquer les fichiers publiés
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -84,11 +89,25 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --out=self-test-output/application -- .
 
-      - name: Fabriquer l'exécutable portable
-        run: bash scripts/ci-run.sh fabrication-executable npm run build:win
+      - name: Fabriquer l'exécutable portable et les deux programmes d'installation
+        run: bash scripts/ci-run.sh fabrication npm run build:win
 
-      - name: Vérifier que le .exe ne demande aucun droit administrateur
-        run: bash scripts/ci-run.sh droits-administrateur npm run check:manifest
+      # Le manifeste de chaque fichier dit à Windows quels droits demander :
+      # jamais l'élévation, sauf pour l'installation dans « Program Files ».
+      - name: Vérifier les droits demandés à Windows
+        run: bash scripts/ci-run.sh droits-demandes npm run check:manifest
+
+      # Empreintes des trois exécutables : elles accompagnent les fichiers dans
+      # l'image .iso. Le second passage, après la fabrication de l'image, y
+      # ajoute l'empreinte de l'image elle-même — qu'elle ne peut pas contenir.
+      - name: Empreintes SHA-256 des exécutables
+        run: bash scripts/ci-run.sh empreintes-executables npm run build:checksums
+
+      - name: Image .iso des fichiers publiés
+        run: bash scripts/ci-run.sh image-iso npm run build:iso
+
+      - name: Empreintes SHA-256 de tous les fichiers publiés
+        run: bash scripts/ci-run.sh empreintes node scripts/checksums.mjs dist/Evolve-*-portable.exe dist/Evolve-*-setup.exe dist/Evolve-*-setup-tous-utilisateurs.exe dist/Evolve-*.iso
 
       - name: Auto-test de l'exécutable portable
         timeout-minutes: 8
@@ -117,6 +136,14 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/ci-run.sh documents-absent node scripts/check-documents.mjs --out=self-test-output/documents-absent
 
+      # Installation réelle, sans droits d'administrateur : le programme
+      # d'installation est lancé en silence, l'application installée passe
+      # l'auto-test, puis elle est désinstallée — et la machine doit s'en
+      # trouver comme avant, réglages de l'utilisateur compris.
+      - name: Installation silencieuse, auto-test de l’application installée, désinstallation
+        timeout-minutes: 12
+        run: bash scripts/ci-run.sh installation node scripts/check-setup.mjs --out=self-test-output/installation
+
       - name: Publier les rapports et les captures d'écran des vérifications
         if: always()
         uses: actions/upload-artifact@v7
@@ -128,28 +155,40 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Résumé de l'exécutable
+      - name: Résumé des fichiers publiés
         run: |
-          exe="$(ls dist/Evolve-*-portable.exe)"
-          size="$(stat -c %s "$exe")"
-          sha="$(sha256sum "$exe" | cut -d ' ' -f 1)"
           {
-            echo "### 📦 Exécutable portable"
+            echo "### 📦 Fichiers publiés"
             echo ""
             echo "| Fichier | Taille | Empreinte SHA-256 |"
             echo "| --- | --- | --- |"
-            echo "| \`$(basename "$exe")\` | $((size / 1024 / 1024)) Mo | \`$sha\` |"
+            for file in dist/Evolve-*-portable.exe dist/Evolve-*-setup.exe dist/Evolve-*-setup-tous-utilisateurs.exe dist/Evolve-*.iso; do
+              [ -f "$file" ] || continue
+              size="$(stat -c %s "$file")"
+              sha="$(sha256sum "$file" | cut -d ' ' -f 1)"
+              echo "| \`$(basename "$file")\` | $((size / 1024 / 1024)) Mo | \`$sha\` |"
+            done
             echo ""
-            echo "Téléchargement : rubrique **Artifacts**, en bas de cette page."
+            echo "Téléchargement : rubrique **Artifacts**, en bas de cette page. Les empreintes sont aussi réunies dans \`SHA256SUMS.txt\`."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Exécutable portable::$(basename "$exe") — $((size / 1024 / 1024)) Mo — SHA-256 $sha"
+          for file in dist/Evolve-*-portable.exe dist/Evolve-*-setup.exe dist/Evolve-*-setup-tous-utilisateurs.exe dist/Evolve-*.iso; do
+            [ -f "$file" ] || continue
+            size="$(stat -c %s "$file")"
+            echo "::notice title=Fichier publié::$(basename "$file") — $((size / 1024 / 1024)) Mo"
+          done
 
-      # Publié tel quel (sans archive .zip) : le fichier téléchargé est
-      # directement l'exécutable.
-      - name: Publier l'exécutable
+      # Publiés tels quels (sans archive .zip) : les fichiers téléchargés sont
+      # directement les exécutables, l'image et les empreintes.
+      - name: Publier les fichiers publiés
         uses: actions/upload-artifact@v7
         with:
-          path: dist/Evolve-*-portable.exe
+          name: Evolve-windows
+          path: |
+            dist/Evolve-*-portable.exe
+            dist/Evolve-*-setup.exe
+            dist/Evolve-*-setup-tous-utilisateurs.exe
+            dist/Evolve-*.iso
+            dist/SHA256SUMS.txt
           archive: false
           if-no-files-found: error
           retention-days: 90

@@ -12,11 +12,15 @@
  * Services disponibles :
  *   settings   réglages de l'utilisateur, conservés d'un lancement à l'autre
  *   files      consultation des dossiers de l'ordinateur, en lecture seule
+ *   system     ce que l'application sait d'elle-même (version, installation)
+ *   updates    recherche, téléchargement et installation des mises à jour
  */
 
 const { createFilesService } = require('./files');
 const { createHub } = require('./hub');
 const { createSettingsService } = require('./settings');
+const { createSystemService } = require('./system');
+const { createUpdatesService } = require('./updates');
 
 /**
  * @param {object} [options]
@@ -27,12 +31,24 @@ const { createSettingsService } = require('./settings');
  *        consulter : `places` (dossiers personnels connus de l'hôte), `drives`
  *        (`'auto'` : lecteurs locaux) et `fs` (voir files.js). Sans cette
  *        option, aucun dossier n'est consultable.
+ * @param {object} [options.system]   informations sur l'exécution (voir system.js)
+ * @param {object} [options.updates]  mises à jour (voir updates.js) ; sans
+ *        dépôt ni dossier de téléchargement, le service s'annonce indisponible
  * @param {(message: string) => void} [options.log]
  */
-function createServices({ settingsFile = null, appVersion = null, files: fileOptions = {}, log = () => {} } = {}) {
+function createServices({
+  settingsFile = null,
+  appVersion = null,
+  files: fileOptions = {},
+  system: systemOptions = {},
+  updates: updateOptions = {},
+  log = () => {},
+} = {}) {
   const hub = createHub({ log });
   const settings = createSettingsService({ file: settingsFile, appVersion, log });
   const files = createFilesService(fileOptions);
+  const system = createSystemService({ log, ...systemOptions });
+  const updates = createUpdatesService({ log, currentVersion: appVersion, ...updateOptions });
 
   const emit = hub.register('settings', {
     methods: {
@@ -56,10 +72,34 @@ function createServices({ settingsFile = null, appVersion = null, files: fileOpt
     status: () => files.status(),
   });
 
+  // Lecture seule : ce que l'application sait d'elle-même, pour les Paramètres.
+  hub.register('system', {
+    methods: {
+      info: () => system.info(),
+      open: (_context, target) => system.open(target),
+    },
+    status: () => system.status(),
+  });
+
+  // Mises à jour : jamais lancées sans une demande venue de l'interface.
+  const emitUpdate = hub.register('updates', {
+    methods: {
+      state: () => updates.state(),
+      check: (_context, options) => updates.check(options),
+      download: () => updates.download(),
+      install: () => updates.install(),
+    },
+    events: ['state', 'progress', 'available'],
+    status: () => updates.status(),
+  });
+  updates.on((event, payload, origin) => emitUpdate(event, payload, { origin }));
+
   return {
     hub,
     settings,
     files,
+    system,
+    updates,
     /**
      * Enregistre immédiatement tout ce qui attend de l'être. À appeler avant
      * l'arrêt du programme ; ne lève jamais d'exception.

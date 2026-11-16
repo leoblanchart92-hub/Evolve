@@ -9,10 +9,16 @@
  * demande autre chose que `asInvoker`.
  *
  * Utilisation :
- *   node scripts/check-manifest.mjs [FICHIER.exe …]
+ *   node scripts/check-manifest.mjs [FICHIER.exe[=admin] …]
  *
- * Par défaut : l'exécutable portable et l'application qu'il contient
- * (dist/Evolve-<version>-portable.exe et dist/win-unpacked/Evolve.exe).
+ * Le suffixe « =admin » marque un fichier pour lequel une élévation est
+ * attendue : c'est le cas de l'installateur pour tous les utilisateurs, qui
+ * écrit dans « Program Files ». Tout autre fichier demandant l'élévation fait
+ * échouer la vérification.
+ *
+ * Par défaut : l'exécutable portable, l'application qu'il contient et les deux
+ * installateurs (dist/Evolve-<version>-portable.exe, dist/win-unpacked/Evolve.exe,
+ * dist/Evolve-<version>-setup.exe et dist/Evolve-<version>-setup-tous-utilisateurs.exe=admin).
  */
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
@@ -58,15 +64,25 @@ export function verdict(levels) {
 function main(argv) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
-  const files = argv.length
-    ? argv.map((file) => path.resolve(file))
-    : [path.join(root, 'dist', `Evolve-${pkg.version}-portable.exe`), path.join(root, 'dist', 'win-unpacked', 'Evolve.exe')];
+  /** Fichiers vérifiés par défaut : le dernier demande l'élévation, c'est attendu. */
+  const DEFAULT_TARGETS = [
+    `dist/Evolve-${pkg.version}-portable.exe`,
+    'dist/win-unpacked/Evolve.exe',
+    `dist/Evolve-${pkg.version}-setup.exe`,
+    `dist/Evolve-${pkg.version}-setup-tous-utilisateurs.exe=admin`,
+  ];
+
+  /** @type {{ file: string, expectsAdmin: boolean }[]} */
+  const targets = (argv.length ? argv : DEFAULT_TARGETS).map((entry) => {
+    const mark = entry.endsWith('=admin');
+    return { file: path.resolve(mark ? entry.slice(0, -'=admin'.length) : entry), expectsAdmin: mark };
+  });
 
   let failed = false;
   const rows = [];
   /** Résumé d'une ligne par fichier, publié en annotation sur GitHub Actions. */
   const notes = [];
-  for (const file of files) {
+  for (const { file, expectsAdmin } of targets) {
     const name = path.relative(root, file) || file;
     if (!existsSync(file)) {
       console.error(`✖ ${name} : fichier introuvable`);
@@ -82,10 +98,21 @@ function main(argv) {
       rows.push(`| \`${name}\` | ✅ \`asInvoker\` — aucun droit administrateur demandé |`);
       notes.push(`✔ ${name} : asInvoker (aucun droit administrateur demandé)`);
     } else if (result === 'elevation') {
-      console.error(`✖ ${name} : demande une élévation de droits (${[...new Set(levels)].join(', ')})`);
-      rows.push(`| \`${name}\` | ❌ \`${[...new Set(levels)].join(', ')}\` |`);
-      notes.push(`✖ ${name} : élévation demandée (${[...new Set(levels)].join(', ')})`);
-      failed = true;
+      if (expectsAdmin) {
+        // Attendu : cet installateur écrit dans « Program Files ».
+        console.log(`✔ ${name} : élévation demandée (${[...new Set(levels)].join(', ')}), comme prévu`);
+        rows.push(`| \`${name}\` | ✅ \`${[...new Set(levels)].join(', ')}\` — droits d'administrateur demandés, comme prévu |`);
+        notes.push(`✔ ${name} : élévation demandée, comme prévu (${[...new Set(levels)].join(', ')})`);
+      } else {
+        console.error(`✖ ${name} : demande une élévation de droits (${[...new Set(levels)].join(', ')})`);
+        rows.push(`| \`${name}\` | ❌ \`${[...new Set(levels)].join(', ')}\` |`);
+        notes.push(`✖ ${name} : élévation demandée (${[...new Set(levels)].join(', ')})`);
+        failed = true;
+      }
+    } else if (result === 'ok' && expectsAdmin) {
+      console.warn(`! ${name} : niveau « asInvoker » alors qu'une élévation était attendue`);
+      rows.push(`| \`${name}\` | ⚠️ \`asInvoker\` — aucune élévation demandée |`);
+      notes.push(`! ${name} : aucune élévation demandée alors qu'elle était attendue`);
     } else {
       // Niveau illisible (manifeste absent ou compressé) : rien n'indique une
       // demande d'élévation, mais rien ne l'exclut non plus. On le signale

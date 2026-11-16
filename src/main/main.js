@@ -21,9 +21,11 @@
  * Options de la ligne de commande : voir args.js.
  */
 
+const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session, shell } = require('electron');
 
 const { parseArgs } = require('./args');
 const { personalFolders } = require('./personal-folders');
@@ -41,6 +43,26 @@ const NETWORK_URL = /^(?:https?|wss?|ftp):/i;
 const devToolsAllowed = options.devtools || !app.isPackaged;
 /** Origine des demandes venues de la fenêtre (voir registerIpc). */
 const WINDOW_ORIGIN = 'window';
+
+/** Dépôt où les versions d'Evolve sont publiées (voir le service « updates »). */
+const REPOSITORY = Object.freeze({ owner: 'leoblanchart92-hub', name: 'Evolve' });
+/** Seules adresses qu'Evolve accepte d'ouvrir dans le navigateur du système. */
+const EXTERNAL_URL = new RegExp(`^https://github\\.com/${REPOSITORY.owner}/${REPOSITORY.name}/(?:releases|tree|blob|issues)\\b`);
+/** Dossier du téléchargement d'une mise à jour, dans le dossier temporaire. */
+const UPDATE_DIR_NAME = 'Evolve-mise-a-jour';
+/** Dossier de l'application : celui de l'exécutable, ou la racine du projet. */
+const APP_DIR = app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, '..', '..');
+/** Nom lisible du système d'exploitation. */
+const PLATFORM_NAMES = Object.freeze({ win32: 'Windows', darwin: 'macOS', linux: 'Linux' });
+/** Nom lisible du type d'installation (portable, pour vous, pour tous…). */
+const INSTALL_LABELS = Object.freeze({
+  portable: 'Version portable',
+  user: 'Installé pour vous',
+  machine: 'Installé pour tous les utilisateurs',
+  development: 'Développement',
+});
+/** Arguments d'installation silencieuse d'un installateur (voir launchInstaller). */
+const SETUP_ARGS = ['/S', '--updated'];
 
 /** @type {BrowserWindow|null} */
 let mainWindow = null;
@@ -105,6 +127,107 @@ function resolveSettingsFile() {
   return settingsFile(settingsDir({ appData: app.getPath('appData') }));
 }
 
+/** Fichier des réglages de cette exécution (`null` : réglages en mémoire). */
+const settingsFilePath = resolveSettingsFile();
+
+/**
+ * Façon dont Evolve est lancé. Elle détermine le fichier proposé à la mise à
+ * jour : un exécutable portable ne se remplace pas lui-même.
+ * @returns {'portable'|'user'|'machine'|'development'}
+ */
+function installKind() {
+  if (process.env.PORTABLE_EXECUTABLE_FILE) return 'portable';
+  if (!app.isPackaged) return 'development';
+  // Une installation pour tous les utilisateurs range l'application dans
+  // « Program Files » ; celle d'un seul utilisateur, dans son propre dossier.
+  return /[\\/]program files[\\/]/i.test(APP_DIR) ? 'machine' : 'user';
+}
+
+/** Ce que l'application sait d'elle-même (service « system », en lecture seule). */
+function systemInfo() {
+  const kind = installKind();
+  return {
+    app: app.getName(),
+    version: app.getVersion(),
+    install: { kind, label: INSTALL_LABELS[kind] ?? kind, dir: APP_DIR },
+    platform: { name: PLATFORM_NAMES[process.platform] ?? process.platform, arch: process.arch, release: os.release() },
+    storage: settingsFilePath ? 'file' : 'memory',
+    paths: {
+      settings: settingsFilePath ? path.dirname(settingsFilePath) : null,
+      data: app.getPath('userData'),
+      install: app.isPackaged ? APP_DIR : null,
+    },
+    versions: {
+      electron: process.versions.electron ?? null,
+      node: process.versions.node ?? null,
+      chrome: process.versions.chrome ?? null,
+    },
+  };
+}
+
+/**
+ * Lance l'installateur d'une mise à jour déjà vérifiée, puis laisse Evolve se
+ * fermer pour que le fichier puisse être remplacé.
+ *
+ * Une installation pour tous les utilisateurs demande les droits
+ * d'administrateur : Windows affiche alors sa propre demande. Rien n'est
+ * lancé en silence à l'insu de l'utilisateur.
+ *
+ * @param {string} file
+ * @param {{ channel: string, version: string }} meta
+ * @returns {Promise<{ ok: boolean, code?: string, message?: string }>}
+ */
+function launchInstaller(file, { channel }) {
+  /** Attente maximale avant de considérer que le lancement a réussi. */
+  const GRACE_MS = 6000;
+  const outcome = new Promise((resolve) => {
+    const child =
+      channel === 'machine'
+        ? spawn(
+            'powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath "${file}" -ArgumentList '${SETUP_ARGS.join("','")}' -Verb RunAs`],
+            { detached: true, stdio: 'ignore', windowsHide: true },
+          )
+        : spawn(file, SETUP_ARGS, { detached: true, stdio: 'ignore' });
+
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => settle({ ok: true }), GRACE_MS);
+    child.on('error', (error) => settle({ ok: false, code: 'not-launched', message: `L'installation n'a pas pu être lancée : ${error?.message ?? error}` }));
+    child.on('exit', (code) => settle(code === 0 || code === null ? { ok: true } : { ok: false, code: 'not-launched', message: `L'installation s'est arrêtée (code ${code}).` }));
+    child.unref();
+  });
+  return outcome;
+}
+
+/** Configuration du service des mises à jour ; désactivée pendant les vérifications automatiques. */
+function updatesConfig() {
+  if (options.selfTest || options.statusFile || options.settingsDir) return {};
+  return {
+    channel: installKind() === 'development' ? 'user' : installKind(),
+    repo: REPOSITORY,
+    downloadDir: path.join(tempDir, UPDATE_DIR_NAME),
+    launch: launchInstaller,
+    fetchImpl: globalThis.fetch,
+  };
+}
+
+/** Vérification silencieuse au démarrage : une seule fois par lancement, sans jamais rien écrire. */
+async function checkForUpdatesOnStart() {
+  if (!services || !updatesConfig().channel) return;
+  try {
+    if (services.settings.get('updates.autoCheck') !== true) return;
+    await services.updates.check({});
+  } catch (error) {
+    console.warn(`Mises à jour : vérification impossible au démarrage : ${error?.message ?? error}`);
+  }
+}
+
 /**
  * Dossiers personnels de l'utilisateur (Bureau, Documents, Téléchargements,
  * Images, Musique, Vidéos), tels que Windows les indique : ils peuvent avoir
@@ -139,7 +262,8 @@ if (options.selfTest) {
 // temporaire : le profil de l'utilisateur ne reçoit que le fichier des
 // réglages (voir resolveSettingsFile). L'auto-test utilise un dossier
 // distinct pour ne jamais interférer avec une session ouverte.
-const userData = path.join(app.getPath('temp'), options.selfTest ? 'Evolve-autotest' : 'Evolve');
+const tempDir = app.getPath('temp');
+const userData = path.join(tempDir, options.selfTest ? 'Evolve-autotest' : 'Evolve');
 try {
   fs.mkdirSync(userData, { recursive: true });
 } catch {
@@ -163,10 +287,14 @@ if (!hasLock) {
   else app.exit(0);
 } else {
   services = createServices({
-    settingsFile: resolveSettingsFile(),
+    settingsFile: settingsFilePath,
     appVersion: app.getVersion(),
     // Explorateur de fichiers : dossiers personnels et lecteurs locaux, en lecture seule.
     files: { places: locatePersonalFolders, drives: 'auto', fs: plainFileSystem() },
+    // Ce que l'application sait d'elle-même ; ouverture d'un dossier par le système.
+    system: { info: systemInfo, open: async (_target, folder) => (await shell.openPath(folder)) || null },
+    // Mises à jour : désactivées pendant les vérifications automatiques.
+    updates: updatesConfig(),
     log: (message) => console.warn(message),
   });
   // Événements des services : transmis à la fenêtre, sauf ceux qui découlent
@@ -312,6 +440,15 @@ function registerIpc() {
 
   ipcMain.handle('evolve:is-fullscreen', (event) => (fromMainWindow(event) ? mainWindow.isFullScreen() : false));
 
+  // Ouvre une adresse dans le navigateur du système. Seules les pages du
+  // projet sont acceptées : aucune autre adresse n'est transmise à Windows.
+  ipcMain.handle('evolve:open-external', (event, url) => {
+    if (!fromMainWindow(event)) return false;
+    if (typeof url !== 'string' || !EXTERNAL_URL.test(url)) return false;
+    shell.openExternal(url).catch(() => {});
+    return true;
+  });
+
   // Services d'Evolve : la page désigne une méthode par son nom ; le point
   // d'accès contrôle la demande et répond toujours sous la forme { ok, … }.
   ipcMain.handle('evolve:service-call', (event, service, method, args) => {
@@ -338,6 +475,12 @@ async function start() {
 
   registerIpc();
   const win = createWindow();
+
+  // Une seule vérification silencieuse, un peu après le démarrage : elle ne
+  // doit jamais retarder l'affichage du bureau.
+  if (!options.selfTest && !options.statusFile && !options.settingsDir) {
+    setTimeout(checkForUpdatesOnStart, 6000);
+  }
 
   if (options.selfTest) {
     // Chargé à la demande : l'auto-test ne sert qu'à la compilation automatique.

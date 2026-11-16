@@ -343,11 +343,19 @@ test('F12 : outils de développement seulement sur demande (--devtools) ou en d�
 // Passerelle entre l'interface et l'application
 // ---------------------------------------------------------------------------------
 
-test('passerelle : seules six entrées sont exposées à la page', async () => {
+test('passerelle : seules sept entrées sont exposées à la page', async () => {
   const fake = await launch();
   const api = loadPreload(fake, fake.window.webContents);
   assert.deepEqual(Object.keys(fake.state.exposed), ['evolve']);
-  assert.deepEqual(Object.keys(api).sort(), ['isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
+  assert.deepEqual(Object.keys(api).sort(), [
+    'isDesktopApp',
+    'isFullscreen',
+    'onFullscreenChange',
+    'openExternal',
+    'quit',
+    'services',
+    'toggleFullscreen',
+  ]);
   assert.equal(api.isDesktopApp, true);
   // Les services ne sont joignables que par leur nom : appeler une méthode, écouter un événement.
   assert.deepEqual(Object.keys(api.services).sort(), ['call', 'on']);
@@ -397,7 +405,14 @@ test('passerelle : les messages d’une autre page sont ignorés', async () => {
   assert.deepEqual(await api.services.call('settings', 'get', 'quick.volume'), { ok: true, value: 64 });
 
   assert.deepEqual([...state.ipcListeners.keys()], ['evolve:quit']);
-  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:service-call', 'evolve:toggle-fullscreen']);
+  assert.deepEqual([...state.ipcHandlers.keys()].sort(), [
+    'evolve:is-fullscreen',
+    'evolve:open-external',
+    'evolve:service-call',
+    'evolve:toggle-fullscreen',
+  ]);
+  // Une adresse étrangère au projet n'est jamais ouverte.
+  assert.equal(await stranger.invoke('evolve:open-external', 'https://example.com/'), false);
 });
 
 // ---------------------------------------------------------------------------------

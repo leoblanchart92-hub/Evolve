@@ -37,14 +37,32 @@ test('la couche de services ne dépend ni d’Electron, ni de l’interface, ni 
     assert.doesNotMatch(code, /\bimport\b/, `${relative(file)} : modules CommonJS uniquement`);
     // Ni fenêtre, ni page web, ni communication avec une page.
     assert.doesNotMatch(code, /\b(?:electron|BrowserWindow|webContents|ipcMain|ipcRenderer|contextBridge|document|window|navigator|localStorage)\b/, relative(file));
-    // Ni réseau, ni lancement de programme, ni base de registre : rien de tout cela à cette étape.
-    assert.doesNotMatch(code, /\b(?:child_process|node:https?|node:net|node:dgram|fetch|registry|regedit|powerShell|exec\(|spawn\()/i, relative(file));
+    if (path.basename(file) === 'updates.js') {
+      // Le service des mises à jour est le seul autorisé à parler au serveur du
+      // projet — encore faut-il qu'il n'importe aucun module de réseau et qu'il
+      // n'appelle jamais « fetch » : il se sert de la fonction remise par
+      // l'hôte, sans laquelle il s'annonce indisponible.
+      assert.doesNotMatch(code, /require\(\s*'node:(?:https?|net|dgram|tls)'\s*\)/, relative(file));
+      assert.doesNotMatch(code, /\bfetch\s*\(/, relative(file));
+      assert.match(code, /fetchImpl = null,/);
+      assert.match(code, /const fetcher = typeof fetchImpl === 'function' \? fetchImpl : null;/);
+      assert.match(code, /const available = Boolean\(fetcher/);
+      // Seules les adresses de GitHub sont contactées, en HTTPS.
+      assert.match(code, /const HOSTS = Object\.freeze\(\['api\.github\.com', 'github\.com', 'objects\.githubusercontent\.com'\]\);/);
+      assert.match(code, /if \(url\.protocol !== 'https:' \|\| !HOSTS\.includes\(url\.hostname\)\) return null;/);
+    } else {
+      // Ni réseau, ni lancement de programme, ni base de registre : rien de tout cela à cette étape.
+      assert.doesNotMatch(code, /\b(?:child_process|node:https?|node:net|node:dgram|fetch|registry|regedit|powerShell|exec\(|spawn\()/i, relative(file));
+    }
   }
 });
 
 test('la couche de services se charge avec Node seul', () => {
   const services = createServices();
-  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files']);
+  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'system', 'updates']);
+  // Sans hôte pour les renseigner, les deux nouveaux services s'annoncent indisponibles.
+  assert.equal(services.describe().system.state, 'unavailable');
+  assert.equal(services.describe().updates.state, 'unavailable');
   // Le service de fichiers ne sait que consulter : deux méthodes, aucun événement.
   assert.deepEqual(services.describe().files, { state: 'available', access: 'read-only', places: null, drives: null, methods: ['places', 'list'], events: [] });
   assert.equal(services.flushSync(), true);

@@ -49,6 +49,16 @@ export async function toggleFullscreen() {
   }
 }
 
+/**
+ * Ouvre une adresse dans le navigateur du système. L'application refuse toute
+ * adresse étrangère au projet ; renvoie faux dans un navigateur.
+ */
+export function openExternal(url) {
+  if (!host?.openExternal) return false;
+  host.openExternal(url);
+  return true;
+}
+
 /** Ferme l'application. Renvoie faux dans un navigateur (action indisponible). */
 export function quitApp() {
   if (!host) return false;

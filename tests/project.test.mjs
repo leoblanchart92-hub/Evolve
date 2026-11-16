@@ -354,11 +354,48 @@ test('la fenêtre de l’application est isolée du système', () => {
   assert.match(main, /webSecurity:\s*true/);
   assert.match(main, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/);
   assert.match(main, /'will-navigate'/);
-  // Aucune API d'accès au système n'est utilisée par l'application.
-  for (const source of ['src/main/main.js', 'src/main/preload.js']) {
-    const code = stripComments(readText(source));
-    assert.doesNotMatch(code, /\b(?:child_process|shell\.openExternal|shell\.openPath|registry|regedit|powerShell|exec\(|spawn\()/i, source);
-  }
+  // La passerelle de la page, elle, n'ouvre rien du tout.
+  assert.doesNotMatch(stripComments(readText('src/main/preload.js')), /\b(?:child_process|spawn|shell|exec\()/i);
+
+  // 1. Lancer un programme : uniquement l'installateur d'une mise à jour
+  //    téléchargée et vérifiée, depuis une seule fonction.
+  assert.match(main, /const \{ spawn \} = require\('node:child_process'\);/);
+  assert.equal([...main.matchAll(/\bspawn\(/g)].length, 2, 'aucun autre lancement de programme');
+  const fromLauncher = main.slice(main.indexOf('function launchInstaller'));
+  const launcherEnd = fromLauncher.indexOf('\nfunction ', 1);
+  const launcher = fromLauncher.slice(0, launcherEnd < 0 ? fromLauncher.length : launcherEnd);
+  assert.equal([...launcher.matchAll(/\bspawn\(/g)].length, 2, 'les deux lancements sont dans launchInstaller');
+  assert.match(launcher, /const SETUP_ARGS = \['\/S', '--updated'\];|SETUP_ARGS/);
+  // Une installation pour tous les utilisateurs demande l'élévation à Windows :
+  // c'est la seule commande PowerShell du projet.
+  assert.match(launcher, /Start-Process -FilePath/);
+  assert.match(launcher, /-Verb RunAs/);
+
+  // 2. Ouvrir un dossier : uniquement ceux que le service « system » connaît.
+  assert.equal([...main.matchAll(/shell\.openPath\(/g)].length, 1);
+  assert.match(main, /open: async \(_target, folder\) => \(await shell\.openPath\(folder\)\) \|\| null/);
+  assert.match(stripComments(readText('src/services/system.js')), /const TARGETS = Object\.freeze\(\['settings', 'data', 'install'\]\);/);
+  assert.match(stripComments(readText('src/services/system.js')), /if \(!TARGETS\.includes\(target\)\) throw new ServiceError\('unknown-target'/);
+
+  // 3. Ouvrir une adresse : uniquement les pages du dépôt du projet.
+  assert.equal([...main.matchAll(/shell\.openExternal\(/g)].length, 1);
+  assert.match(main, /const REPOSITORY = Object\.freeze\(\{ owner: '[\w-]+', name: '[\w-]+' \}\);/);
+  assert.match(main, /const EXTERNAL_URL = new RegExp\(`[^`]*\$\{REPOSITORY\.owner\}[^`]*\$\{REPOSITORY\.name\}[^`]*`\);/);
+  assert.match(main, /if \(typeof url !== 'string' \|\| !EXTERNAL_URL\.test\(url\)\) return false;/);
+  // Cette expression n'accepte que des pages du dépôt, en HTTPS : elle est
+  // vérifiée telle quelle, avec les valeurs réelles du projet.
+  const pattern = main
+    .match(/const EXTERNAL_URL = new RegExp\(`([^`]+)`\);/)[1]
+    .replace(/\$\{REPOSITORY\.owner\}/g, 'leoblanchart92-hub')
+    .replace(/\$\{REPOSITORY\.name\}/g, 'Evolve');
+  // « JSON.parse » interprète les échappements du motif tel que l'interprète JavaScript.
+  const external = new RegExp(JSON.parse(`"${pattern}"`));
+  assert.equal(external.test('https://github.com/leoblanchart92-hub/Evolve/releases/latest'), true);
+  assert.equal(external.test('https://github.com/leoblanchart92-hub/Evolve'), false);
+  assert.equal(external.test('https://github.com/autre-depot/Evolve/releases'), false);
+  assert.equal(external.test('https://example.com/'), false);
+  assert.equal(external.test('http://github.com/leoblanchart92-hub/Evolve/releases'), false);
+  assert.doesNotMatch(stripComments(readText('src/main/preload.js')), /shell\.openExternal/);
 });
 
 // --- Lecture seule : inventaire de ce qui peut écrire sur le disque --------------------
@@ -402,6 +439,9 @@ test('lecture seule : chaque écriture sur le disque est inventoriée — aucune
     'src/main/status.js': ['mkdirSync', 'renameSync', 'writeFileSync'],
     // Fichier des réglages (%APPDATA%\Evolve\settings.json), écrit seulement après un réglage modifié.
     'src/services/json-file.js': ['fsyncSync', 'mkdirSync', 'openSync', 'renameSync', 'rmSync', 'writeFileSync'],
+    // Mise à jour téléchargée, dans le dossier temporaire : le fichier n'est
+    // conservé que si son empreinte correspond à celle publiée.
+    'src/services/updates.js': ['createWriteStream', 'mkdirSync', 'renameSync', 'rmSync'],
   };
   const found = {};
   for (const file of desktopFiles) {
@@ -425,7 +465,7 @@ test('lecture seule : le moteur n’est interrogé que sur des emplacements qu�
   const main = stripComments(readText('src/main/main.js'));
   // Emplacements demandés par leur nom : aucun dossier personnel (le moteur créerait « Documents »).
   const named = [...main.matchAll(/\bgetPath\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]).sort();
-  assert.deepEqual(named, ['appData', 'temp', 'userData']);
+  assert.deepEqual(named, ['appData', 'temp', 'userData', 'userData']);
   // Une seule autre demande : celle des dossiers personnels, confiée au module qui sait lesquels demander.
   const others = [...main.matchAll(/\bgetPath\(\s*(?!')([^)]*)\)/g)].map((match) => match[1].trim());
   assert.deepEqual(others, ['name']);
@@ -437,14 +477,15 @@ test('lecture seule : le moteur n’est interrogé que sur des emplacements qu�
   assert.deepEqual(askers, ['src/main/main.js', 'src/main/personal-folders.js']);
   // Ni ne modifie un emplacement, hormis le dossier de travail du moteur, placé dans le dossier temporaire.
   assert.deepEqual([...main.matchAll(/\bsetPath\(\s*'([^']+)'/g)].map((match) => match[1]), ['userData']);
-  assert.match(main, /const userData = path\.join\(app\.getPath\('temp'\),/);
+  assert.match(main, /const tempDir = app\.getPath\('temp'\);/);
+  assert.match(main, /const userData = path\.join\(tempDir,/);
 
   // Fonctions d'Electron qui écrivent sur le disque ou dans Windows : aucune n'est employée.
   for (const source of ['src/main/main.js', 'src/main/preload.js', 'src/main/personal-folders.js']) {
     const code = stripComments(readText(source));
     assert.doesNotMatch(
       code,
-      /\b(?:shell|clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|trashItem|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath)\b/,
+      /\b(?:clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|trashItem|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath)\b/,
       source,
     );
   }
@@ -459,7 +500,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
 
   // Méthodes appelées par l'interface sur `window.evolve`.
   const used = new Set([...platform.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
-  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
+  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'openExternal', 'quit', 'services', 'toggleFullscreen']);
   for (const name of used) assert.match(preload, new RegExp(`\\b${name}:`), `preload.js n'expose pas ${name}`);
   assert.match(preload, /exposeInMainWorld\('evolve'/);
   assert.match(platform, /globalThis\.evolve/);
@@ -484,6 +525,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   assert.deepEqual([...channels(preload)].sort(), [
     'evolve:fullscreen-changed',
     'evolve:is-fullscreen',
+    'evolve:open-external',
     'evolve:quit',
     'evolve:service-call',
     'evolve:service-event',
@@ -602,11 +644,14 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
     'check-exe.mjs electron',
     'npm run build:win',
     'npm run check:manifest',
+    'npm run build:checksums',
+    'npm run build:iso',
     'check-exe.mjs --out=self-test-output/executable',
     'check-launch.mjs --out=self-test-output/lancement',
     'check-settings.mjs --out=self-test-output/reglages',
     'check-documents.mjs --out=self-test-output/documents-absent',
-    'path: dist/Evolve-*-portable.exe',
+    'check-setup.mjs --out=self-test-output/installation',
+    'name: Evolve-windows',
   ].map((needle) => {
     const index = workflowCode.indexOf(needle);
     assert.ok(index >= 0, `étape absente : ${needle}`);
@@ -627,6 +672,13 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const settingsStep = steps.find((step) => step.includes('check-settings.mjs'));
   assert.match(settingsStep, /--settings-dir="\$APPDATA\/Evolve"/);
 
+  // Le programme d'installation est éprouvé pour de vrai, sans option qui
+  // viserait un dossier d'essai : c'est l'installation de l'utilisateur courant.
+  const setupStep = steps.find((step) => step.includes('check-setup.mjs'));
+  assert.match(setupStep, /^Installation silencieuse/);
+  assert.ok(!/--install-dir|--folder|continue-on-error|\bif:/.test(setupStep), setupStep);
+  assert.match(setupStep, /timeout-minutes: \d+/);
+
   // Le dossier Documents absent est éprouvé sur l'exécutable produit, avec le véritable dossier du compte
   // (aucun dossier d'essai) : la preuve porte sur le fichier distribué, tel que Windows le fait fonctionner.
   const documentsStep = steps.find((step) => step.includes('check-documents.mjs'));
@@ -634,13 +686,27 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   assert.ok(!/--folder|electron|continue-on-error|\bif:/.test(documentsStep), documentsStep);
   assert.match(documentsStep, /timeout-minutes: \d+/);
 
-  // La publication du .exe n'a pas de condition : elle n'a lieu que si tout a réussi.
-  const publish = steps.find((step) => step.includes('path: dist/Evolve-*-portable.exe'));
+  // La publication n'a pas de condition : elle n'a lieu que si tout a réussi.
+  const publish = steps.find((step) => step.startsWith('Publier les fichiers publiés'));
+  assert.ok(publish, 'étape de publication introuvable');
   assert.ok(!/^\s+if:/m.test(publish), 'publication sans condition particulière');
-  assert.match(publish, /archive: false/, 'fichier .exe téléchargé tel quel');
+  assert.match(publish, /archive: false/, 'fichiers téléchargés tels quels');
   assert.match(publish, /if-no-files-found: error/);
-  // Le nom du fichier produit correspond à celui que la compilation publie.
+  // Les quatre fichiers publiés, et leurs empreintes.
+  for (const file of [
+    'dist/Evolve-*-portable.exe',
+    'dist/Evolve-*-setup.exe',
+    'dist/Evolve-*-setup-tous-utilisateurs.exe',
+    'dist/Evolve-*.iso',
+    'dist/SHA256SUMS.txt',
+  ]) {
+    assert.ok(publish.includes(file), `fichier non publié : ${file}`);
+  }
+  // Le nom de chaque fichier produit correspond à celui que la compilation publie.
   assert.match(pkg.build.portable.artifactName, /^Evolve-\$\{version\}-portable\.exe$/);
+  assert.match(readText('packaging', 'nsis-user.builder.js'), /artifactName: 'Evolve-\$\{version\}-setup\.exe'/);
+  assert.match(readText('packaging', 'nsis-machine.builder.js'), /artifactName: 'Evolve-\$\{version\}-setup-tous-utilisateurs\.exe'/);
+  assert.match(readText('scripts', 'build-iso.mjs'), /`Evolve-\$\{pkg\.version\}\.iso`/);
 });
 
 test('les fichiers de script gardent des fins de ligne Unix (exécutés par bash sous Windows)', () => {

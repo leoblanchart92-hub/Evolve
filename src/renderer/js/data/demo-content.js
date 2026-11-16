@@ -28,10 +28,21 @@ export function createDemoNotifications(now = new Date()) {
     },
     {
       id: 'widgets',
-      app: 'monitor',
+      source: 'Widgets',
+      glyph: 'pulse',
+      colors: ['#eaa8ff', '#7a38ea'],
       title: 'Widgets matériels en mode démo',
       body: 'Les valeurs CPU, RAM et GPU affichées sont simulées. Les mesures réelles arriveront plus tard.',
       time: at(9),
+    },
+    {
+      id: 'updates',
+      source: 'Mises à jour',
+      glyph: 'arrows-clockwise',
+      colors: ['#8fd8ff', '#6557f5'],
+      title: 'Evolve sait se mettre à jour',
+      body: "Paramètres, page Mises à jour : elle indique si une version plus récente est publiée, et l'installe.",
+      time: at(18),
     },
     {
       id: 'explorer',

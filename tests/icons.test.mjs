@@ -94,7 +94,9 @@ test('les pictogrammes des données existent', () => {
     for (const airplane of [true, false]) add(networkGlyph({ wifi, airplane }), `réseau wifi=${wifi} avion=${airplane}`);
   }
 
-  assert.ok(used.size > 40);
+  // Deux applications seulement, mais l'explorateur, les notifications et les
+  // types de fichiers emploient à eux seuls une trentaine de pictogrammes.
+  assert.ok(used.size > 30);
   for (const [name, origin] of used) assert.ok(hasIcon(name), `pictogramme inconnu « ${name} » (${origin})`);
 });
 

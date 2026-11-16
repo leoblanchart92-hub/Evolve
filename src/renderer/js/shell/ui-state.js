@@ -23,6 +23,9 @@ export const ui = createStore({
   widgetsVisible: true,
   desktopIconsVisible: true,
 
+  // Mises à jour
+  updatesAutoCheck: true,
+
   // Notifications non lues (pastille de la barre des tâches)
   notificationCount: 0,
 });

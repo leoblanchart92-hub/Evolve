@@ -35,6 +35,9 @@ const SETTINGS = Object.freeze({
   'quick.brightness': { type: 'integer', default: 100, min: 20, max: 100 },
   'quick.volume': { type: 'integer', default: 64, min: 0, max: 100 },
   'quick.muted': { type: 'boolean', default: false },
+
+  // Mises à jour
+  'updates.autoCheck': { type: 'boolean', default: true },
 });
 
 /**

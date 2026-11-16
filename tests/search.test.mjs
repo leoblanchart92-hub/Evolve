@@ -51,8 +51,8 @@ test('une application se trouve par le début de son nom, accents facultatifs', 
 });
 
 test('une application se trouve aussi par mot-clé', () => {
-  const results = find('internet');
-  assert.ok(results.some((result) => result.type === 'app' && result.item.id === 'browser'));
+  const results = find('mises');
+  assert.ok(results.some((result) => result.type === 'app' && result.item.id === 'settings'));
 });
 
 test('un fichier d’exemple se trouve par son nom', () => {
@@ -62,7 +62,7 @@ test('un fichier d’exemple se trouve par son nom', () => {
 });
 
 test('le meilleur résultat est en tête, toutes sources confondues', () => {
-  for (const query of ['doc', 'lumi', 'mus', 'not', 'cal', 'e', 'a', 'pa']) {
+  for (const query of ['doc', 'lumi', 'mus', 'not', 'para', 'rap', 'e', 'a', 'pa']) {
     const results = find(query);
     assert.ok(results.length > 0, `aucun résultat pour « ${query} »`);
     const best = Math.min(...results.map((result) => result.score));

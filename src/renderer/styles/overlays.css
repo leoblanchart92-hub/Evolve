@@ -191,6 +191,17 @@
   grid-row: 1 / span 2;
 }
 
+/* Notification cliquable : elle ouvre ce qu'elle annonce. */
+.toast.is-clickable {
+  cursor: pointer;
+}
+
+.toast.is-clickable:hover {
+  box-shadow:
+    inset 0 0 0 1px var(--stroke-strong),
+    var(--shadow-2);
+}
+
 .toast__title {
   align-self: end;
   font-size: var(--fs-md);
