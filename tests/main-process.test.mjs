@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
 
@@ -1067,6 +1067,110 @@ test('réglages : un auto-test ne lit ni ne modifie ceux de l’utilisateur, sau
   await settle();
   assert.deepEqual(scenario.state.exitCodes, [0]);
   assert.deepEqual(readSettings(path.join(dir, 'settings.json')).values, { 'quick.nightLight': true });
+});
+
+test('notes et agenda : écrits par la fenêtre, enregistrés à côté des réglages à la fermeture, retrouvés au lancement suivant', async () => {
+  const first = await launch();
+  const api = loadPreload(first, first.window.webContents);
+  const dataDir = path.dirname(first.settingsFile);
+  const received = [];
+  first.window.webContents.send = (channel, message) => received.push([channel, message]);
+
+  const note = (await api.services.call('notes', 'create', 'Liste de courses\n- pain')).value;
+  const event = (await api.services.call('agenda', 'add', '2026-12-24', 'Réveillon')).value;
+  // La fenêtre est prévenue de chaque changement, les siens compris : toutes ses vues se mettent à jour de même.
+  assert.deepEqual(
+    received.filter(([channel]) => channel === 'evolve:service-event').map(([, message]) => [message.service, message.event, message.payload.reason, message.payload.id]),
+    [['notes', 'changed', 'created', note.id], ['agenda', 'changed', 'created', event.id]],
+  );
+  assert.equal(existsSync(dataDir), false, 'rien sur le disque avant la fermeture');
+  first.window.close();
+  first.app.emit('window-all-closed');
+  first.app.emit('will-quit');
+  // Deux fichiers, dans le dossier de données d'Evolve — et nulle part ailleurs dans le profil.
+  assert.deepEqual(readdirSync(dataDir).sort(), ['agenda.json', 'notes.json']);
+  assert.deepEqual(readdirSync(path.join(first.tempDir, 'profil', 'AppData', 'Roaming')), [path.basename(dataDir)]);
+  assert.equal(JSON.parse(readFileSync(path.join(dataDir, 'notes.json'), 'utf8')).app, '9.8.7');
+
+  const second = await launch({ tempDir: first.tempDir });
+  const again = loadPreload(second, second.window.webContents);
+  assert.deepEqual((await again.services.call('notes', 'list')).value.map((item) => [item.id, item.title, item.excerpt]), [[note.id, 'Liste de courses', '- pain']]);
+  assert.equal((await again.services.call('notes', 'read', note.id)).value.text, 'Liste de courses\n- pain');
+  assert.deepEqual((await again.services.call('agenda', 'list')).value, [event]);
+  assert.deepEqual((await again.services.call('notes', 'state')).value, { storage: 'file', durable: true, problem: null, recovered: false, count: 1, limit: 200, maxLength: 20000 });
+  // Une suppression sans confirmation est refusée jusque dans le processus principal.
+  assert.equal((await again.services.call('notes', 'remove', note.id)).code, 'confirmation-required');
+  assert.equal((await again.services.call('agenda', 'remove', event.id, {})).code, 'confirmation-required');
+  assert.equal((await again.services.call('notes', 'remove', note.id, { confirmed: true })).value, true);
+  // Fin de session Windows : enregistré aussi.
+  second.window.emit('session-end');
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dataDir, 'notes.json'), 'utf8')).items, []);
+});
+
+test('notes et agenda : un auto-test ne lit ni ne modifie ceux de l’utilisateur ; --settings-dir les range dans le dossier demandé', async () => {
+  // L'utilisateur a déjà une note.
+  const user = await launch();
+  await loadPreload(user, user.window.webContents).services.call('notes', 'create', 'Note de l’utilisateur');
+  user.app.emit('will-quit');
+  const notesFile = path.join(path.dirname(user.settingsFile), 'notes.json');
+  const before = readFileSync(notesFile, 'utf8');
+
+  let finish;
+  const selfTest = await launch({
+    tempDir: user.tempDir,
+    argv: [`--self-test=${path.join(tmpdir(), 'evolve-inutilise')}`],
+    runSelfTest: () => new Promise((resolve) => (finish = resolve)),
+  });
+  const api = loadPreload(selfTest, selfTest.window.webContents);
+  assert.deepEqual((await api.services.call('notes', 'list')).value, [], 'les notes de l’utilisateur ne sont pas lues');
+  await api.services.call('notes', 'create', 'Note d’auto-test');
+  await api.services.call('agenda', 'add', '2026-01-01', 'Rendez-vous d’auto-test');
+  assert.equal((await api.services.call('notes', 'state')).value.storage, 'memory');
+  assert.equal((await api.services.call('agenda', 'state')).value.storage, 'memory');
+  finish(0);
+  await settle();
+  assert.equal(readFileSync(notesFile, 'utf8'), before, 'notes de l’utilisateur intactes');
+  assert.deepEqual(readdirSync(path.dirname(notesFile)), ['notes.json'], 'aucun agenda créé');
+
+  // Avec --settings-dir : dans le dossier demandé, rien dans le profil.
+  const dir = mkdtempSync(path.join(tmpdir(), 'evolve-donnees-'));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const chosen = await launch({ argv: [`--settings-dir=${dir}`] });
+  await loadPreload(chosen, chosen.window.webContents).services.call('agenda', 'add', '2027-03-04', 'Ailleurs');
+  chosen.app.emit('will-quit');
+  assert.deepEqual(readdirSync(dir), ['agenda.json']);
+  assert.equal(existsSync(path.join(chosen.tempDir, 'profil')), false);
+});
+
+test('système : les processus d’Evolve viennent du moteur, lus à chaque mesure ; les versions de ses composants aussi', async () => {
+  const fake = await launch();
+  const api = loadPreload(fake, fake.window.webContents);
+  const overview = (await api.services.call('system', 'overview')).value;
+  assert.equal(overview.evolve.version, '9.8.7');
+  // Le faux moteur se dit empaqueté, sans désinstallateur à côté ni lanceur portable : dossier décompressé.
+  assert.equal(overview.evolve.variant, 'unpacked');
+  assert.equal(overview.evolve.dataDir, path.dirname(fake.settingsFile));
+  // Les tests tournent sous Node seul : les composants que le moteur n'annonce pas ne sont pas inventés.
+  assert.deepEqual(overview.evolve.versions, { node: process.versions.node });
+  assert.equal(overview.memory.total, os.totalmem());
+
+  assert.equal(fake.state.appMetricsCalls ?? 0, 0, 'rien n’est mesuré avant la première demande');
+  const sample = (await api.services.call('system', 'sample')).value;
+  assert.equal(fake.state.appMetricsCalls, 1);
+  const cores = os.cpus().length;
+  assert.deepEqual(sample.evolve.processes, [
+    { pid: 4000, label: 'Processus principal', cpu: 0.125 / cores, memory: 90_000 * 1024 },
+    { pid: 4001, label: 'Affichage', cpu: 0, memory: 60_000 * 1024 },
+    { pid: 4002, label: 'Interface', cpu: 0.4 / cores, memory: 250_000 * 1024 },
+    { pid: 4003, label: 'Service : Réseau', cpu: 0.005 / cores, memory: 30_000 * 1024 },
+  ]);
+  assert.equal(sample.evolve.memory, 430_000 * 1024);
+  assert.equal(sample.memory.total, os.totalmem());
+  await api.services.call('system', 'sample');
+  assert.equal(fake.state.appMetricsCalls, 2);
+  // Rien n'est écrit pour autant.
+  fake.app.emit('will-quit');
+  assert.equal(existsSync(path.dirname(fake.settingsFile)), false);
 });
 
 test('réglages : seule l’instance qui garde la main touche au fichier', async () => {

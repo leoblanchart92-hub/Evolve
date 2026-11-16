@@ -58,4 +58,14 @@ function settingsFile(dir, { platform = process.platform } = {}) {
   return pathFor(platform).join(dir, SETTINGS_FILE);
 }
 
-module.exports = { SETTINGS_FILE, settingsDir, settingsFile, userConfigRoot };
+/**
+ * Fichier de données d'Evolve (notes, agenda…) rangé à côté des réglages.
+ * @param {string} dir   dossier des réglages
+ * @param {string} name  nom du fichier, sans dossier
+ */
+function dataFile(dir, name, { platform = process.platform } = {}) {
+  if (typeof name !== 'string' || !/^[a-z][a-z0-9-]*\.json$/.test(name)) throw new TypeError(`Nom de fichier de données invalide : ${name}`);
+  return pathFor(platform).join(dir, name);
+}
+
+module.exports = { SETTINGS_FILE, settingsDir, settingsFile, dataFile, userConfigRoot };

@@ -14,6 +14,10 @@
  *   files      consultation des dossiers de l'ordinateur, en lecture seule
  *   updates    mises à jour de la version installée : recherche, puis
  *              téléchargement et installation à la demande
+ *   notes      notes de l'utilisateur, conservées à côté des réglages
+ *   agenda     rendez-vous inscrits dans le calendrier, conservés de même
+ *   system     mesures réelles de la machine (processeur, mémoire…), en
+ *              lecture seule
  *
  * Les opérations sur les fichiers (créer un dossier, renommer, copier,
  * déplacer, envoyer à la Corbeille, ouvrir) ne sont PAS des méthodes d'un
@@ -22,10 +26,13 @@
  * l'hôte relie à l'interface une à une (voir file-operations.js).
  */
 
+const { createAgendaService } = require('./agenda');
 const { createFileOperations } = require('./file-operations');
 const { createFilesService } = require('./files');
 const { createHub, isPlainData, reply } = require('./hub');
+const { createNotesService } = require('./notes');
 const { createSettingsService } = require('./settings');
+const { createSystemService } = require('./system');
 const { createUpdatesService } = require('./updates');
 
 /** Limites des arguments d'une opération sur les fichiers : jusqu'à mille chemins. */
@@ -38,7 +45,13 @@ const FILE_OPERATIONS = Object.freeze(['createFolder', 'rename', 'copy', 'move',
  * @param {object} [options]
  * @param {string|null} [options.settingsFile]  fichier des réglages ; `null` :
  *        réglages en mémoire seulement (rien n'est lu ni écrit)
+ * @param {string|null} [options.notesFile]   fichier des notes ; `null` : notes en mémoire seulement
+ * @param {string|null} [options.agendaFile]  fichier de l'agenda ; `null` : rendez-vous en mémoire seulement
  * @param {string|null} [options.appVersion]
+ * @param {object} [options.system]  ce que l'hôte sait de lui-même, pour le
+ *        service du système : `dataDir` (dossier des réglages, des notes et
+ *        de l'agenda), `versions` (composants de l'hôte) et `processes()`
+ *        (ses processus). Les mesures de la machine, elles, sont lues ici.
  * @param {object} [options.files]  emplacements que l'explorateur peut
  *        consulter : `places` (dossiers personnels connus de l'hôte), `drives`
  *        (`'auto'` : lecteurs locaux) et `fs` (voir files.js). Sans cette
@@ -60,7 +73,17 @@ const FILE_OPERATIONS = Object.freeze(['createFolder', 'rename', 'copy', 'move',
  *        jour n'est possible.
  * @param {(message: string) => void} [options.log]
  */
-function createServices({ settingsFile = null, appVersion = null, files: fileOptions = {}, operations: operationOptions = {}, updates: updateOptions = {}, log = () => {} } = {}) {
+function createServices({
+  settingsFile = null,
+  notesFile = null,
+  agendaFile = null,
+  appVersion = null,
+  files: fileOptions = {},
+  operations: operationOptions = {},
+  updates: updateOptions = {},
+  system: systemOptions = {},
+  log = () => {},
+} = {}) {
   const hub = createHub({ log });
   const settings = createSettingsService({ file: settingsFile, appVersion, log });
   const files = createFilesService(fileOptions);
@@ -136,11 +159,61 @@ function createServices({ settingsFile = null, appVersion = null, files: fileOpt
     if (event === 'changed' && payload?.key === 'updates.automatic') updates.refresh();
   });
 
+  // Notes et agenda : le contenu de l'utilisateur. Chaque changement est annoncé à tous, demandeur compris —
+  // toute vue qui les affiche se met à jour de la même façon. Une suppression exige une confirmation.
+  const notes = createNotesService({ file: notesFile, appVersion, log });
+  const announceNotes = hub.register('notes', {
+    methods: {
+      list: () => notes.list(),
+      read: (_context, id) => notes.read(id),
+      create: (_context, text = '') => notes.create(text),
+      update: (_context, id, text) => notes.update(id, text),
+      remove: (_context, id, choices) => notes.remove(id, choices),
+      state: () => notes.state(),
+    },
+    events: ['changed', 'state'],
+    status: () => notes.status(),
+  });
+  notes.on((event, payload) => announceNotes(event, payload));
+
+  const agenda = createAgendaService({ file: agendaFile, appVersion, log });
+  const announceAgenda = hub.register('agenda', {
+    methods: {
+      list: () => agenda.list(),
+      add: (_context, date, title) => agenda.add(date, title),
+      rename: (_context, id, title) => agenda.rename(id, title),
+      remove: (_context, id, choices) => agenda.remove(id, choices),
+      state: () => agenda.state(),
+    },
+    events: ['changed', 'state'],
+    status: () => agenda.status(),
+  });
+  agenda.on((event, payload) => announceAgenda(event, payload));
+
+  // Système : des mesures réelles, en lecture seule.
+  const system = createSystemService({
+    appVersion,
+    variant: updates.state().variant,
+    dataDir: typeof systemOptions.dataDir === 'string' ? systemOptions.dataDir : null,
+    versions: systemOptions.versions ?? {},
+    processes: typeof systemOptions.processes === 'function' ? systemOptions.processes : null,
+  });
+  hub.register('system', {
+    methods: {
+      overview: () => system.overview(),
+      sample: () => system.sample(),
+    },
+    status: () => system.status(),
+  });
+
   return {
     hub,
     settings,
     files,
     updates,
+    notes,
+    agenda,
+    system,
     /**
      * Opérations sur les fichiers : une fonction par opération, aux arguments
      * fixés. Chacune répond `{ ok: true, value }` ou `{ ok: false, code,
@@ -163,12 +236,17 @@ function createServices({ settingsFile = null, appVersion = null, files: fileOpt
      * l'arrêt du programme ; ne lève jamais d'exception.
      */
     flushSync() {
-      try {
-        return settings.flushSync();
-      } catch (error) {
-        log(`Services : enregistrement final impossible : ${error?.message ?? error}`);
-        return false;
+      let saved = true;
+      // Chacun à son tour : un échec n'empêche pas l'enregistrement des autres.
+      for (const [name, store] of [['réglages', settings], ['notes', notes], ['agenda', agenda]]) {
+        try {
+          if (store.flushSync() !== true) saved = false;
+        } catch (error) {
+          log(`Services : enregistrement final impossible (${name}) : ${error?.message ?? error}`);
+          saved = false;
+        }
       }
+      return saved;
     },
     /** Inventaire et état des services — et des opérations sur les fichiers, qui n'en sont pas un. */
     describe: () => ({

@@ -4,9 +4,9 @@
  * couche vis-à-vis de l'interface et d'Electron.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
@@ -45,7 +45,7 @@ test('la couche de services ne dépend ni d’Electron, ni de l’interface, ni 
 
 test('la couche de services se charge avec Node seul', async () => {
   const services = createServices();
-  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'updates', 'file-operations']);
+  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'updates', 'notes', 'agenda', 'system', 'file-operations']);
   // Sans hôte pour fournir un moteur, aucune mise à jour n'est possible : rien n'est recherché.
   assert.deepEqual(services.describe().updates, {
     state: 'unavailable',
@@ -121,7 +121,7 @@ test('opérations sur les fichiers : hors du point d’accès, une fonction par 
     assert.deepEqual(services.describe()['file-operations'].open, true);
     assert.deepEqual(services.describe()['file-operations'].noReplaceMove, true);
     // Le point d'accès aux services ne les connaît pas, sous aucun nom.
-    assert.deepEqual(Object.keys(services.hub.describe()), ['settings', 'files', 'updates']);
+    assert.deepEqual(Object.keys(services.hub.describe()), ['settings', 'files', 'updates', 'notes', 'agenda', 'system']);
     for (const method of ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel']) {
       assert.equal((await services.hub.call('files', method, [documents, 'x'])).code, 'unknown-method', method);
       assert.equal((await services.hub.call('file-operations', method, [documents, 'x'])).code, 'unknown-service', method);
@@ -399,6 +399,92 @@ test('emplacement des réglages : dossier de configuration de l’utilisateur so
   // L'hôte (Electron) indique déjà le bon dossier sur chaque système.
   assert.equal(settingsDir({ platform: 'linux', appData: '/home/leo/.config' }), '/home/leo/.config/evolve');
   assert.equal(userConfigRoot({ platform: 'linux', env: {}, home: '/home/leo' }), '/home/leo/.config');
+});
+
+// ---------------------------------------------------------------------------------
+// Notes, agenda et système, à travers le point d'accès
+// ---------------------------------------------------------------------------------
+
+test('notes et agenda : appelés par leur nom, annoncés à tous, enregistrés à côté des réglages à la fermeture', async () => {
+  const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'evolve-services-')));
+  try {
+    const services = createServices({
+      settingsFile: path.join(base, 'Evolve', 'settings.json'),
+      notesFile: path.join(base, 'Evolve', 'notes.json'),
+      agendaFile: path.join(base, 'Evolve', 'agenda.json'),
+      appVersion: '1.2.3',
+    });
+    const events = [];
+    services.hub.subscribe((event) => events.push(event));
+    const call = (service, method, ...args) => services.hub.call(service, method, args, { origin: 'fenêtre' });
+
+    assert.deepEqual(services.describe().notes.methods, ['list', 'read', 'create', 'update', 'remove', 'state']);
+    assert.deepEqual(services.describe().agenda.methods, ['list', 'add', 'rename', 'remove', 'state']);
+    assert.deepEqual(services.describe().system.methods, ['overview', 'sample']);
+    assert.deepEqual([services.describe().notes.events, services.describe().agenda.events, services.describe().system.events], [['changed', 'state'], ['changed', 'state'], []]);
+
+    const note = (await call('notes', 'create', 'Liste\n- pain')).value;
+    assert.equal(note.title, 'Liste');
+    assert.equal((await call('notes', 'update', note.id, 'Liste\n- pain\n- lait')).value.excerpt, '- pain - lait');
+    assert.equal((await call('notes', 'read', note.id)).value.text, 'Liste\n- pain\n- lait');
+    const event = (await call('agenda', 'add', '2026-12-24', 'Réveillon')).value;
+    assert.deepEqual([event.date, event.title], ['2026-12-24', 'Réveillon']);
+    // Chaque changement est annoncé à tous, demandeur compris (aucune origine) : toute vue se met à jour de même.
+    assert.deepEqual(events.map(({ service, event: name, payload, origin }) => [service, name, payload.reason, origin]), [
+      ['notes', 'changed', 'created', null],
+      ['notes', 'changed', 'updated', null],
+      ['agenda', 'changed', 'created', null],
+    ]);
+
+    // Refus : toujours de la forme commune, avec un message en français.
+    assert.deepEqual(await call('notes', 'remove', note.id), { ok: false, code: 'confirmation-required', message: "La suppression d'une note est définitive : elle doit être confirmée." });
+    assert.deepEqual(await call('agenda', 'remove', event.id, { confirmed: false }), { ok: false, code: 'confirmation-required', message: "La suppression d'un rendez-vous est définitive : elle doit être confirmée." });
+    assert.deepEqual(await call('agenda', 'add', '2026-02-30', 'x'), { ok: false, code: 'invalid-value', message: "Cette date n'existe pas dans le calendrier." });
+    assert.deepEqual(await call('notes', 'read', 'inconnue'), { ok: false, code: 'not-found', message: "Cet élément n'existe plus." });
+    assert.equal((await call('notes', 'update', note.id, 'x'.repeat(20_001))).code, 'invalid-value');
+    // Un texte démesuré est refusé par le point d'accès lui-même, avant d'atteindre le service.
+    assert.equal((await call('notes', 'create', 'x'.repeat(70_000))).code, 'bad-arguments');
+    // Aucune méthode interne n'est appelable.
+    for (const method of ['flushSync', 'status', 'on']) {
+      assert.equal((await call('notes', method)).code, 'unknown-method', method);
+      assert.equal((await call('agenda', method)).code, 'unknown-method', method);
+    }
+    assert.equal((await call('system', 'status')).code, 'unknown-method');
+
+    // Rien sur le disque avant l'enregistrement final ; ensuite, deux fichiers à côté de celui des réglages
+    // (aucun réglage n'a été modifié : le sien n'existe pas).
+    assert.equal(existsSync(path.join(base, 'Evolve')), false);
+    assert.equal(services.flushSync(), true);
+    assert.deepEqual(readdirSync(path.join(base, 'Evolve')).sort(), ['agenda.json', 'notes.json']);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(base, 'Evolve', 'notes.json'), 'utf8')).items.map((item) => item.text), ['Liste\n- pain\n- lait']);
+
+    // Un second jeu de services, sur les mêmes fichiers, retrouve tout.
+    const again = createServices({ notesFile: path.join(base, 'Evolve', 'notes.json'), agendaFile: path.join(base, 'Evolve', 'agenda.json') });
+    assert.deepEqual((await again.hub.call('notes', 'list')).value.map((item) => item.title), ['Liste']);
+    assert.deepEqual((await again.hub.call('agenda', 'list')).value.map((item) => item.title), ['Réveillon']);
+    assert.equal((await again.hub.call('agenda', 'remove', [event.id, { confirmed: true }])).value, true);
+    assert.equal(again.flushSync(), true);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('système : des mesures réelles à travers le point d’accès ; ce que l’hôte fournit y figure', async () => {
+  const services = createServices({
+    appVersion: '1.2.3',
+    system: { dataDir: '/donnees/evolve', versions: { electron: '45.2.3' }, processes: () => [{ type: 'Browser', pid: 7, cpu: 10, memory: 1024 }] },
+  });
+  const overview = (await services.hub.call('system', 'overview')).value;
+  assert.deepEqual(overview.evolve, { version: '1.2.3', variant: 'development', dataDir: '/donnees/evolve', versions: { electron: '45.2.3' } });
+  assert.equal(overview.cpu.cores, os.cpus().length);
+  const sample = (await services.hub.call('system', 'sample')).value;
+  assert.equal(sample.memory.total, os.totalmem());
+  assert.deepEqual(sample.evolve.processes.map((item) => [item.pid, item.label, item.memory]), [[7, 'Processus principal', 1024]]);
+  assert.deepEqual({ ...services.describe().system }, { state: 'available', access: 'read-only', measures: 'real', processes: true, methods: ['overview', 'sample'], events: [] });
+  // Sans hôte : aucune version de composant, aucun processus — rien n'est inventé.
+  const bare = createServices();
+  assert.deepEqual((await bare.hub.call('system', 'overview')).value.evolve, { version: null, variant: 'development', dataDir: null, versions: {} });
+  assert.equal((await bare.hub.call('system', 'sample')).value.evolve, null);
 });
 
 // ---------------------------------------------------------------------------------

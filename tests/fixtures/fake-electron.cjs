@@ -169,6 +169,16 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     isPackaged: packaged,
     getName: () => 'Evolve',
     getVersion: () => '9.8.7',
+    /** Processus de l'application, comme Electron les décrit : processeur en pourcentage d'un cœur, mémoire en kilo-octets. */
+    getAppMetrics() {
+      state.appMetricsCalls = (state.appMetricsCalls ?? 0) + 1;
+      return [
+        { pid: 4000, type: 'Browser', creationTime: 1, cpu: { percentCPUUsage: 12.5, idleWakeupsPerSecond: 0 }, memory: { workingSetSize: 90_000, peakWorkingSetSize: 95_000 } },
+        { pid: 4001, type: 'GPU', creationTime: 2, cpu: { percentCPUUsage: 0, idleWakeupsPerSecond: 0 }, memory: { workingSetSize: 60_000, peakWorkingSetSize: 61_000 } },
+        { pid: 4002, type: 'Tab', creationTime: 3, cpu: { percentCPUUsage: 40, idleWakeupsPerSecond: 0 }, memory: { workingSetSize: 250_000, peakWorkingSetSize: 260_000 } },
+        { pid: 4003, type: 'Utility', name: 'Network Service', serviceName: 'network.mojom.NetworkService', creationTime: 4, cpu: { percentCPUUsage: 0.5, idleWakeupsPerSecond: 0 }, memory: { workingSetSize: 30_000, peakWorkingSetSize: 31_000 } },
+      ];
+    },
     getPath(name) {
       if (state.paths[name]) return state.paths[name];
       if (name === 'temp') return tempDir;

@@ -44,7 +44,9 @@ const { personalFolders } = require('./personal-folders');
 const { createUpdateEngine } = require('./update-engine');
 const { detectVariant } = require('./variant');
 const { createServices } = require('../services');
-const { settingsDir, settingsFile } = require('../services/platform');
+const { AGENDA_FILE } = require('../services/agenda');
+const { NOTES_FILE } = require('../services/notes');
+const { dataFile, settingsDir, settingsFile } = require('../services/platform');
 const { compareVersions, localFeed, productionFeed } = require('../services/updates');
 
 const options = parseArgs(process.argv);
@@ -229,9 +231,9 @@ let updateEngine = null;
 /**
  * Ce que l'hôte fournit au service des mises à jour. Seule la version
  * installée reçoit un moteur ; les autres ne peuvent rien rechercher.
+ * @param {string} variant  façon dont Evolve a été lancé (voir variant.js)
  */
-function updateOptions() {
-  const variant = detectVariant({ packaged: app.isPackaged });
+function updateOptions(variant) {
   if (variant !== 'installed') return { variant };
   // Vérification automatique de la mise à jour : un serveur de cette machine tient lieu de page de publication.
   const feed = options.updateFeed ? localFeed(options.updateFeed) : productionFeed();
@@ -241,6 +243,21 @@ function updateOptions() {
   }
   updateEngine = createUpdateEngine({ feed, request: createUpdateRequest(feed), tempDir: app.getPath('temp'), log: (message) => console.warn(message) });
   return { variant, engine: updateEngine, page: feed.page, updated: options.updated, quit: () => app.quit() };
+}
+
+/**
+ * Processus d'Evolve, pour le Moniteur système : nature, processeur (en
+ * pourcentage d'un cœur) et mémoire (en octets) de chacun. Lecture seule.
+ */
+function evolveProcesses() {
+  return app.getAppMetrics().map((metric) => ({
+    type: metric.type,
+    name: metric.name || metric.serviceName || null,
+    pid: metric.pid,
+    cpu: metric.cpu ? metric.cpu.percentCPUUsage : null,
+    // Electron compte la mémoire en kilo-octets.
+    memory: metric.memory ? metric.memory.workingSetSize * 1024 : null,
+  }));
 }
 
 if (options.selfTest) {
@@ -275,16 +292,23 @@ if (!hasLock) {
   if (options.selfTest) abortSelfTest(new Error("Un auto-test d'Evolve est déjà en cours."));
   else app.exit(0);
 } else {
+  const userSettingsFile = resolveSettingsFile();
+  // Notes et agenda : à côté des réglages. Sans fichier de réglages (auto-test), ils restent en mémoire.
+  const dataDir = userSettingsFile ? path.dirname(userSettingsFile) : null;
   services = createServices({
-    settingsFile: resolveSettingsFile(),
+    settingsFile: userSettingsFile,
+    notesFile: dataDir ? dataFile(dataDir, NOTES_FILE) : null,
+    agendaFile: dataDir ? dataFile(dataDir, AGENDA_FILE) : null,
     appVersion: app.getVersion(),
+    // Système : ce que l'hôte sait de lui-même ; les mesures de la machine sont lues par le service.
+    system: { dataDir, versions: { electron: process.versions.electron, chromium: process.versions.chrome, node: process.versions.node }, processes: evolveProcesses },
     // Explorateur de fichiers : dossiers personnels et lecteurs locaux.
     files: { places: locatePersonalFolders, drives: 'auto', fs: plainFileSystem() },
     // Opérations sur les fichiers : la Corbeille, l'ouverture et le déplacement sans remplacement
     // sont confiés à Windows.
     operations: { trash: sendToRecycleBin, openPath: openWithAssociatedApp, moveNoReplace },
     // Mises à jour : version installée seulement.
-    updates: updateOptions(),
+    updates: updateOptions(detectVariant({ packaged: app.isPackaged })),
     log: (message) => console.warn(message),
   });
   // Événements des services : transmis à la fenêtre, sauf ceux qui découlent

@@ -490,7 +490,10 @@ test('chaque écriture sur le disque est inventoriée : les fichiers de l’util
     // Node, qui remplace, n'y figure plus : renommer et déplacer passent par la fonction sans remplacement
     // de l'hôte (voir tests/file-operations.test.mjs).
     'src/services/file-operations.js': ['copyFile', 'mkdir'],
-    // Fichier des réglages (%APPDATA%\Evolve\settings.json), écrit seulement après un réglage modifié.
+    // Fichiers d'Evolve dans son dossier de données (%APPDATA%\Evolve) : les réglages (settings.json), écrits
+    // seulement après un réglage modifié ; les notes (notes.json) et l'agenda (agenda.json), écrits seulement après
+    // une note ou un rendez-vous créé, modifié ou supprimé par l'utilisateur. Aucun autre fichier de la couche de
+    // services n'écrit : notes.js, agenda.js et records.js passent tous par celui-ci.
     'src/services/json-file.js': ['fsyncSync', 'mkdirSync', 'openSync', 'renameSync', 'rmSync', 'writeFileSync'],
   };
   const found = {};
@@ -583,7 +586,8 @@ test('réseau : l’interface n’y accède jamais ; seul le moteur des mises à
   assert.equal([...main.matchAll(/\bcreateUpdateRequest\b/g)].length, 2, 'une définition, un usage');
   assert.match(main, /createUpdateEngine\(\{ feed, request: createUpdateRequest\(feed\), tempDir: app\.getPath\('temp'\), /);
   // Ce moteur n'existe que pour la version installée : l'exécutable portable ne se connecte jamais.
-  assert.match(main, /const variant = detectVariant\(\{ packaged: app\.isPackaged \}\);\s+if \(variant !== 'installed'\) return \{ variant \};/);
+  assert.match(main, /function updateOptions\(variant\) \{\s+if \(variant !== 'installed'\) return \{ variant \};/);
+  assert.match(main, /updates: updateOptions\(detectVariant\(\{ packaged: app\.isPackaged \}\)\),/);
   // Au lancement, la recherche n'a lieu qu'hors auto-test, une fois l'interface affichée, par la méthode qui
   // respecte le réglage.
   assert.match(main, /if \(!options\.selfTest\) \{\s+win\.webContents\.once\('did-finish-load', \(\) => \{\s+const timer = setTimeout\(\(\) => services\.updates\.checkAtLaunch\(\), UPDATE_CHECK_DELAY_MS\);/);

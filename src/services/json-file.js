@@ -142,4 +142,29 @@ function setAside(file, target, { fs = nodeFs, delays, sleep } = {}) {
   }
 }
 
-module.exports = { readJson, writeJsonAtomic, setAside, RETRY_DELAYS };
+/**
+ * Met un fichier de côté sous un nom encore libre, sans jamais remplacer une
+ * copie précédente : « notes.json » devient « notes.illisible-<marque>.json »,
+ * puis « notes.illisible-<marque>-2.json »… Sert aux fichiers dont le contenu
+ * appartient à l'utilisateur (ses notes) : chaque copie mise de côté est gardée.
+ * @param {string} file
+ * @param {string} stamp  marque ajoutée au nom (une date, par exemple)
+ * @returns {string|null} le nom donné à la copie, ou `null` si le fichier n'a pas pu être déplacé
+ */
+function setAsideUnique(file, stamp, { fs = nodeFs, delays, sleep } = {}) {
+  const extension = path.extname(file);
+  const stem = path.join(path.dirname(file), `${path.basename(file, extension)}.illisible-${String(stamp).replace(/[^0-9A-Za-z-]/g, '')}`);
+  for (let attempt = 1; attempt <= 50; attempt += 1) {
+    const target = `${stem}${attempt === 1 ? '' : `-${attempt}`}${extension}`;
+    try {
+      if (fs.existsSync(target)) continue;
+      retrying(() => fs.renameSync(file, target), { delays, sleep });
+      return target;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+module.exports = { readJson, writeJsonAtomic, setAside, setAsideUnique, RETRY_DELAYS };
