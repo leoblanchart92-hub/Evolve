@@ -47,6 +47,7 @@ import {
   UNINSTALLER_EXE,
   expectedInstallDir,
   formatSize,
+  installDirOf,
   installProblems,
   installSilently,
   inventory,
@@ -181,7 +182,7 @@ async function main(argv) {
       [entry = null] = state.user;
       const problems = installProblems(state, { version: pkg.version });
       if (problems.length === 0) {
-        pass(`installé en ${installed.seconds} s pour l'utilisateur seul, sans droits d'administrateur : ${entry.location}`);
+        pass(`installé en ${installed.seconds} s pour l'utilisateur seul, sans droits d'administrateur : ${installDirOf(entry)}`);
         pass(`inscrit parmi les programmes de l'utilisateur (« ${entry.name} »), absent de ceux de la machine`);
         pass(`raccourcis du menu Démarrer et du bureau : ils mènent à ${APP_EXE}, sans argument`);
         pass('rien au démarrage de Windows (ni registre, ni dossier Démarrage)');

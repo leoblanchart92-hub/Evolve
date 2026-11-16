@@ -198,6 +198,19 @@ export function expectedInstallDir(state) {
 }
 
 /**
+ * Dossier d'une installation relevée. L'installateur ne l'inscrit pas parmi
+ * les informations de désinstallation : c'est le dossier du désinstallateur
+ * que Windows lancerait.
+ * @param {{ location?: string, uninstall?: string, quiet?: string }} entry
+ * @returns {string} chaîne vide si rien ne permet de le savoir
+ */
+export function installDirOf(entry) {
+  if (typeof entry?.location === 'string' && entry.location.trim() !== '') return entry.location.trim();
+  const [program] = parseCommandLine(entry?.uninstall || entry?.quiet);
+  return program && /[\\/]/.test(program) ? path.win32.dirname(program) : '';
+}
+
+/**
  * Ce qui, dans un relevé pris après l'installation, n'est pas conforme :
  * une seule inscription, pour l'utilisateur seul, à la version attendue, dans
  * son profil ; deux raccourcis vers le programme installé ; rien au démarrage.
@@ -219,7 +232,7 @@ export function installProblems(state, { version }) {
   const exe = path.win32.join(dir, APP_EXE);
   if (entry.name !== `${PRODUCT_NAME} ${version}`) problems.push(`nom inscrit : « ${entry.name} », au lieu de « ${PRODUCT_NAME} ${version} »`);
   if (entry.version !== version) problems.push(`version inscrite : ${entry.version || '(aucune)'}, au lieu de ${version}`);
-  if (!sameWindowsPath(entry.location, dir)) problems.push(`dossier d'installation inattendu : ${entry.location || '(aucun)'}, au lieu de ${dir}`);
+  if (!sameWindowsPath(installDirOf(entry), dir)) problems.push(`dossier d'installation inattendu : ${installDirOf(entry) || '(aucun)'}, au lieu de ${dir}`);
 
   // La désinstallation proposée par Windows : le désinstallateur du dossier installé, pour l'utilisateur seul.
   for (const [label, command, silent] of [['désinstallation', entry.uninstall, false], ['désinstallation silencieuse', entry.quiet, true]]) {
@@ -363,24 +376,25 @@ export function installSilently(setup, { args = [], timeout = 300_000 } = {}) {
  * Windows emploierait — puis attend que le dossier et l'inscription aient
  * disparu. (Le désinstallateur se recopie dans le dossier temporaire pour
  * pouvoir se supprimer : son processus rend la main avant d'avoir fini.)
- * @param {{ quiet: string, location: string }} entry  inscription relevée
+ * @param {{ quiet: string, uninstall?: string, location?: string }} entry  inscription relevée
  * @param {{ read?: () => object, timeout?: number }} [options]
  * @returns {Promise<{ ok: boolean, detail: string, state: object|null }>}
  */
 export async function uninstallSilently(entry, { read = readInstallState, timeout = 180_000 } = {}) {
   const [program, ...args] = parseCommandLine(entry.quiet);
   if (!program || !existsSync(program)) return { ok: false, detail: `désinstallateur introuvable : ${entry.quiet || '(aucune commande inscrite)'}`, state: null };
+  const dir = installDirOf(entry);
   const result = spawnSync(program, args, { stdio: 'ignore', timeout: 120_000, windowsHide: true });
   if (result.error) return { ok: false, detail: result.error.message, state: null };
   let state = null;
   const done = await waitFor(
     () => {
-      if (existsSync(entry.location)) return false;
+      if (dir && existsSync(dir)) return false;
       state = read();
       return state.user.length === 0;
     },
     { timeout, interval: 1000 },
   );
-  if (!done) return { ok: false, detail: `après ${Math.round(timeout / 1000)} s, le programme est toujours inscrit ou son dossier existe encore (${entry.location})`, state };
+  if (!done) return { ok: false, detail: `après ${Math.round(timeout / 1000)} s, le programme est toujours inscrit ou son dossier existe encore (${dir})`, state };
   return { ok: true, detail: '', state };
 }

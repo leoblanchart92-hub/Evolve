@@ -23,6 +23,7 @@ import {
   expectedInstallDir,
   firstLine,
   formatSize,
+  installDirOf,
   installProblems,
   inventory,
   namesIn,
@@ -54,7 +55,9 @@ const entryOf = (version = '0.6.0', changes = {}) => ({
   key: '3b9c5a1e-0f0d-5a0e-8d7e-2f4b1c6a9e10',
   name: `Evolve ${version}`,
   version,
-  location: DIR,
+  // L'installateur n'inscrit pas le dossier parmi les informations de désinstallation (relevé de la machine
+  // de compilation) : il se déduit du désinstallateur.
+  location: '',
   uninstall: `"${UNINSTALLER}" /currentuser`,
   quiet: `"${UNINSTALLER}" /currentuser /S`,
   ...changes,
@@ -77,6 +80,13 @@ test('installation conforme : une seule inscription, pour l’utilisateur seul, 
   assert.deepEqual(installProblems(relaxed, { version: '0.6.0' }), []);
 });
 
+test('dossier d’une installation : celui qui est inscrit, sinon celui du désinstallateur', () => {
+  assert.equal(installDirOf(entryOf()), DIR);
+  assert.equal(installDirOf(entryOf('0.6.0', { location: 'D:\\Ailleurs\\Evolve ' })), 'D:\\Ailleurs\\Evolve');
+  assert.equal(installDirOf({ location: '', uninstall: '', quiet: `"${UNINSTALLER}" /currentuser /S` }), DIR);
+  for (const unknown of [{}, null, undefined, { location: '   ', uninstall: '', quiet: '' }, { uninstall: 'désinstaller' }]) assert.equal(installDirOf(unknown), '');
+});
+
 test('installation : chaque écart est nommé', () => {
   const problemsOf = (changes, version = '0.6.0') => installProblems(installed(changes), { version });
 
@@ -97,8 +107,10 @@ test('installation : chaque écart est nommé', () => {
   assert.ok(all.some((problem) => /^désinstallation silencieuse : l'option \/S est absente/.test(problem)));
   const foreign = problemsOf({ user: [entryOf('0.6.0', { quiet: '"C:\\Windows\\System32\\cmd.exe" /currentuser /S' })] });
   assert.deepEqual(foreign, ['désinstallation silencieuse : programme inattendu ("C:\\Windows\\System32\\cmd.exe" /currentuser /S)']);
+  // Aucune commande de désinstallation : le dossier lui-même est inconnu.
   const none = problemsOf({ user: [entryOf('0.6.0', { uninstall: '', quiet: '' })] });
-  assert.equal(none.length, 5, none.join('\n'));
+  assert.equal(none.length, 6, none.join('\n'));
+  assert.equal(none[0], `dossier d'installation inattendu : (aucun), au lieu de ${DIR}`);
 
   // Raccourcis : absents, vers un autre programme, ou avec des arguments.
   assert.deepEqual(problemsOf({ startMenu: null, desktop: null }), ['raccourci du menu Démarrer absent', 'raccourci du bureau absent']);
