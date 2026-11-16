@@ -26,6 +26,12 @@ export const PERSISTED = Object.freeze({
   brightness: 'quick.brightness',
   volume: 'quick.volume',
   muted: 'quick.muted',
+  // Emplacement de la fenêtre de l'explorateur (voir window-placement.js).
+  explorerWindowX: 'explorerWindow.x',
+  explorerWindowY: 'explorerWindow.y',
+  explorerWindowWidth: 'explorerWindow.width',
+  explorerWindowHeight: 'explorerWindow.height',
+  explorerWindowMaximized: 'explorerWindow.maximized',
 });
 
 /** Attente maximale des réglages au démarrage : au-delà, le bureau s'ouvre sans eux. */

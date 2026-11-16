@@ -12,20 +12,30 @@
  *     sont placés dans le dossier temporaire de l'utilisateur ;
  *   - les réglages de l'utilisateur sont conservés dans un seul fichier,
  *     %APPDATA%\Evolve\settings.json, créé au premier réglage modifié ;
- *   - les dossiers de l'ordinateur sont consultés en lecture seule par
- *     l'explorateur de fichiers (service « files ») : Windows est seulement
+ *   - les dossiers de l'ordinateur sont consultés par l'explorateur de
+ *     fichiers (service « files », en lecture seule) : Windows est seulement
  *     interrogé sur l'emplacement des dossiers personnels (Bureau, Documents…),
- *     et aucun dossier n'est jamais créé — un dossier absent le reste
- *     (voir personal-folders.js).
+ *     et aucun dossier personnel n'est jamais créé — un dossier absent le reste
+ *     (voir personal-folders.js) ;
+ *   - les fichiers de l'utilisateur ne sont modifiés qu'à sa demande, par les
+ *     opérations de src/services/file-operations.js (nouveau dossier, renommer,
+ *     copier, déplacer). Ce processus leur fournit trois fonctions de Windows
+ *     et rien d'autre : l'envoi à la Corbeille — seule forme de suppression,
+ *     sans repli vers une suppression définitive —, l'ouverture d'un fichier
+ *     par l'application associée, et le déplacement sans remplacement, que
+ *     Windows refuse de lui-même si le nom d'arrivée est déjà pris (voir
+ *     atomic-move.js). La fenêtre n'accède jamais au système de fichiers :
+ *     elle demande chaque opération par un canal qui lui est propre.
  *
  * Options de la ligne de commande : voir args.js.
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session, shell } = require('electron');
 
 const { parseArgs } = require('./args');
+const { loadAtomicMove } = require('./atomic-move');
 const { personalFolders } = require('./personal-folders');
 const { createServices } = require('../services');
 const { settingsDir, settingsFile } = require('../services/platform');
@@ -130,6 +140,53 @@ function plainFileSystem() {
   }
 }
 
+/**
+ * Envoie un élément à la Corbeille de Windows — la seule forme de suppression
+ * qu'Evolve connaisse. Si la Corbeille ne peut pas recevoir l'élément, Windows
+ * abandonne l'opération et la promesse est rejetée : il n'existe aucun repli
+ * vers une suppression définitive, ni ici ni ailleurs.
+ * @param {string} location  chemin réel, déjà contrôlé par le service
+ * @returns {Promise<void>}
+ */
+function sendToRecycleBin(location) {
+  return shell.trashItem(location);
+}
+
+/**
+ * Confie un fichier à l'application que Windows lui associe. Evolve ne lit
+ * pas le fichier et n'en exécute rien lui-même.
+ * @param {string} location  chemin réel, déjà contrôlé par le service
+ * @returns {Promise<string>} texte vide, ou la description de l'échec
+ */
+function openWithAssociatedApp(location) {
+  return shell.openPath(location);
+}
+
+/**
+ * Fonction qui renomme ou déplace un élément sans jamais rien remplacer :
+ * Windows refuse de lui-même si le nom d'arrivée est déjà pris, d'un seul
+ * geste — aucun autre programme ne peut s'intercaler (voir atomic-move.js).
+ * Si elle ne peut pas être chargée, RIEN NE LA REMPLACE : sans elle, les
+ * opérations sur les fichiers refusent de renommer et de déplacer.
+ * @type {((from: string, to: string) => Promise<void>) | null}
+ */
+let moveNoReplace = null;
+
+/**
+ * Raison pour laquelle cette fonction n'a pas pu être chargée, ou `null`. Un
+ * auto-test s'arrête alors en échec : un exécutable qui ne saurait ni
+ * renommer ni déplacer ne doit pas être publié.
+ * @type {Error|null}
+ */
+let moveNoReplaceFailure = null;
+
+try {
+  moveNoReplace = loadAtomicMove();
+} catch (error) {
+  moveNoReplaceFailure = error instanceof Error ? error : new Error(String(error));
+  console.warn(`${moveNoReplaceFailure.message} — renommer et déplacer sont désactivés.`);
+}
+
 if (options.selfTest) {
   process.on('uncaughtException', abortSelfTest);
   process.on('unhandledRejection', abortSelfTest);
@@ -165,8 +222,11 @@ if (!hasLock) {
   services = createServices({
     settingsFile: resolveSettingsFile(),
     appVersion: app.getVersion(),
-    // Explorateur de fichiers : dossiers personnels et lecteurs locaux, en lecture seule.
+    // Explorateur de fichiers : dossiers personnels et lecteurs locaux.
     files: { places: locatePersonalFolders, drives: 'auto', fs: plainFileSystem() },
+    // Opérations sur les fichiers : la Corbeille, l'ouverture et le déplacement sans remplacement
+    // sont confiés à Windows.
+    operations: { trash: sendToRecycleBin, openPath: openWithAssociatedApp, moveNoReplace },
     log: (message) => console.warn(message),
   });
   // Événements des services : transmis à la fenêtre, sauf ceux qui découlent
@@ -174,6 +234,11 @@ if (!hasLock) {
   services.hub.subscribe(({ service, event, payload, origin }) => {
     if (origin === WINDOW_ORIGIN || !mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send('evolve:service-event', { service, event, payload });
+  });
+  // Progression des opérations sur les fichiers (copie d'un gros dossier…).
+  services.fileOperations.onProgress((progress) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('evolve:files-progress', progress);
   });
 }
 
@@ -318,6 +383,21 @@ function registerIpc() {
     if (!fromMainWindow(event) || !services) return { ok: false, code: 'forbidden', message: 'Appel refusé.' };
     return services.hub.call(service, method, args, { origin: WINDOW_ORIGIN });
   });
+
+  // Opérations sur les fichiers : un canal par opération, aux arguments fixés.
+  // Aucune n'est une méthode d'un service : le canal ci-dessus ne peut en
+  // atteindre aucune. Chaque demande doit venir de la fenêtre de
+  // l'application ; les chemins sont contrôlés par le service, avant tout accès.
+  const refused = () => ({ ok: false, code: 'forbidden', message: 'Appel refusé.' });
+  const trusted = (event) => fromMainWindow(event) && Boolean(services);
+
+  ipcMain.handle('evolve:files-create-folder', (event, parent, name) => (trusted(event) ? services.fileOperations.createFolder(parent, name) : refused()));
+  ipcMain.handle('evolve:files-rename', (event, target, name) => (trusted(event) ? services.fileOperations.rename(target, name) : refused()));
+  ipcMain.handle('evolve:files-copy', (event, sources, destination, choices) => (trusted(event) ? services.fileOperations.copy(sources, destination, choices) : refused()));
+  ipcMain.handle('evolve:files-move', (event, sources, destination, choices) => (trusted(event) ? services.fileOperations.move(sources, destination, choices) : refused()));
+  ipcMain.handle('evolve:files-trash', (event, targets, choices) => (trusted(event) ? services.fileOperations.trash(targets, choices) : refused()));
+  ipcMain.handle('evolve:files-open', (event, target, choices) => (trusted(event) ? services.fileOperations.open(target, choices) : refused()));
+  ipcMain.handle('evolve:files-cancel', (event, operation) => (trusted(event) ? services.fileOperations.cancel(operation) : refused()));
 }
 
 async function start() {
@@ -340,12 +420,16 @@ async function start() {
   const win = createWindow();
 
   if (options.selfTest) {
+    // Sans déplacement sans remplacement, l'auto-test n'a pas lieu : l'échec et sa cause sont consignés.
+    if (moveNoReplaceFailure) return abortSelfTest(moveNoReplaceFailure);
     // Chargé à la demande : l'auto-test ne sert qu'à la compilation automatique.
     const { runSelfTest } = require('./selftest');
     const exitCode = await runSelfTest(win, {
       outDir: selfTestOutputDir(),
       scenario: options.selfTestScenario || undefined,
       describeServices: () => services.describe(),
+      // La fonction même que les opérations emploient : l'auto-test l'éprouve sur le disque.
+      moveNoReplace,
     });
     exitNow(exitCode === 0 ? 0 : 1);
   } else if (options.statusFile) {

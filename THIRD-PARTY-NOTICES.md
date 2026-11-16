@@ -10,6 +10,7 @@ propre licence, reproduite ou référencée ici.
 | [Outfit](https://github.com/Outfitio/Outfit-Fonts) | Police des titres et des chiffres | SIL Open Font License 1.1 | Oui (`assets/fonts/outfit/`) |
 | [Electron](https://www.electronjs.org) 45 (Chromium, Node.js) | Moteur de l'application de bureau | MIT, BSD et autres | Oui |
 | [electron-builder](https://www.electron.build) 26 | Fabrication de l'exécutable portable | MIT | Non (outil de compilation) |
+| [node-gyp](https://github.com/nodejs/node-gyp) 12 | Compilation du module natif d'Evolve (`native/evolve_fs.c` : renommer ou déplacer sans rien remplacer) | MIT | Quelques lignes : le crochet de chargement que node-gyp lie à tout module compilé pour Windows (`src/win_delay_load_hook.cc`), dans `evolve_fs.node` |
 | [NSIS](https://nsis.sourceforge.io) et ses modules System et [StdUtils](https://github.com/lordmulder/stdutils) | Lanceur du fichier `.exe` : décompresse l'application puis la démarre | zlib/libpng (NSIS, System), GNU LGPL 2.1 (StdUtils, copie non modifiée) | Oui (ajoutés par electron-builder) |
 
 Le fond d'écran (`assets/wallpapers/panorama-cosmique-violet-sur-lac-miroir.png`)
@@ -77,3 +78,38 @@ portable se décompresse.
 - Chromium — licence BSD à 3 clauses et licences de ses propres composants
   (détail dans `LICENSES.chromium.html`).
 - Node.js — licence MIT et licences de ses propres composants.
+
+## node-gyp — licence MIT
+
+Le module natif d'Evolve (`native/evolve_fs.c`, écrit pour le projet) est
+compilé par node-gyp avec les en-têtes de Node.js. Sous Windows, node-gyp lie
+au module compilé son fichier `src/win_delay_load_hook.cc`, repris sans
+modification : il permet au module d'être chargé par un programme qui ne
+s'appelle pas `node.exe` — ici, `Evolve.exe`.
+
+```
+(The MIT License)
+
+Copyright (c) 2012 Nathan Rajlich <nathan@tootallnate.net>
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+```

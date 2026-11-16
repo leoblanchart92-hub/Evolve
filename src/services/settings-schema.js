@@ -35,6 +35,16 @@ const SETTINGS = Object.freeze({
   'quick.brightness': { type: 'integer', default: 100, min: 20, max: 100 },
   'quick.volume': { type: 'integer', default: 64, min: 0, max: 100 },
   'quick.muted': { type: 'boolean', default: false },
+
+  // Emplacement donné en dernier à la fenêtre de l'explorateur de fichiers
+  // d'Evolve : position et taille en centièmes de rem — l'unité dans laquelle
+  // l'interface est dimensionnée —, et agrandissement. Une largeur nulle
+  // signifie qu'aucun emplacement n'est retenu : la fenêtre s'ouvre centrée.
+  'explorerWindow.x': { type: 'integer', default: 0, min: -100000, max: 100000 },
+  'explorerWindow.y': { type: 'integer', default: 0, min: -100000, max: 100000 },
+  'explorerWindow.width': { type: 'integer', default: 0, min: 0, max: 100000 },
+  'explorerWindow.height': { type: 'integer', default: 0, min: 0, max: 100000 },
+  'explorerWindow.maximized': { type: 'boolean', default: false },
 });
 
 /**

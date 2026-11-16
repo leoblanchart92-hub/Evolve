@@ -1,13 +1,18 @@
 /**
- * Evolve — Registre des applications affichées dans l'interface.
+ * Evolve — Registre des applications de l'environnement.
  *
- * `kind` indique le contenu de la fenêtre :
- *   - 'explorer'    : explorateur de fichiers (interface complète) ;
- *   - 'placeholder' : fenêtre d'attente — l'application elle-même sera
- *                     développée dans une prochaine étape.
+ * Une application est DISPONIBLE si elle a un `kind` : c'est le nom de son
+ * interface (voir apps/index.js). Elle seule peut être lancée, épinglée dans
+ * la barre des tâches ou désignée par une icône du bureau. Les autres sont
+ * simplement annoncées : le menu Démarrer les présente comme « bientôt
+ * disponibles », estompées, et n'ouvre rien à leur place — aucune fenêtre
+ * factice ne simule une application qui n'existe pas.
  *
- * `glyph` est un pictogramme (voir core/icons.js) et `colors` le dégradé de la
- * tuile d'icône.
+ *   kind         'explorer' : explorateur de fichiers ;
+ *   multiWindow  l'application peut avoir plusieurs fenêtres à la fois ;
+ *   glyph        pictogramme (voir core/icons.js) ;
+ *   colors       dégradé de la tuile d'icône ;
+ *   size         taille de sa fenêtre, en rem.
  */
 
 export const APPS = Object.freeze([
@@ -16,6 +21,7 @@ export const APPS = Object.freeze([
     name: 'Explorateur de fichiers',
     shortName: 'Explorateur',
     kind: 'explorer',
+    multiWindow: true,
     glyph: 'folder',
     colors: ['#d3b0ff', '#7c3aed'],
     keywords: ['fichiers', 'dossiers', 'documents', 'disque'],
@@ -24,7 +30,6 @@ export const APPS = Object.freeze([
   {
     id: 'browser',
     name: 'Navigateur',
-    kind: 'placeholder',
     glyph: 'compass',
     colors: ['#8fd8ff', '#6557f5'],
     keywords: ['web', 'internet', 'site'],
@@ -32,7 +37,6 @@ export const APPS = Object.freeze([
   {
     id: 'store',
     name: 'Boutique',
-    kind: 'placeholder',
     glyph: 'storefront',
     colors: ['#ff9be0', '#a548f2'],
     keywords: ['applications', 'télécharger', 'store'],
@@ -40,7 +44,6 @@ export const APPS = Object.freeze([
   {
     id: 'terminal',
     name: 'Terminal',
-    kind: 'placeholder',
     glyph: 'terminal-window',
     colors: ['#6a52b8', '#1b0c3d'],
     keywords: ['console', 'commande', 'invite'],
@@ -48,7 +51,6 @@ export const APPS = Object.freeze([
   {
     id: 'settings',
     name: 'Paramètres',
-    kind: 'placeholder',
     glyph: 'gear-six',
     colors: ['#b4b4dc', '#51409c'],
     keywords: ['réglages', 'configuration', 'options', 'personnalisation'],
@@ -56,7 +58,6 @@ export const APPS = Object.freeze([
   {
     id: 'mail',
     name: 'Courrier',
-    kind: 'placeholder',
     glyph: 'envelope-simple',
     colors: ['#8cc0ff', '#7447f5'],
     keywords: ['e-mail', 'messagerie', 'mail'],
@@ -64,7 +65,6 @@ export const APPS = Object.freeze([
   {
     id: 'calendar',
     name: 'Calendrier',
-    kind: 'placeholder',
     glyph: 'calendar-dots',
     colors: ['#ff9bb4', '#bd2bd6'],
     keywords: ['agenda', 'rendez-vous', 'date'],
@@ -72,7 +72,6 @@ export const APPS = Object.freeze([
   {
     id: 'photos',
     name: 'Photos',
-    kind: 'placeholder',
     glyph: 'image',
     colors: ['#ffbe7a', '#ee4f9c'],
     keywords: ['images', 'galerie'],
@@ -80,7 +79,6 @@ export const APPS = Object.freeze([
   {
     id: 'music',
     name: 'Musique',
-    kind: 'placeholder',
     glyph: 'music-notes',
     colors: ['#ff86cf', '#8a52f5'],
     keywords: ['audio', 'lecteur', 'chansons'],
@@ -88,7 +86,6 @@ export const APPS = Object.freeze([
   {
     id: 'videos',
     name: 'Vidéos',
-    kind: 'placeholder',
     glyph: 'film-slate',
     colors: ['#9d98ff', '#3d2bd0'],
     keywords: ['films', 'lecteur'],
@@ -96,7 +93,6 @@ export const APPS = Object.freeze([
   {
     id: 'notes',
     name: 'Notes',
-    kind: 'placeholder',
     glyph: 'note-pencil',
     colors: ['#ffdc7c', '#ff8a45'],
     keywords: ['bloc-notes', 'texte', 'écrire'],
@@ -104,7 +100,6 @@ export const APPS = Object.freeze([
   {
     id: 'calculator',
     name: 'Calculatrice',
-    kind: 'placeholder',
     glyph: 'calculator',
     colors: ['#9aa6e0', '#4d3fae'],
     keywords: ['calcul', 'maths'],
@@ -112,7 +107,6 @@ export const APPS = Object.freeze([
   {
     id: 'weather',
     name: 'Météo',
-    kind: 'placeholder',
     glyph: 'cloud-sun',
     colors: ['#7ce6ff', '#4b78fb'],
     keywords: ['prévisions', 'temps'],
@@ -120,7 +114,6 @@ export const APPS = Object.freeze([
   {
     id: 'clock',
     name: 'Horloge',
-    kind: 'placeholder',
     glyph: 'clock',
     colors: ['#cfaaff', '#5346e6'],
     keywords: ['alarme', 'minuteur', 'heure'],
@@ -128,7 +121,6 @@ export const APPS = Object.freeze([
   {
     id: 'camera',
     name: 'Caméra',
-    kind: 'placeholder',
     glyph: 'camera',
     colors: ['#bdb8de', '#5c39ba'],
     keywords: ['photo', 'webcam'],
@@ -136,7 +128,6 @@ export const APPS = Object.freeze([
   {
     id: 'maps',
     name: 'Cartes',
-    kind: 'placeholder',
     glyph: 'map-trifold',
     colors: ['#7df2c6', '#3b7ff5'],
     keywords: ['plan', 'itinéraire', 'navigation'],
@@ -144,7 +135,6 @@ export const APPS = Object.freeze([
   {
     id: 'games',
     name: 'Jeux',
-    kind: 'placeholder',
     glyph: 'game-controller',
     colors: ['#ff86a4', '#8a3ffc'],
     keywords: ['jouer', 'gaming'],
@@ -153,29 +143,10 @@ export const APPS = Object.freeze([
     id: 'monitor',
     name: 'Moniteur système',
     shortName: 'Moniteur',
-    kind: 'placeholder',
     glyph: 'pulse',
     colors: ['#eaa8ff', '#7a38ea'],
     keywords: ['performances', 'processeur', 'mémoire', 'cpu', 'ram', 'gpu'],
   },
-]);
-
-/** Applications épinglées dans la barre des tâches (dans l'ordre). */
-export const TASKBAR_PINNED = Object.freeze(['explorer', 'browser', 'store', 'terminal', 'settings']);
-
-/** Applications de la grille « Épinglées » du menu Démarrer (dans l'ordre). */
-export const START_PINNED = Object.freeze(APPS.map((app) => app.id));
-
-/**
- * Icônes du bureau. `open` désigne l'application à ouvrir et, pour
- * l'explorateur, l'emplacement à afficher (voir LOCATION_IDS, apps/explorer-nav.js).
- */
-export const DESKTOP_ICONS = Object.freeze([
-  { id: 'this-pc', name: 'Ce PC', glyph: 'desktop', colors: ['#a6b8ff', '#5a3fe0'], open: { app: 'explorer', location: 'pc' } },
-  { id: 'documents', name: 'Documents', glyph: 'folder', colors: ['#d3b0ff', '#7c3aed'], open: { app: 'explorer', location: 'documents' } },
-  { id: 'trash', name: 'Corbeille', glyph: 'trash', colors: ['#b9b3d6', '#4a3a8c'], open: { app: 'explorer', location: 'trash' } },
-  { id: 'browser', name: 'Navigateur', glyph: 'compass', colors: ['#8fd8ff', '#6557f5'], open: { app: 'browser' } },
-  { id: 'settings', name: 'Paramètres', glyph: 'gear-six', colors: ['#b4b4dc', '#51409c'], open: { app: 'settings' } },
 ]);
 
 const BY_ID = new Map(APPS.map((app) => [app.id, app]));
@@ -183,5 +154,28 @@ const BY_ID = new Map(APPS.map((app) => [app.id, app]));
 /** Renvoie la définition d'une application (ou `undefined`). */
 export const getApp = (id) => BY_ID.get(id);
 
+/** Vrai si l'application existe réellement dans cette version : elle seule peut être lancée. */
+export const isAvailable = (app) => typeof app?.kind === 'string' && app.kind !== '';
+
+/** Applications que l'on peut lancer, puis celles qui sont seulement annoncées. */
+export const AVAILABLE_APPS = Object.freeze(APPS.filter(isAvailable));
+export const UPCOMING_APPS = Object.freeze(APPS.filter((app) => !isAvailable(app)));
+
 /** Nom court d'une application (barre des tâches, grille du menu Démarrer). */
 export const appLabel = (app) => app.shortName ?? app.name;
+
+/** Applications épinglées dans la barre des tâches (dans l'ordre) : des applications disponibles seulement. */
+export const TASKBAR_PINNED = Object.freeze(['explorer']);
+
+/**
+ * Icônes du bureau. Chacune ouvre une application disponible ; pour
+ * l'explorateur, `location` est l'emplacement à afficher (voir LOCATION_IDS,
+ * apps/explorer-nav.js). Aucune icône ne mène à une application ou à un
+ * emplacement qui n'existe pas.
+ */
+export const DESKTOP_ICONS = Object.freeze([
+  { id: 'this-pc', name: 'Ce PC', glyph: 'desktop', colors: ['#a6b8ff', '#5a3fe0'], open: { app: 'explorer', location: 'pc' } },
+  { id: 'documents', name: 'Documents', glyph: 'folder', colors: ['#d3b0ff', '#7c3aed'], open: { app: 'explorer', location: 'documents' } },
+  { id: 'downloads', name: 'Téléchargements', glyph: 'download-simple', colors: ['#9fe3ff', '#4f6df5'], open: { app: 'explorer', location: 'downloads' } },
+  { id: 'pictures', name: 'Images', glyph: 'images', colors: ['#ffb3ec', '#a548f2'], open: { app: 'explorer', location: 'pictures' } },
+]);

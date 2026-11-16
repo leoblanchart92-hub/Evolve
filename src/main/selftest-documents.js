@@ -8,7 +8,9 @@
  * système, ce dossier n'existe plus. L'application l'ouvre alors comme le
  * ferait l'utilisateur — tuile de l'accueil, volet latéral, icône du bureau —
  * et doit afficher chaque fois le même message, sans bloquer la navigation
- * ni gêner la consultation des autres dossiers.
+ * ni gêner la consultation des autres dossiers. L'icône du bureau est essayée
+ * deux fois : quand une fenêtre affiche déjà ce dossier (elle est réactivée),
+ * puis quand aucune ne l'affiche (une seconde fenêtre s'ouvre).
  *
  * Que le dossier soit toujours absent du disque après ce parcours, c'est le
  * script qui le constate lui-même : la preuve ne repose pas sur ce que
@@ -31,7 +33,7 @@ const CHECKS = Object.freeze({
   tile: 'ouvrir Documents depuis l’accueil affiche « Dossier « Documents » introuvable », sans rien créer',
   back: '« Précédent » ramène à l’accueil : la navigation continue',
   sidebar: 'le volet latéral mène au même message',
-  desktop: "l'icône « Documents » du bureau mène au même message",
+  desktop: "l'icône « Documents » du bureau mène au même message : dans la fenêtre qui affiche déjà ce dossier, sinon dans une nouvelle fenêtre",
   refresh: 'après « Actualiser », le dossier est toujours signalé comme introuvable',
   others: 'les autres dossiers personnels restent consultables',
 });
@@ -121,17 +123,35 @@ function documentsScenarios({ begin, check, act, until, evaluate, record, captur
       await act(`${PAGE_TOOLS} exWin().querySelector('.ex-side[data-id="place:documents"]').click();`);
       await check(CHECKS.sidebar, `${PAGE_TOOLS}${MISSING_PAGE} return missing();`);
 
-      // 6. Icône du bureau, depuis une autre page de l'explorateur.
-      await act(`${PAGE_TOOLS} exWin().querySelector('.ex-side[data-id="pc"]').click();`);
-      await until(`${PAGE_TOOLS} return (exContent().dataset.page === 'pc' && !exBusy()) || exState();`);
-      await act(`document.querySelector('.desktop-icon[data-id="documents"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));`);
-      await check(
-        CHECKS.desktop,
+      // 6. Icône du bureau. La fenêtre affiche déjà ce dossier (absent) : elle est réactivée, sans en ouvrir une autre.
+      const openIcon = `document.querySelector('.desktop-icon[data-id="documents"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));`;
+      await act(openIcon);
+      const reused = await until(
         `${PAGE_TOOLS}${MISSING_PAGE}
          const shown = missing();
          if (shown !== true) return shown;
          const windows = document.querySelectorAll('.window[data-app="explorer"]').length;
          return (windows === 1 && exWin().classList.contains('is-focused')) || { fenetres: windows };`,
+      );
+      //    Depuis une autre page (« Ce PC »), plus aucune fenêtre n'affiche ce dossier : l'icône ouvre une seconde
+      //    fenêtre, qui affiche le message ; la première reste sur « Ce PC ».
+      await act(`${PAGE_TOOLS} exWin().querySelector('.ex-side[data-id="pc"]').click();`);
+      await until(`${PAGE_TOOLS} return (exContent().dataset.page === 'pc' && !exBusy()) || exState();`);
+      await act(openIcon);
+      const opened = await until(
+        `${PAGE_TOOLS}${MISSING_PAGE}
+         const shown = missing();
+         if (shown !== true) return shown;
+         const windows = [...document.querySelectorAll('.window[data-app="explorer"]')];
+         const others = windows.filter((el) => el !== exWin()).map((el) => el.querySelector('.ex-content').dataset.page);
+         return (windows.length === 2 && exWin().classList.contains('is-focused') && others.join() === 'pc')
+           || { fenetres: windows.length, autres: others };`,
+      );
+      record(
+        CHECKS.desktop,
+        reused !== true
+          ? { etape: 'une fenêtre affiche déjà ce dossier', obtenu: reused ?? null }
+          : opened === true || { etape: 'aucune fenêtre n’affiche ce dossier', obtenu: opened ?? null },
       );
 
       // 7. Actualiser : nouvelle recherche des emplacements, même constat.

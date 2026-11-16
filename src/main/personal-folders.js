@@ -7,8 +7,8 @@
  *
  * Ces emplacements sont demandés au moteur (Electron), qui interroge le
  * système : un dossier déplacé — vers OneDrive, par exemple — est ainsi trouvé
- * là où il se trouve réellement. L'explorateur étant en lecture seule, cette
- * demande ne doit avoir aucun effet : un dossier absent doit rester absent.
+ * là où il se trouve réellement. Cette demande ne doit avoir aucun effet :
+ * Evolve ne crée rien de lui-même, un dossier absent doit rester absent.
  *
  * Or le moteur traite « Documents » à part (Chromium, chrome_paths.cc) : une
  * fois le chemin obtenu, il crée le dossier s'il n'existe pas. Tout dépend

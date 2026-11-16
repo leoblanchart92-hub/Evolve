@@ -136,6 +136,8 @@
   --z-flyouts: 400;
   --z-toasts: 450;
   --z-taskbar: 500;
+  /* Fenêtres de dialogue : au-dessus de toute l'interface, sous leurs propres menus et infobulles. */
+  --z-dialogs: 700;
   --z-menus: 800;
   --z-tooltip: 900;
   --z-screen-fx: 980;

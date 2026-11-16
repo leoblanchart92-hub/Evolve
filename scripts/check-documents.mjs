@@ -2,9 +2,11 @@
 /**
  * Evolve — Vérification : un dossier Documents absent n'est jamais recréé.
  *
- * L'explorateur d'Evolve est en lecture seule : il ne doit rien créer, pas
- * même le dossier Documents quand celui-ci n'existe pas. Cette vérification
- * place l'application dans cette situation, sur une vraie machine :
+ * Evolve ne crée rien de lui-même : un dossier n'apparaît que si
+ * l'utilisateur le demande (« Nouveau dossier »). Parcourir l'ordinateur ne
+ * doit donc rien créer, pas même le dossier Documents quand celui-ci n'existe
+ * pas. Cette vérification place l'application dans cette situation, sur une
+ * vraie machine :
  *
  *   1. le dossier Documents du compte est mis de côté — renommé, sans que son
  *      contenu soit touché : pour Windows, il n'existe plus ;
@@ -351,7 +353,7 @@ const profileAfter = listing(profile);
 const asideAfter = setAside && present(aside) ? listing(aside) : null;
 
 if (recreated) {
-  await fail(`Le dossier Documents a été recréé pendant le lancement d'Evolve : ${folder}${recreatedDetails}.\n  Un dossier absent doit le rester : l'explorateur est en lecture seule.`);
+  await fail(`Le dossier Documents a été recréé pendant le lancement d'Evolve : ${folder}${recreatedDetails}.\n  Un dossier absent doit le rester : Evolve ne crée rien de lui-même.`);
 }
 console.log(`  ✔ le dossier Documents est toujours absent : ${folder} n'a pas été recréé`);
 

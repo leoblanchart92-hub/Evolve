@@ -339,7 +339,7 @@ test('dossier personnel absent puis revenu : « Actualiser » l’affiche, et l�
   assert.deepEqual([nav.page.kind, nav.page.location.path], ['folder', DOCUMENTS]);
 });
 
-test('éléments d’un dossier : identifiant, nature, extension, taille, date, et destination des dossiers et des liens', async () => {
+test('éléments d’un dossier : identifiant, chemin réel, nature, extension, taille, date, et destination des dossiers et des liens', async () => {
   const { nav } = createNavigator();
   await nav.open('documents');
   const nodes = Object.fromEntries(nav.page.sections[0].nodes.map((node) => [node.name, node]));
@@ -347,6 +347,8 @@ test('éléments d’un dossier : identifiant, nature, extension, taille, date, 
 
   assert.deepEqual(nodes.Projets, {
     id: `${DOCUMENTS}\\Projets`,
+    // Chemin réel de l'élément : celui que désignent les opérations sur les fichiers.
+    path: `${DOCUMENTS}\\Projets`,
     kind: 'folder',
     name: 'Projets',
     ext: '',
@@ -357,7 +359,10 @@ test('éléments d’un dossier : identifiant, nature, extension, taille, date, 
   });
   const sheet = nodes['Budget 2026.xlsx'];
   assert.deepEqual([sheet.kind, sheet.ext, sheet.size, sheet.hidden], ['file', 'xlsx', 48_300, false]);
-  assert.equal(Object.hasOwn(sheet, 'location'), false, 'un fichier ne s’ouvre pas : aucune destination');
+  assert.equal(Object.hasOwn(sheet, 'location'), false, 'un fichier ne se parcourt pas : aucune destination');
+  assert.equal(sheet.path, `${DOCUMENTS}\\Budget 2026.xlsx`);
+  // Aucun de ces éléments n'est un dossier personnel.
+  assert.ok(Object.values(nodes).every((node) => !Object.hasOwn(node, 'place')));
   // Un lien s'ouvre comme un dossier : c'est le service qui vérifie où il mène.
   assert.deepEqual([nodes['Mes images'].kind, nodes['Mes images'].hidden], ['link', true]);
   assert.deepEqual(nodes['Mes images'].location, { type: 'folder', path: `${DOCUMENTS}\\Mes images`, name: 'Mes images' });
@@ -378,6 +383,9 @@ test('dossier d’un lecteur : fil d’Ariane complet, dossiers personnels sous 
   assert.deepEqual([documents.name, documents.icon], ['Documents', 'file-text']);
   assert.deepEqual(documents.location, { type: 'folder', path: DOCUMENTS, name: 'Documents' });
   assert.deepEqual([appData.name, appData.hidden, Object.hasOwn(appData, 'icon')], ['AppData', true, false]);
+  // Un dossier personnel est signalé : il se parcourt, mais aucune opération ne le vise.
+  assert.deepEqual([desktop.place, documents.place, Object.hasOwn(appData, 'place')], ['desktop', 'documents', false]);
+  assert.deepEqual([desktop.path, appData.path], [`${PROFILE}\\Desktop`, `${PROFILE}\\AppData`]);
 
   // Racine d'un lecteur : son nom vient de la liste des lecteurs.
   await nav.open({ path: 'D:\\' });

@@ -6,8 +6,12 @@
  * Utilisé par la compilation automatique (GitHub Actions) pour vérifier, sur
  * un vrai Windows, que l'exécutable démarre et que l'interface répond :
  * chargement sans erreur, fond d'écran officiel, barre des tâches, menu
- * Démarrer, panneaux, fenêtres, explorateur de fichiers — qui parcourt de
- * vrais dossiers, en lecture seule (voir selftest-explorer.js).
+ * Démarrer, panneaux, explorateur de fichiers — qui parcourt de vrais dossiers
+ * (voir selftest-explorer.js) et y mène de vraies opérations, dans un dossier
+ * d'essai créé pour l'occasion (voir selftest-operations.js) —, puis bureau et
+ * fenêtres : déplacement, redimensionnement, ancrage, plusieurs fenêtres,
+ * barre des tâches, clavier (voir selftest-desktop.js), par de vrais gestes de
+ * la souris et du clavier (voir selftest-input.js).
  *
  * Il écrit un rapport (result.json) et des captures d'écran dans DOSSIER,
  * puis renvoie 0 (tout est conforme) ou 1 (au moins un contrôle en échec).
@@ -26,8 +30,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { checkDesktop } = require('./selftest-desktop');
 const { documentsScenarios } = require('./selftest-documents');
 const { checkExplorer } = require('./selftest-explorer');
+const { createInput } = require('./selftest-input');
 const { settingsScenarios } = require('./selftest-settings');
 
 /** Scénario exécuté quand aucun n'est demandé. */
@@ -47,6 +53,10 @@ const DEFAULT_TIMINGS = Object.freeze({
   poll: 150,
   /** Pause avant une capture d'écran (fin des animations). */
   settle: 800,
+  /** Pause entre deux événements d'un geste de la souris ou du clavier (une image). */
+  input: 16,
+  /** Attente maximale du constat « la page reçoit les gestes injectés ». */
+  probe: 3_000,
 });
 
 /** Fond d'écran officiel : fichier embarqué, dimensions et empreinte de l'image fournie. */
@@ -75,7 +85,8 @@ const IN_VIEW = `const inView = (el) => {
     && box.right <= innerWidth + 0.5 && box.bottom <= innerHeight + 0.5;
 };`;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Attend `ms` millisecondes ; une durée nulle (tests) rend seulement la main, sans minuterie (voir selftest-input.js). */
+const sleep = (ms) => new Promise((resolve) => (ms > 0 ? setTimeout(resolve, ms) : setImmediate(resolve)));
 
 /**
  * Nombre de couleurs distinctes d'une image, estimé sur un échantillon de
@@ -112,10 +123,18 @@ function withTimeout(promise, ms, message) {
  * @param {Partial<typeof DEFAULT_TIMINGS>} [options.timings]
  * @param {string} [options.scenario]  scénario à exécuter (voir l'en-tête)
  * @param {() => object} [options.describeServices]  état des services d'Evolve, joint au rapport
+ * @param {((from: string, to: string) => Promise<void>) | null} [options.moveNoReplace]  déplacement sans
+ *        remplacement que l'application emploie : éprouvé sur le disque (voir selftest-no-replace.js)
+ * @param {number} [options.noReplaceRounds]  nombre de courses de cette vérification
  * @param {string} [options.platform]  système sur lequel l'application s'exécute
+ * @param {string|null} [options.recycleBin]  dossier de la Corbeille du lecteur où se trouve `outDir` ;
+ *        par défaut, celui de Windows (« X:\$RECYCLE.BIN »), et aucun sur un autre système
  * @returns {Promise<number>} code de sortie : 0 = réussite, 1 = échec
  */
-async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, platform = process.platform }) {
+async function runSelfTest(
+  win,
+  { outDir, timings = {}, scenario: scenarioName = DEFAULT_SCENARIO, describeServices = null, moveNoReplace = null, noReplaceRounds, platform = process.platform, recycleBin },
+) {
   const started = Date.now();
   const { webContents } = win;
   const t = { ...DEFAULT_TIMINGS, ...timings };
@@ -143,6 +162,12 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     services: null,
     /** Dossiers personnels et lecteurs que l'explorateur a trouvés sur cette machine. */
     explorer: null,
+    /** Dossier d'essai envoyé à la Corbeille, tel que retrouvé dans la Corbeille de Windows. */
+    recycled: null,
+    /** Constats de la vérification « renommer ou déplacer ne remplace jamais rien » (voir selftest-no-replace.js). */
+    noReplace: null,
+    /** Gestes que la page a réellement reçus : `{ souris, clavier }` (voir selftest-input.js). */
+    input: null,
   };
 
   fs.mkdirSync(outDir, { recursive: true });
@@ -318,13 +343,27 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        const failed = faces.filter((face) => face.status === 'error');
        return (loaded('Inter Variable') && loaded('Outfit Variable') && failed.length === 0) || faces;`,
     );
-    await check('icônes du bureau', `return document.querySelectorAll('.desktop-icon').length >= 5;`);
+    // Chaque nom doit tenir sur une ligne : un nom coupé au milieu d'un mot (« Téléchargement / s ») serait un défaut visible.
     await check(
-      'barre des tâches (Démarrer, recherche, applications, horloge)',
+      'icônes du bureau, chaque nom sur une seule ligne',
+      `const icons = [...document.querySelectorAll('.desktop-icon')];
+       const ids = icons.map((icon) => icon.dataset.id);
+       const lines = (icon) => {
+         const range = document.createRange();
+         range.selectNodeContents(icon.querySelector('.desktop-icon__label'));
+         return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+       };
+       const names = icons.map((icon) => icon.querySelector('.desktop-icon__label').textContent + ' : ' + lines(icon) + ' ligne(s)');
+       return (icons.length >= 2 && ids.includes('this-pc') && ids.includes('documents') && new Set(ids).size === ids.length
+         && icons.filter((icon) => icon.tabIndex === 0).length === 1 && icons.every((icon) => lines(icon) === 1)) || { ids, names };`,
+    );
+    await check(
+      "barre des tâches (Démarrer, recherche, explorateur épinglé, horloge, bouton « Afficher le bureau »)",
       `const bar = document.getElementById('taskbar').getBoundingClientRect();
-       return bar.width > 300 && bar.height > 20 && Boolean(document.querySelector('.tb-start'))
-         && Boolean(document.querySelector('.tb-search')) && document.querySelectorAll('.tb-app').length >= 5
-         && /^\\d{2}:\\d{2}$/.test(document.querySelector('.tb-clock__time').textContent.trim());`,
+       const apps = [...document.querySelectorAll('.tb-app')].map((button) => button.dataset.app + ':' + button.dataset.windows);
+       return (bar.width > 300 && bar.height > 20 && Boolean(document.querySelector('.tb-start'))
+         && Boolean(document.querySelector('.tb-search')) && apps.join() === 'explorer:0' && Boolean(document.querySelector('.tb-desktop'))
+         && /^\\d{2}:\\d{2}$/.test(document.querySelector('.tb-clock__time').textContent.trim())) || apps;`,
     );
     await check(
       'widgets CPU, RAM et GPU signalés comme données de démonstration',
@@ -347,10 +386,15 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
     // 4. Menu Démarrer et recherche.
     await act(`document.querySelector('.tb-start').click();`);
     await check(
-      "le menu Démarrer s'ouvre avec sa grille d'applications",
+      "le menu Démarrer s'ouvre : l'explorateur peut être lancé, les applications à venir sont signalées, les dossiers personnels sont proposés",
       `${IN_VIEW}
        const start = document.querySelector('.start');
-       return start.classList.contains('is-open') && inView(start) && document.querySelectorAll('.start-app').length >= 12;`,
+       const apps = [...document.querySelectorAll('.start-app')];
+       const ready = apps.filter((app) => !app.classList.contains('is-upcoming')).map((app) => app.dataset.app);
+       const upcoming = apps.filter((app) => app.classList.contains('is-upcoming'));
+       const folders = [...document.querySelectorAll('.start__reco [data-place]')].map((folder) => folder.dataset.place);
+       return (start.classList.contains('is-open') && inView(start) && ready.join() === 'explorer' && upcoming.length >= 10
+         && upcoming.every((app) => app.getAttribute('aria-disabled') === 'true') && folders.length === 6) || { ready, upcoming: upcoming.length, folders };`,
     );
     await check(
       "la vue d'accueil du menu Démarrer est entièrement visible (sans défilement)",
@@ -363,7 +407,11 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        input.value = 'doc';
        input.dispatchEvent(new Event('input', { bubbles: true }));`,
     );
-    await check('la recherche propose des résultats', `return document.querySelectorAll('.start__view--search .start-row').length > 0;`);
+    await check(
+      'la recherche propose le dossier Documents, qui existe, avant toute application à venir',
+      `const rows = [...document.querySelectorAll('.start__view--search .start-row')];
+       return (rows.length > 0 && rows[0].dataset.place === 'documents' && !rows[0].classList.contains('is-upcoming')) || rows.map((row) => row.textContent);`,
+    );
     await capture('03-recherche');
     await act(`document.querySelector('.tb-start').click();`);
     await check('le menu Démarrer se ferme', `return !document.querySelector('.start').classList.contains('is-open');`);
@@ -398,8 +446,8 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        return Boolean(win) && win.classList.contains('is-focused') && inView(win) && win.querySelectorAll('.ex-item').length > 0
          && document.querySelector('.tb-app[data-app="explorer"]').classList.contains('is-active');`,
     );
-    // Vrais dossiers, navigation, refus du service, lecture seule (capture 06 comprise).
-    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, platform });
+    // Vrais dossiers, navigation, opérations réelles sur les fichiers, refus (captures 06 à 08 comprises).
+    await checkExplorer({ check, act, until, evaluate, record, capture, report, outDir, describeServices, moveNoReplace, noReplaceRounds, platform, recycleBin, timings: t });
     await act(`document.querySelector('.window[data-app="explorer"] .window__control--max').click();`);
     await check(
       "la fenêtre s'agrandit sur tout l'espace de travail",
@@ -412,22 +460,10 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
       `const win = document.querySelector('.window[data-app="explorer"]');
        return !win.classList.contains('is-maximized') && win.getBoundingClientRect().width < innerWidth - 2;`,
     );
-    await act(`document.querySelector('.tb-app[data-app="settings"]').click();`);
-    await check(
-      'plusieurs fenêtres coexistent, la dernière ouverte au premier plan',
-      `const wins = [...document.querySelectorAll('.window')];
-       return wins.length === 2 && document.querySelector('.window[data-app="settings"]').classList.contains('is-focused')
-         && !document.querySelector('.window[data-app="explorer"]').classList.contains('is-focused');`,
-    );
-    await capture('07-fenetres');
-    await act(`document.querySelector('.window[data-app="settings"] .window__control--min').click();`);
-    await check(
-      'une fenêtre se réduit dans la barre des tâches',
-      `return document.querySelector('.window[data-app="settings"]').hidden
-         && document.querySelector('.tb-app[data-app="settings"]').classList.contains('is-running');`,
-    );
-    await act(`document.querySelectorAll('.window .window__control--close').forEach((button) => button.click());`);
-    await check('les fenêtres se ferment', `return document.querySelectorAll('.window').length === 0;`);
+    // 7. Bureau et fenêtres : déplacement, redimensionnement, ancrage, plusieurs fenêtres, barre des
+    //    tâches, clavier — par de vrais gestes de la souris et du clavier (captures 09 et 10 comprises).
+    const input = createInput({ webContents, win, evaluate, until, pause: t.input, probeTimeout: t.probe });
+    await checkDesktop({ evaluate, until, record, capture, report }, { input });
   };
 
   let timer;
@@ -440,7 +476,17 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
 
   const scenarios = {
     [DEFAULT_SCENARIO]: scenario,
-    ...settingsScenarios({ begin, check, act, capture }),
+    ...settingsScenarios({
+      begin,
+      check,
+      act,
+      capture,
+      until,
+      evaluate,
+      record,
+      report,
+      input: () => createInput({ webContents, win, evaluate, until, pause: t.input, probeTimeout: t.probe }),
+    }),
     ...documentsScenarios({ begin, check, act, until, evaluate, record, capture, report }),
   };
   // Un scénario inconnu est un échec : un test qui ne contrôle rien ne doit jamais réussir.

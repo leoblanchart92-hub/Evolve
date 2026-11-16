@@ -136,7 +136,7 @@ test('le défaut corrigé : une application qui recrée le dossier est refusée 
     assert.equal(code, 1, `${mode}\n${output}`);
     assert.deepEqual(launches, [`${SCENARIO} absent`], mode);
     assert.match(output, /✖ Le dossier Documents a été recréé pendant le lancement d'Evolve : .*Documents \(dossier de 0 élément, créé à \d{4}-/, mode);
-    assert.match(output, /Un dossier absent doit le rester : l'explorateur est en lecture seule\./, mode);
+    assert.match(output, /Un dossier absent doit le rester : Evolve ne crée rien de lui-même\./, mode);
     assert.match(output, /l’exécutable ne doit pas être distribué/, mode);
     assert.doesNotMatch(output, /jamais recréé/, mode);
     // Le dossier vide recréé est retiré, et le vrai dossier remis en place avec son contenu.

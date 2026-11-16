@@ -445,6 +445,17 @@
   color: var(--text-2);
 }
 
+/* Élément coupé : il attend d'être déplacé par « Coller ». */
+.ex-item.is-cut > .icon,
+.ex-item.is-cut .ex-row__name > .icon {
+  opacity: 0.4;
+}
+
+.ex-item.is-cut .ex-tile__name,
+.ex-item.is-cut .ex-row__name {
+  color: var(--text-3);
+}
+
 /* Avis au-dessus du contenu (dossier très volumineux, aucun lecteur). */
 .ex-notice {
   display: flex;

@@ -13,6 +13,12 @@
  *   EXÉCUTABLE   par défaut : dist/Evolve-<version>-portable.exe ; le mot
  *                « electron » désigne le moteur installé par « npm install »
  *   --out=DOSSIER  dossier des résultats (par défaut : self-test-output/)
+ *   --require-input  exige que l'application ait réellement reçu les gestes
+ *                de la souris et du clavier que l'auto-test lui injecte
+ *                (déplacer une fenêtre, Ctrl + Tab…). Sans cette option, des
+ *                gestes non reçus sont signalés, et les contrôles qui en
+ *                dépendent ne sont pas menés — sans faire échouer la
+ *                vérification
  *   ARGUMENTS    placés avant `--self-test` ; l'option
  *                `--self-test-scenario=NOM` de l'application choisit ce qui
  *                est contrôlé, et son nom figure alors dans les titres
@@ -31,6 +37,9 @@ import { fileURLToPath } from 'node:url';
 
 import { annotation } from './ci-annotate.mjs';
 
+/** Résumé de la vérification « renommer ou déplacer ne remplace jamais rien » menée par l'application. */
+const { summarizeFacts } = createRequire(import.meta.url)('../src/main/selftest-no-replace.js');
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
@@ -42,6 +51,7 @@ const extraArgs = separator < 0 ? [] : cli.slice(separator + 1);
 
 const timeoutOption = own.find((arg) => arg.startsWith('--timeout='));
 const outOption = own.find((arg) => arg.startsWith('--out='));
+const requireInput = own.includes('--require-input');
 const target = own.find((arg) => !arg.startsWith('--'));
 
 const timeoutSeconds = timeoutOption ? Number(timeoutOption.slice('--timeout='.length)) : 300;
@@ -188,6 +198,31 @@ child.on('exit', (code, signal) => {
     places && drives
       ? `Explorateur : dossiers personnels ${places.length ? places.join(', ') : 'aucun'} · lecteurs ${drives.length ? drives.join(', ') : 'aucun'}`
       : null;
+  // Le dossier d'essai que l'explorateur a envoyé à la Corbeille, et l'endroit où Windows l'a rangé.
+  const { from, content } = report.recycled ?? {};
+  const recycled =
+    typeof from === 'string' && typeof content === 'string'
+      ? `Corbeille : « ${path.win32.basename(from).slice(0, 80)} » retrouvé intact dans ${content.slice(0, 260)}`
+      : null;
+  // Ce que l'application a constaté, sur le disque, en se demandant à elle-même de déplacer vers un nom déjà pris.
+  const noReplace = summarizeFacts(report.noReplace);
+  // Gestes de la souris et du clavier injectés par l'auto-test du bureau : ce que la page a réellement reçu.
+  const given = report.input && typeof report.input === 'object' ? report.input : null;
+  const received = { mouse: given?.souris === true, keyboard: given?.clavier === true };
+  const input = given
+    ? `Gestes réels : souris ${received.mouse ? 'reçue' : 'NON reçue'} · clavier ${received.keyboard ? 'reçu' : 'NON reçu'}` +
+      (received.mouse && received.keyboard ? '' : ' — les contrôles qui en dépendent n’ont pas été menés')
+    : null;
+  /** Avec --require-input : des gestes non reçus (ou un rapport qui n'en dit rien) valent un échec. */
+  const inputMissing = requireInput && !(received.mouse && received.keyboard);
+  if (inputMissing) {
+    errors.push(
+      given
+        ? 'gestes réels exigés (--require-input) : la souris ou le clavier injectés ne sont pas parvenus à la page'
+        : 'gestes réels exigés (--require-input) : le rapport ne dit pas si la page les a reçus',
+    );
+    console.log(`  ✖ erreur : ${errors.at(-1)}`);
+  }
 
   const passed = checks.filter((item) => item.ok).length;
   const success = code === 0 && report.ok === true && checks.length > 0 && passed === checks.length && errors.length === 0;
@@ -198,6 +233,9 @@ child.on('exit', (code, signal) => {
   console.log(`  Moteur    : ${engine}`);
   if (report.executable) console.log(`  Programme : ${report.executable}`);
   if (explorer) console.log(`  ${explorer}`);
+  if (recycled) console.log(`  ${recycled}`);
+  if (noReplace) console.log(`  ${noReplace}`);
+  if (input) console.log(`  ${input}`);
 
   summarize(
     [
@@ -205,6 +243,9 @@ child.on('exit', (code, signal) => {
       '',
       `${passed}/${checks.length} contrôles · ${captures.length} captures${imagesInfo} · fenêtre ${size} · ${engine} · ${seconds} s`,
       ...(explorer ? ['', explorer] : []),
+      ...(recycled ? ['', recycled] : []),
+      ...(noReplace ? ['', noReplace] : []),
+      ...(input ? ['', input] : []),
       '',
       '| Contrôle | Résultat |',
       '| --- | --- |',
@@ -229,6 +270,9 @@ child.on('exit', (code, signal) => {
         ...errors.map((message) => `✖ erreur : ${message}`),
         ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`),
         ...(explorer ? [explorer] : []),
+        ...(recycled ? [recycled] : []),
+        ...(noReplace ? [noReplace] : []),
+        ...(input ? [input] : []),
         ...(fatal ? ['', fatal] : []),
       ].join('\n'),
     );
@@ -241,6 +285,9 @@ child.on('exit', (code, signal) => {
       `Auto-test réussi — ${overview}`,
       ...(report.executable ? [`Programme : ${report.executable}`] : []),
       ...(explorer ? [explorer] : []),
+      ...(recycled ? [recycled] : []),
+      ...(noReplace ? [noReplace] : []),
+      ...(input ? [input] : []),
       ...warnings.slice(0, 5).map((message) => `! avertissement : ${message}`),
     ].join('\n'),
   );

@@ -26,6 +26,11 @@
  * à un partage réseau, lecteur virtuel) n'est pas un emplacement autorisé.
  * Un lecteur qui ne répond pas (serveur injoignable) ne bloque ni
  * l'application ni les autres lectures : voir `scanDrives`.
+ *
+ * Les opérations sur les fichiers (créer, renommer, copier, déplacer, envoyer
+ * à la Corbeille, ouvrir) ne sont pas réalisées ici : voir file-operations.js.
+ * Elles appliquent les mêmes contrôles, que ce service leur remet (`guard`) —
+ * il n'existe qu'une seule définition de ce qu'est un chemin autorisé.
  */
 
 const nodeFs = require('node:fs');
@@ -63,6 +68,8 @@ const WINDOWS_FORBIDDEN = /[<>:"|?*]/;
 const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[\d\u00b9\u00b2\u00b3]|lpt[\d\u00b9\u00b2\u00b3]|conin\$|conout\$) *(?:\..*)?$/i;
 /** « . », « .. » et leurs variantes faites de points et d'espaces. */
 const DOTS_ONLY = /^[. ]+$/;
+/** Point ou espace en fin de nom : Windows les ignore, ce qui ferait de ce nom l'alias d'un autre. */
+const TRAILING_DOT_OR_SPACE = /[. ]$/;
 
 /**
  * Éléments que l'Explorateur de Windows masque. L'attribut « caché » de
@@ -117,6 +124,8 @@ const HIDDEN_LINKS = new Set([
   'historique',
   'temporary internet files',
 ]);
+/** Longueur maximale d'un nom d'élément sous Windows. */
+const NAME_LENGTH = 255;
 const WINDOWS_USERS_FOLDER = /^[A-Z]:\\Users$/i;
 const WINDOWS_PROFILE_FOLDER = /^[A-Z]:\\Users\\[^\\]+$/i;
 
@@ -158,6 +167,7 @@ function readOnlyAccess(fsModule) {
 }
 
 const refused = (code, message) => new ServiceError(code, message);
+const invalidName = (message) => refused('invalid-name', message);
 const invalidPath = () => refused('invalid-path', 'Chemin refusé : seul un dossier de cet ordinateur, désigné par son chemin complet, peut être consulté.');
 const outsideAllowed = () => refused('outside-allowed', "Ce dossier ne fait pas partie des emplacements qu'Evolve est autorisé à consulter.");
 const leadsOutside = () => refused('leads-outside', "Cet élément mène en dehors des emplacements qu'Evolve est autorisé à consulter.");
@@ -245,9 +255,28 @@ function createFilesService({ platform = process.platform, places = {}, drives =
     if (!/^[A-Za-z]:[\\/]/.test(value)) throw invalidPath();
     const parts = value.slice(3).split(/[\\/]/).filter(Boolean);
     for (const part of parts) {
-      if (DOTS_ONLY.test(part) || WINDOWS_FORBIDDEN.test(part) || WINDOWS_DEVICE.test(part)) throw invalidPath();
+      // Un nom terminé par un point ou une espace désignerait, pour Windows, un autre élément (« Documents. » : « Documents »).
+      if (DOTS_ONLY.test(part) || WINDOWS_FORBIDDEN.test(part) || WINDOWS_DEVICE.test(part) || TRAILING_DOT_OR_SPACE.test(part)) throw invalidPath();
     }
     return `${value[0].toUpperCase()}:\\${parts.join('\\')}`;
+  }
+
+  /**
+   * Contrôle un nom d'élément (nouveau dossier, nouveau nom) et le renvoie.
+   * Un seul nom, sans séparateur, que Windows admet : les règles de Windows
+   * s'appliquent sur tous les systèmes. Aucun accès au disque.
+   * @returns {string}
+   */
+  function checkName(value) {
+    if (typeof value !== 'string' || value.length === 0 || value.trim() === '') throw invalidName('Indiquez un nom.');
+    if (value.length > NAME_LENGTH) throw invalidName(`Ce nom est trop long : ${NAME_LENGTH} caractères au plus.`);
+    if (CONTROL_CHARACTERS.test(value) || /[\\/]/.test(value) || WINDOWS_FORBIDDEN.test(value)) {
+      throw invalidName('Un nom ne peut contenir aucun de ces caractères : \\ / : * ? " < > |');
+    }
+    if (DOTS_ONLY.test(value)) throw invalidName('Ce nom est réservé : il désigne le dossier lui-même ou son dossier parent.');
+    if (value !== value.trim() || value.endsWith('.')) throw invalidName('Un nom ne peut ni commencer par une espace, ni se terminer par une espace ou un point.');
+    if (WINDOWS_DEVICE.test(value)) throw invalidName('Ce nom est réservé par Windows (CON, PRN, AUX, NUL, COM1, LPT1…).');
+    return value;
   }
 
   /** Vrai si `candidate` est `rootPath` ou se trouve à l'intérieur. */
@@ -462,25 +491,36 @@ function createFilesService({ platform = process.platform, places = {}, drives =
     return link && HIDDEN_LINKS.has(lower);
   }
 
-  async function listFolder(requested) {
+  /**
+   * Destination réelle d'un chemin dont la forme est déjà contrôlée (voir
+   * `checkPath`). Le chemin doit se trouver dans un emplacement autorisé, et
+   * sa destination réelle — liens symboliques et jonctions résolus par le
+   * système — aussi : un lien ne mène nulle part ailleurs.
+   * @returns {Promise<{ path: string, root: { id: string, kind: string, path: string }, roots: object[] }>}
+   */
+  async function resolveAllowed(requested) {
     const allowed = await allowedRoots();
     // Hors des emplacements autorisés : refus sans toucher au disque.
     if (!rootOf(requested, allowed)) throw outsideAllowed();
 
-    // Destination réelle : un lien ne doit mener nulle part ailleurs.
-    let folder;
+    let real;
     try {
-      folder = await disk.realpath(requested);
+      real = await disk.realpath(requested);
     } catch (error) {
       throw translate(error);
     }
     try {
-      folder = checkPath(folder);
+      real = checkPath(real);
     } catch {
       throw leadsOutside(); // partage réseau, par exemple
     }
-    const root = rootOf(folder, allowed);
+    const root = rootOf(real, allowed);
     if (!root) throw leadsOutside();
+    return { path: real, root, roots: allowed };
+  }
+
+  async function listFolder(requested) {
+    const { path: folder, root, roots: allowed } = await resolveAllowed(requested);
 
     const found = [];
     let truncated = false;
@@ -555,7 +595,26 @@ function createFilesService({ platform = process.platform, places = {}, drives =
     list,
     /** État du service, pour les comptes rendus. */
     status: () => ({ access: 'read-only', places: known.places, drives: known.drives }),
+    /**
+     * Contrôles de chemins, à l'usage des opérations sur les fichiers
+     * (file-operations.js). Ce sont ceux de la consultation, sans exception :
+     * forme du chemin, emplacements autorisés, destination réelle des liens.
+     * Aucune de ces fonctions ne modifie quoi que ce soit.
+     */
+    guard: Object.freeze({
+      platform,
+      path: P,
+      checkPath,
+      checkName,
+      isInside,
+      sameLocation,
+      comparable,
+      rootOf,
+      /** Emplacements autorisés (recherchés au premier besoin). */
+      roots: allowedRoots,
+      resolve: resolveAllowed,
+    }),
   };
 }
 
-module.exports = { createFilesService, PLACE_IDS, READ_ONLY_CALLS, DEFAULT_LIMITS };
+module.exports = { createFilesService, PLACE_IDS, READ_ONLY_CALLS, DEFAULT_LIMITS, HIDDEN_AT_DRIVE_ROOT };

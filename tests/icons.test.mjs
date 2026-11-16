@@ -12,8 +12,8 @@ import { describeNode, FILE_TYPES } from '../src/renderer/js/core/file-types.js'
 import { hasIcon } from '../src/renderer/js/core/icons.js';
 import { ICON_NAMES, ICON_SYMBOLS, ICON_WEIGHTS } from '../src/renderer/js/core/icons.data.js';
 import { APPS, DESKTOP_ICONS } from '../src/renderer/js/data/apps.js';
+import { PLACES } from '../src/renderer/js/apps/explorer-nav.js';
 import { createDemoNotifications } from '../src/renderer/js/data/demo-content.js';
-import { createDemoFileSystem } from '../src/renderer/js/data/demo-files.js';
 import { QUICK_SETTING_ENTRIES } from '../src/renderer/js/shell/search.js';
 import { networkGlyph, volumeGlyph } from '../src/renderer/js/shell/ui-state.js';
 import { listFiles, relative, RENDERER, stripComments } from './helpers.mjs';
@@ -76,15 +76,11 @@ test('les pictogrammes des données existent', () => {
   for (const entry of QUICK_SETTING_ENTRIES) add(entry.glyph, `paramètre rapide ${entry.id}`);
   for (const [ext, type] of Object.entries(FILE_TYPES)) add(type.icon, `type de fichier .${ext}`);
   for (const item of createDemoNotifications()) if (item.glyph) add(item.glyph, `notification ${item.id}`);
+  for (const place of PLACES) add(place.icon, `dossier personnel ${place.id}`);
 
-  const files = createDemoFileSystem(new Date(2026, 10, 10));
-  (function walk(node) {
-    for (const child of node.children ?? []) {
-      add(describeNode(child).icon, `élément ${child.id}`);
-      walk(child);
-    }
-  })(files.root);
+  // Éléments de l'explorateur : fichier de type inconnu, dossier, lecteur, lien, élément du système.
   add(describeNode({ kind: 'file', name: 'x.inconnu', ext: 'inconnu' }).icon, 'fichier de type inconnu');
+  for (const kind of ['folder', 'drive', 'link', 'other', 'page']) add(describeNode({ kind, name: 'x' }).icon, `élément de nature « ${kind} »`);
 
   for (let volume = 0; volume <= 100; volume += 1) {
     add(volumeGlyph(volume, false), `volume ${volume}`);

@@ -56,6 +56,60 @@ switch (mode) {
     report(true, [{ name: 'contrôle un', ok: true }], [], { explorer: { places: 'desktop', drives: null } });
     process.exit(0);
     break;
+  case 'pass-with-recycled': // réussite, avec le dossier d'essai retrouvé dans la Corbeille de Windows
+    report(true, [{ name: 'contrôle un', ok: true }], [], {
+      recycled: {
+        from: "D:\\a\\Evolve\\self-test-output\\explorateur\\essai-AbC123\\Atelier d'essai été 2026\\À jeter",
+        record: 'D:\\$RECYCLE.BIN\\S-1-5-21-1-2-3-500\\$IK4T9QZ',
+        content: 'D:\\$RECYCLE.BIN\\S-1-5-21-1-2-3-500\\$RK4T9QZ',
+      },
+    });
+    process.exit(0);
+    break;
+  case 'pass-with-odd-recycled': // information mal formée : ignorée
+    report(true, [{ name: 'contrôle un', ok: true }], [], { recycled: { from: 12, content: null } });
+    process.exit(0);
+    break;
+  case 'pass-with-no-replace': // réussite, avec les constats de la vérification « rien n'est remplacé »
+    report(true, [{ name: 'contrôle un', ok: true }], [], {
+      noReplace: { free: 5, taken: { cases: 8, numbers: [183] }, link: true, caseOnly: 2, races: { rounds: 40, requests: 160, moved: 31, refused: 120, lost: 0 }, contests: { rounds: 20, creator: 9, mover: 11 }, crossVolume: null, transient: 3 },
+    });
+    process.exit(0);
+    break;
+  case 'fail-with-no-replace': // échec : un élément a été remplacé
+    report(false, [{ name: 'contrôle un', ok: false, value: { problemes: ['remplacé'] } }], [], {
+      noReplace: { free: 5, taken: { cases: 7, numbers: [] }, link: true, caseOnly: 2, races: { rounds: 40, requests: 160, moved: 60, refused: 100, lost: 29 }, contests: { rounds: 20, creator: 9, mover: 11 }, crossVolume: null, transient: 0 },
+    });
+    process.exit(1);
+    break;
+  case 'pass-with-input': // réussite : la page a reçu la souris et le clavier injectés
+    report(true, [{ name: 'contrôle un', ok: true }], [], { input: { souris: true, clavier: true, pageActive: true } });
+    process.exit(0);
+    break;
+  case 'pass-without-keyboard': // réussite, mais le clavier injecté n'est pas parvenu à la page
+    writeFileSync(
+      path.join(outDir, 'result.json'),
+      JSON.stringify({
+        ok: true,
+        checks: [{ name: 'contrôle un', ok: true }],
+        errors: [],
+        warnings: ['raccourcis clavier non vérifiés : la fenêtre ne reçoit pas le clavier injecté'],
+        captures: [],
+        window: { width: 1600, height: 900 },
+        versions: {},
+        input: { souris: true, clavier: false, pageActive: false },
+      }),
+    );
+    process.exit(0);
+    break;
+  case 'pass-with-odd-input': // information mal formée : rien n'est tenu pour reçu
+    report(true, [{ name: 'contrôle un', ok: true }], [], { input: { souris: 'oui', clavier: 1 } });
+    process.exit(0);
+    break;
+  case 'pass-with-odd-no-replace': // information mal formée : ignorée
+    report(true, [{ name: 'contrôle un', ok: true }], [], { noReplace: { free: 'cinq', taken: null, races: 40 } });
+    process.exit(0);
+    break;
   case 'fail':
     report(false, [{ name: 'contrôle un', ok: true }, { name: 'contrôle deux', ok: false, value: { attendu: 1 } }]);
     process.exit(1);
@@ -92,7 +146,11 @@ switch (mode) {
 
 /**
  * Modes « settings-… » : le comportement dépend du scénario demandé.
- *   settings-ok              application conforme ;
+ *   settings-ok              application conforme : réglages modifiés, fenêtre de l'explorateur déplacée ;
+ *   settings-maximized       application conforme, fenêtre de l'explorateur agrandie (souris non reçue) ;
+ *   settings-no-placement    n'enregistre pas l'emplacement de la fenêtre de l'explorateur ;
+ *   settings-bad-placement   enregistre un emplacement fait d'une valeur refusée ;
+ *   settings-empty-placement enregistre un emplacement sans taille ;
  *   settings-not-saved       ne crée aucun fichier de réglages ;
  *   settings-wrong-values    enregistre d'autres valeurs que celles modifiées ;
  *   settings-missing-value   oublie un réglage modifié ;
@@ -121,7 +179,9 @@ function settingsMode() {
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, typeof content === 'string' ? content : `${JSON.stringify(content, null, 2)}\n`);
   };
-  const content = (overrides = {}) => ({ schema: 1, app: version, savedAt: '2026-11-10T08:30:00.000Z', values: { ...CHANGED_SETTINGS }, ...overrides });
+  /** Emplacement d'une fenêtre déplacée à la souris : position et taille en centièmes de rem. */
+  const PLACEMENT = { 'explorerWindow.x': 2300, 'explorerWindow.y': 681, 'explorerWindow.width': 6200, 'explorerWindow.height': 4000 };
+  const content = (overrides = {}) => ({ schema: 1, app: version, savedAt: '2026-11-10T08:30:00.000Z', values: { ...CHANGED_SETTINGS, ...PLACEMENT }, ...overrides });
   const pass = () => {
     report(true, [{ name: `scénario ${scenario}`, ok: true }], [], { scenario });
     process.exit(0);
@@ -137,13 +197,25 @@ function settingsMode() {
       case 'settings-not-saved':
         break;
       case 'settings-wrong-values':
-        save(content({ values: { ...CHANGED_SETTINGS, 'quick.volume': 64 } }));
+        save(content({ values: { ...CHANGED_SETTINGS, ...PLACEMENT, 'quick.volume': 64 } }));
         break;
       case 'settings-missing-value': {
         const { 'quick.nightLight': _omitted, ...values } = CHANGED_SETTINGS;
-        save(content({ values }));
+        save(content({ values: { ...values, ...PLACEMENT } }));
         break;
       }
+      case 'settings-maximized':
+        save(content({ values: { ...CHANGED_SETTINGS, 'explorerWindow.x': 1900, 'explorerWindow.y': 481, 'explorerWindow.width': 6200, 'explorerWindow.height': 4000, 'explorerWindow.maximized': true } }));
+        break;
+      case 'settings-no-placement':
+        save(content({ values: { ...CHANGED_SETTINGS } }));
+        break;
+      case 'settings-bad-placement':
+        save(content({ values: { ...CHANGED_SETTINGS, ...PLACEMENT, 'explorerWindow.x': 12.5 } }));
+        break;
+      case 'settings-empty-placement':
+        save(content({ values: { ...CHANGED_SETTINGS, ...PLACEMENT, 'explorerWindow.height': 0 } }));
+        break;
       case 'settings-bad-json':
         save('{ "schema": 1, "values": { "quick.vol');
         break;
