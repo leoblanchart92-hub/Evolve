@@ -12,6 +12,8 @@
  * Services disponibles :
  *   settings   réglages de l'utilisateur, conservés d'un lancement à l'autre
  *   files      consultation des dossiers de l'ordinateur, en lecture seule
+ *   updates    mises à jour de la version installée : recherche, puis
+ *              téléchargement et installation à la demande
  *
  * Les opérations sur les fichiers (créer un dossier, renommer, copier,
  * déplacer, envoyer à la Corbeille, ouvrir) ne sont PAS des méthodes d'un
@@ -24,6 +26,7 @@ const { createFileOperations } = require('./file-operations');
 const { createFilesService } = require('./files');
 const { createHub, isPlainData, reply } = require('./hub');
 const { createSettingsService } = require('./settings');
+const { createUpdatesService } = require('./updates');
 
 /** Limites des arguments d'une opération sur les fichiers : jusqu'à mille chemins. */
 const OPERATION_LIMITS = Object.freeze({ depth: 4, nodes: 1100, text: 1_000_000 });
@@ -48,9 +51,16 @@ const FILE_OPERATIONS = Object.freeze(['createFolder', 'rename', 'copy', 'move',
  *        lui-même si le nom d'arrivée est pris. Sans `trash`, rien ne peut
  *        être supprimé ; sans `openPath`, rien ne peut être ouvert ; sans
  *        `moveNoReplace`, rien ne peut être renommé ni déplacé.
+ * @param {object} [options.updates]  mises à jour : `variant` (façon dont
+ *        Evolve a été lancé — seule la version installée se met à jour),
+ *        `engine` (ce que l'hôte sait faire : lire la description d'une
+ *        version, télécharger, lancer l'installateur), `quit()` (fermer
+ *        l'application), `updated` (cette session suit une mise à jour) et
+ *        `page` (où les versions sont publiées). Sans `engine`, aucune mise à
+ *        jour n'est possible.
  * @param {(message: string) => void} [options.log]
  */
-function createServices({ settingsFile = null, appVersion = null, files: fileOptions = {}, operations: operationOptions = {}, log = () => {} } = {}) {
+function createServices({ settingsFile = null, appVersion = null, files: fileOptions = {}, operations: operationOptions = {}, updates: updateOptions = {}, log = () => {} } = {}) {
   const hub = createHub({ log });
   const settings = createSettingsService({ file: settingsFile, appVersion, log });
   const files = createFilesService(fileOptions);
@@ -95,10 +105,42 @@ function createServices({ settingsFile = null, appVersion = null, files: fileOpt
     status: () => files.status(),
   });
 
+  // Mises à jour : rien n'est téléchargé ni installé sans une demande explicite, et jamais pendant une
+  // opération sur les fichiers.
+  const updates = createUpdatesService({
+    variant: updateOptions.variant,
+    currentVersion: appVersion,
+    engine: updateOptions.engine ?? null,
+    automatic: () => settings.get('updates.automatic'),
+    busy: () => operations.status().busy === true,
+    quit: typeof updateOptions.quit === 'function' ? updateOptions.quit : () => {},
+    updated: updateOptions.updated === true,
+    page: typeof updateOptions.page === 'string' ? updateOptions.page : null,
+    log,
+  });
+  const announceUpdates = hub.register('updates', {
+    methods: {
+      state: () => updates.state(),
+      check: () => updates.check(),
+      download: () => updates.download(),
+      cancel: () => updates.cancel(),
+      install: (_context, choices) => updates.install(choices),
+    },
+    events: ['changed'],
+    status: () => updates.status(),
+  });
+  // Chaque changement est annoncé à tous, demandeur compris : une recherche ou un téléchargement dure.
+  updates.on((event, payload) => announceUpdates(event, payload));
+  // Le réglage « rechercher au lancement » fait partie de l'état annoncé.
+  settings.on((event, payload) => {
+    if (event === 'changed' && payload?.key === 'updates.automatic') updates.refresh();
+  });
+
   return {
     hub,
     settings,
     files,
+    updates,
     /**
      * Opérations sur les fichiers : une fonction par opération, aux arguments
      * fixés. Chacune répond `{ ok: true, value }` ou `{ ok: false, code,

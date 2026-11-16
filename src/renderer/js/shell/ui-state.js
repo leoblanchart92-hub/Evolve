@@ -2,8 +2,8 @@
  * Evolve — État visuel partagé de l'environnement.
  *
  * Ces valeurs ne pilotent QUE l'interface (icônes, panneaux, effets d'écran,
- * emplacement des fenêtres d'Evolve). Aucun paramètre de Windows n'est lu ni
- * modifié.
+ * emplacement des fenêtres d'Evolve) et la recherche des mises à jour
+ * d'Evolve. Aucun paramètre de Windows n'est lu ni modifié.
  */
 
 import { createStore } from '../core/events.js';
@@ -23,6 +23,9 @@ export const ui = createStore({
   // Bureau
   widgetsVisible: true,
   desktopIconsVisible: true,
+
+  // Mises à jour : rechercher une version plus récente à chaque lancement (version installée seulement).
+  updatesAutomatic: true,
 
   // Emplacement donné en dernier à la fenêtre de l'explorateur, en centièmes de rem
   // (largeur 0 : aucun emplacement retenu) — voir window-placement.js.

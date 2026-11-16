@@ -36,6 +36,10 @@ const SETTINGS = Object.freeze({
   'quick.volume': { type: 'integer', default: 64, min: 0, max: 100 },
   'quick.muted': { type: 'boolean', default: false },
 
+  // Mises à jour (version installée) : rechercher une version plus récente à
+  // chaque lancement. Rien n'est jamais téléchargé ni installé sans demande.
+  'updates.automatic': { type: 'boolean', default: true },
+
   // Emplacement donné en dernier à la fenêtre de l'explorateur de fichiers
   // d'Evolve : position et taille en centièmes de rem — l'unité dans laquelle
   // l'interface est dimensionnée —, et agrandissement. Une largeur nulle

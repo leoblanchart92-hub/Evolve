@@ -480,6 +480,11 @@ test('chaque écriture sur le disque est inventoriée : les fichiers de l’util
     'src/main/selftest-operations.js': ['mkdirSync', 'symlinkSync', 'writeFileSync'],
     // Compte rendu de démarrage (option --status-file), pour la vérification du lancement.
     'src/main/status.js': ['mkdirSync', 'renameSync', 'writeFileSync'],
+    // Mise à jour de la version installée, à la demande de l'utilisateur : l'installateur est téléchargé dans un
+    // dossier du dossier temporaire (%TEMP%\Evolve-mise-a-jour), d'où les fichiers devenus inutiles sont retirés un
+    // à un, puis le dossier s'il est vide. Rien n'y est renommé, et rien n'est écrit ailleurs (voir
+    // tests/update-engine.test.mjs).
+    'src/main/update-engine.js': ['createWriteStream', 'mkdirSync', 'rmSync', 'rmdirSync'],
     // Opérations sur les fichiers de l'utilisateur, à sa demande : créer un dossier, copier un fichier. Deux
     // fonctions, que le système refuse si le nom existe ; aucune ne supprime ni ne remplace. Le renommage de
     // Node, qui remplace, n'y figure plus : renommer et déplacer passent par la fonction sans remplacement
@@ -529,8 +534,10 @@ test('la copie récursive de Node (fs.cp, fs.cpSync) n’est employée nulle par
 test('le moteur n’est interrogé que sur des emplacements qu’il ne crée pas, et n’écrit rien de lui-même', () => {
   const main = stripComments(readText('src/main/main.js'));
   // Emplacements demandés par leur nom : aucun dossier personnel (le moteur créerait « Documents »).
+  // Le dossier temporaire est demandé deux fois : pour le dossier de travail du moteur, et pour les
+  // téléchargements d'une mise à jour.
   const named = [...main.matchAll(/\bgetPath\(\s*'([^']+)'\s*\)/g)].map((match) => match[1]).sort();
-  assert.deepEqual(named, ['appData', 'temp', 'userData']);
+  assert.deepEqual(named, ['appData', 'temp', 'temp', 'userData']);
   // Une seule autre demande : celle des dossiers personnels, confiée au module qui sait lesquels demander.
   const others = [...main.matchAll(/\bgetPath\(\s*(?!')([^)]*)\)/g)].map((match) => match[1].trim());
   assert.deepEqual(others, ['name']);
@@ -557,6 +564,41 @@ test('le moteur n’est interrogé que sur des emplacements qu’il ne crée pas
   }
   // Et tout téléchargement est annulé.
   assert.match(main, /session\.defaultSession\.on\('will-download', \(event\) => event\.preventDefault\(\)\);/);
+});
+
+test('réseau : l’interface n’y accède jamais ; seul le moteur des mises à jour émet des requêtes, dans une session à part', () => {
+  const main = stripComments(readText('src/main/main.js'));
+  // L'interface : toute adresse réseau est refusée, comme avant.
+  assert.match(main, /session\.defaultSession\.webRequest\.onBeforeRequest\(\(details, callback\) => \{\s*callback\(\{ cancel: NETWORK_URL\.test\(details\.url\) \}\);\s*\}\);/);
+  assert.match(main, /const NETWORK_URL = \/\^\(\?:https\?\|wss\?\|ftp\):\/i;/);
+  // Les mises à jour : une session distincte, sans rien de conservé, créée à la première requête seulement.
+  assert.equal([...main.matchAll(/\bfromPartition\(/g)].length, 1);
+  assert.match(main, /updateSession = session\.fromPartition\('evolve-mises-a-jour', \{ cache: false \}\);/);
+  // Cette session refuse elle-même, à chaque étape d'une requête, toute adresse que la voie de publication
+  // n'admet pas : le moteur d'Electron n'indique pas l'adresse d'où vient une réponse.
+  assert.match(main, /updateSession\.webRequest\.onBeforeRequest\(\(details, callback\) => \{\s*callback\(\{ cancel: feed\.admits\(details\.url\) !== true \}\);\s*\}\);/);
+  // Une seule fonction émet une requête, et elle n'est remise qu'au moteur des mises à jour.
+  assert.equal([...main.matchAll(/\.fetch\(/g)].length, 1);
+  assert.match(main, /function createUpdateRequest\(feed\) \{[\s\S]*?return updateSession\.fetch\(url, init\);\s*\};\s*\}/);
+  assert.equal([...main.matchAll(/\bcreateUpdateRequest\b/g)].length, 2, 'une définition, un usage');
+  assert.match(main, /createUpdateEngine\(\{ feed, request: createUpdateRequest\(feed\), tempDir: app\.getPath\('temp'\), /);
+  // Ce moteur n'existe que pour la version installée : l'exécutable portable ne se connecte jamais.
+  assert.match(main, /const variant = detectVariant\(\{ packaged: app\.isPackaged \}\);\s+if \(variant !== 'installed'\) return \{ variant \};/);
+  // Au lancement, la recherche n'a lieu qu'hors auto-test, une fois l'interface affichée, par la méthode qui
+  // respecte le réglage.
+  assert.match(main, /if \(!options\.selfTest\) \{\s+win\.webContents\.once\('did-finish-load', \(\) => \{\s+const timer = setTimeout\(\(\) => services\.updates\.checkAtLaunch\(\), UPDATE_CHECK_DELAY_MS\);/);
+  assert.equal([...main.matchAll(/\bcheckAtLaunch\b/g)].length, 1);
+  // Aucun autre module d'Electron ne donne accès au réseau.
+  assert.doesNotMatch(main, /\bnet\b|\bnetLog\b|\bClientRequest\b|\bdownloadURL\b|\bloadURL\b/);
+  for (const file of desktopFiles) {
+    if (file.endsWith(path.join('main', 'main.js'))) continue;
+    const code = stripComments(readFileSync(file, 'utf8'));
+    assert.doesNotMatch(code, /\bfromPartition\b|\bdefaultSession\b|require\('node:https?'\)|require\('node:net'\)|\bglobalThis\.fetch\b|(?<![.\w])fetch\(/, relative(file));
+  }
+
+  // Lancer un programme : un seul module le peut — le moteur des mises à jour, pour l'installateur vérifié.
+  const launchers = desktopFiles.filter((file) => /child_process/.test(stripComments(readFileSync(file, 'utf8')))).map(relative);
+  assert.deepEqual(launchers, ['src/main/update-engine.js']);
 });
 
 test('la passerelle expose exactement ce que l’interface utilise', () => {

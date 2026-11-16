@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -26,6 +26,7 @@ const SELFTEST = fromRoot('src', 'main', 'selftest.js');
 const STATUS = fromRoot('src', 'main', 'status.js');
 const ARGS = fromRoot('src', 'main', 'args.js');
 const ATOMIC_MOVE = fromRoot('src', 'main', 'atomic-move.js');
+const VARIANT = fromRoot('src', 'main', 'variant.js');
 
 /**
  * Déplacement sans remplacement : le processus principal charge le vrai module natif
@@ -56,11 +57,13 @@ function stubModule(file, exports) {
  * @param {Function} [options.reportStatus] remplace le compte rendu de démarrage réel
  * @param {Function} [options.loadAtomicMove] remplace le chargement du module natif de déplacement
  *                                         sans remplacement (par défaut : le vrai module)
+ * @param {string} [options.variant]       façon dont l'application se croit lancée (« installed »…) ; par
+ *                                         défaut, la vraie détection (voir variant.js)
  * @param {object} [options.env]           variables d'environnement à définir
  * @param {string} [options.tempDir]       dossier temporaire d'un lancement précédent, pour
  *                                         simuler un redémarrage sur la même machine
  */
-async function launch({ argv = [], ready = true, runSelfTest, reportStatus, loadAtomicMove, env = {}, tempDir = null, ...electronOptions } = {}) {
+async function launch({ argv = [], ready = true, runSelfTest, reportStatus, loadAtomicMove, variant, env = {}, tempDir = null, ...electronOptions } = {}) {
   tempDir ??= mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
   const fake = createFakeElectron({ tempDir, ...electronOptions });
   fake.tempDir = tempDir;
@@ -70,6 +73,7 @@ async function launch({ argv = [], ready = true, runSelfTest, reportStatus, load
   stubModule(ELECTRON, fake.electron);
   if (runSelfTest) stubModule(SELFTEST, { runSelfTest });
   if (loadAtomicMove) stubModule(ATOMIC_MOVE, { loadAtomicMove });
+  if (variant) stubModule(VARIANT, { detectVariant: () => variant });
   // Par défaut, tout appel au compte rendu de démarrage est une erreur du test.
   stubModule(STATUS, {
     reportStatus:
@@ -487,7 +491,8 @@ test('auto-test : fenêtre non plein écran, rendu jamais suspendu, données sé
   assert.equal(calls[0][0], window);
   // Chemin relatif : résolu depuis le dossier du fichier .exe portable.
   const { describeServices, moveNoReplace, ...options } = calls[0][1];
-  assert.deepEqual(options, { outDir: path.join(tmpdir(), 'dossier-du-exe', 'resultats'), scenario: undefined });
+  // Aucun dossier de mise à jour : seule la version installée en a un.
+  assert.deepEqual(options, { outDir: path.join(tmpdir(), 'dossier-du-exe', 'resultats'), scenario: undefined, updateDir: null });
   // L'auto-test reçoit le déplacement sans remplacement que l'application emploie, pour l'éprouver sur le disque :
   // celui du module natif, qui refuse un nom déjà pris.
   const taken = path.join(tempDir, 'pris.txt');
@@ -637,6 +642,319 @@ test('sans --status-file, ou pendant l’auto-test, aucun compte rendu de démar
 
   const selfTest = await launch({ argv: ['--self-test', '--status-file=etat.json'], runSelfTest: async () => 0 });
   assert.deepEqual(selfTest.state.exitCodes, [0]);
+});
+
+// ---------------------------------------------------------------------------------
+// Mises à jour
+// ---------------------------------------------------------------------------------
+
+const MANIFEST_URL = 'https://github.com/leoblanchart92-hub/Evolve/releases/latest/download/evolve-update.json';
+const UPDATE_PARTITION = 'evolve-mises-a-jour';
+
+/** Réponse d'un serveur, telle que le moteur des mises à jour la lit. */
+function serverReply(url, body, { status = 200 } = {}) {
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    url,
+    headers: new Headers({ 'content-length': String(bytes.length) }),
+    body: (async function* chunks() {
+      yield bytes;
+    })(),
+  };
+}
+
+/** Description publiée d'une version, pour un installateur de `bytes`. */
+const publishedUpdate = (version, bytes) => ({
+  schema: 1,
+  version,
+  date: '2026-11-20T10:00:00Z',
+  setup: { file: `Evolve-Setup-${version}.exe`, size: bytes.length, sha512: createHash('sha512').update(bytes).digest('hex') },
+});
+
+/** Annonces du service des mises à jour reçues par la fenêtre : états successifs. */
+const updateStatuses = (window) => window.webContents.sent.filter(([channel, message]) => channel === 'evolve:service-event' && message.service === 'updates').map(([, message]) => message.payload.status);
+
+test('mises à jour : hors version installée, aucun moteur — aucune requête, à aucun moment', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const cases = [
+    [{}, 'unpacked'],
+    // Même avec une adresse d'essai : elle ne donne de moteur à personne.
+    [{ argv: ['--update-feed=http://127.0.0.1:8123'] }, 'unpacked'],
+    [{ packaged: false }, 'development'],
+    // (En dernier : la variable posée par le lanceur portable reste en place jusqu'à la fin du test.)
+    [{ env: { PORTABLE_EXECUTABLE_FILE: 'C:\\Users\\moi\\Downloads\\Evolve-9.8.7-portable.exe' } }, 'portable'],
+  ];
+  for (const [options, variant] of cases) {
+    const fake = await launch(options);
+    fake.state.respond = () => {
+      throw new Error('aucune requête ne devait partir');
+    };
+    const api = loadPreload(fake, fake.window.webContents);
+    fake.window.webContents.emit('did-finish-load');
+    t.mock.timers.tick(120_000);
+    await settle();
+    const state = await api.services.call('updates', 'state');
+    assert.equal(state.ok, true);
+    assert.deepEqual([state.value.variant, state.value.supported, state.value.status], [variant, false, 'idle']);
+    assert.deepEqual(await api.services.call('updates', 'check'), {
+      ok: false,
+      code: 'unsupported',
+      message: variant === 'portable' ? "L'exécutable portable ne se met pas à jour de lui-même : il ne se connecte jamais au réseau." : "Les mises à jour ne concernent que la version installée d'Evolve.",
+    });
+    assert.equal(fake.state.partitions.size, 0, `${variant} : aucune session réseau n'est créée`);
+    assert.deepEqual(updateStatuses(fake.window), []);
+  }
+});
+
+test('mises à jour : la version installée interroge la page de publication après l’affichage, dans une session à part', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fake = await launch({ variant: 'installed' });
+  const { state, window } = fake;
+  const setup = Buffer.alloc(2 * 1024 * 1024, 'x');
+  state.respond = (url) => serverReply(url, JSON.stringify(publishedUpdate('9.9.0', setup)));
+  const api = loadPreload(fake, window.webContents);
+
+  // Rien avant l'affichage de l'interface, ni pendant les premières secondes.
+  await settle();
+  assert.equal(state.partitions.size, 0);
+  window.webContents.emit('did-finish-load');
+  t.mock.timers.tick(7999);
+  await settle();
+  assert.equal(state.partitions.size, 0);
+  t.mock.timers.tick(1);
+  for (let turn = 0; turn < 5; turn += 1) await settle();
+
+  // Une seule requête : la description de la dernière version, à l'adresse fixe du dépôt.
+  assert.deepEqual([...state.partitions.keys()], [UPDATE_PARTITION]);
+  const session = state.partitions.get(UPDATE_PARTITION);
+  assert.deepEqual(session.options, { cache: false }, 'rien n’est conservé d’un lancement à l’autre');
+  assert.deepEqual(session.requests.map((request) => request.url), [MANIFEST_URL]);
+  assert.equal(session.requests[0].init.redirect, 'follow');
+  // Cette session n'accorde aucune autorisation, elle non plus, et n'enregistre aucun téléchargement d'elle-même.
+  let granted = null;
+  session.permissionHandler(null, 'geolocation', (answer) => (granted = answer));
+  assert.equal(granted, false);
+  assert.deepEqual([...session.listeners.keys()], ['will-download']);
+  let prevented = false;
+  session.listeners.get('will-download')({ preventDefault: () => (prevented = true) });
+  assert.equal(prevented, true);
+  // Elle refuse toute adresse hors « https », à chaque étape d'une requête.
+  const admitted = (url) => {
+    let cancel = null;
+    session.requestFilter({ url }, (answer) => (cancel = answer.cancel));
+    return cancel === false;
+  };
+  assert.equal(admitted(MANIFEST_URL), true);
+  assert.equal(admitted('https://release-assets.githubusercontent.com/github-production-release-asset/1/2'), true);
+  for (const url of ['http://github.com/leoblanchart92-hub/Evolve/releases/latest/download/evolve-update.json', 'http://127.0.0.1:8123/evolve-update.json', 'ftp://github.com/x', 'file:///C:/Windows/x', 'pas une adresse']) {
+    assert.equal(admitted(url), false, url);
+  }
+  // La session de l'interface, elle, refuse toujours toute adresse réseau.
+  let cancelled = null;
+  state.requestFilter({ url: MANIFEST_URL }, (answer) => (cancelled = answer.cancel));
+  assert.equal(cancelled, true);
+
+  // La version plus récente est proposée — rien n'est téléchargé — et la fenêtre en est informée.
+  const current = await api.services.call('updates', 'state');
+  assert.deepEqual(
+    { ...current.value, checkedAt: typeof current.value.checkedAt },
+    {
+      variant: 'installed',
+      supported: true,
+      current: '9.8.7',
+      status: 'available',
+      available: { version: '9.9.0', size: setup.length, date: '2026-11-20T10:00:00.000Z' },
+      latest: '9.9.0',
+      progress: null,
+      error: null,
+      checkedAt: 'string',
+      automatic: true,
+      updated: false,
+      page: 'https://github.com/leoblanchart92-hub/Evolve/releases',
+    },
+  );
+  assert.deepEqual(updateStatuses(window), ['checking', 'available']);
+  assert.equal(existsSync(path.join(fake.tempDir, 'Evolve-mise-a-jour')), false, 'aucun téléchargement');
+  assert.equal(state.quitCalls, 0);
+});
+
+test('mises à jour : une redirection vers une adresse non admise fait échouer la requête, sans rien lire', async () => {
+  const fake = await launch({ variant: 'installed' });
+  const { state } = fake;
+  const setup = Buffer.alloc(2 * 1024 * 1024, 'x');
+  const asked = [];
+  const elsewhere = 'http://exemple.invalid/evolve-update.json';
+  state.respond = (url) => {
+    asked.push(url);
+    // GitHub redirige toujours un téléchargement ; ici, vers une adresse « http ».
+    if (url === MANIFEST_URL) return { redirect: elsewhere };
+    return serverReply(url, JSON.stringify(publishedUpdate('9.9.0', setup)));
+  };
+  const api = loadPreload(fake, fake.window.webContents);
+  const checked = await api.services.call('updates', 'check');
+  // La seconde adresse a été présentée au filtre, qui l'a refusée : elle n'a jamais été interrogée.
+  assert.deepEqual(state.partitions.get(UPDATE_PARTITION).requests.map((request) => request.url), [MANIFEST_URL, elsewhere]);
+  assert.deepEqual(asked, [MANIFEST_URL]);
+  assert.deepEqual([checked.value.status, checked.value.available, checked.value.error.code], ['idle', null, 'offline']);
+
+  // Une redirection vers une adresse « https » est suivie, comme celles de GitHub vers ses serveurs de fichiers.
+  const files = 'https://release-assets.githubusercontent.com/evolve-update.json';
+  state.respond = (url) => (url === MANIFEST_URL ? { redirect: files } : serverReply(url, JSON.stringify(publishedUpdate('9.9.0', setup))));
+  const again = await api.services.call('updates', 'check');
+  assert.deepEqual([again.value.status, again.value.available.version, again.value.error], ['available', '9.9.0', null]);
+});
+
+test('mises à jour : réglage désactivé, aucune recherche au lancement ; à la demande, elle reste possible', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const first = await launch({ variant: 'installed' });
+  const api = loadPreload(first, first.window.webContents);
+  assert.deepEqual(await api.services.call('settings', 'get', 'updates.automatic'), { ok: true, value: true }, 'activé par défaut');
+  assert.deepEqual(await api.services.call('settings', 'set', 'updates.automatic', false), { ok: true, value: false });
+  // Le changement du réglage est annoncé avec l'état des mises à jour.
+  assert.equal((await api.services.call('updates', 'state')).value.automatic, false);
+  first.window.close();
+  first.app.emit('window-all-closed');
+  first.app.emit('will-quit');
+
+  const second = await launch({ variant: 'installed', tempDir: first.tempDir });
+  second.state.respond = (url) => serverReply(url, 'introuvable', { status: 404 });
+  const again = loadPreload(second, second.window.webContents);
+  second.window.webContents.emit('did-finish-load');
+  t.mock.timers.tick(120_000);
+  for (let turn = 0; turn < 5; turn += 1) await settle();
+  assert.equal(second.state.partitions.size, 0, 'aucune requête au lancement');
+  assert.equal((await again.services.call('updates', 'state')).value.status, 'idle');
+
+  // À la demande : la recherche a lieu. Aucune version n'est publiée : Evolve est à jour.
+  const checked = await again.services.call('updates', 'check');
+  assert.deepEqual([checked.ok, checked.value.status, checked.value.latest], [true, 'up-to-date', null]);
+  assert.deepEqual(second.state.partitions.get(UPDATE_PARTITION).requests.map((request) => request.url), [MANIFEST_URL]);
+});
+
+test('mises à jour : pendant un auto-test, aucune recherche n’est lancée d’elle-même ; le dossier des téléchargements lui est indiqué', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const calls = [];
+  const fake = await launch({
+    variant: 'installed',
+    argv: ['--self-test=resultats'],
+    runSelfTest: (win, options) => {
+      calls.push(options);
+      return new Promise(() => {});
+    },
+  });
+  fake.window.webContents.emit('did-finish-load');
+  t.mock.timers.tick(120_000);
+  await settle();
+  assert.equal(fake.state.partitions.size, 0);
+  assert.equal(calls[0].updateDir, path.join(fake.tempDir, 'Evolve-mise-a-jour'));
+});
+
+test('mises à jour : l’adresse d’essai n’est admise que si elle désigne cette machine', async () => {
+  // Un serveur de la machine elle-même : il tient lieu de page de publication.
+  const local = await launch({ variant: 'installed', argv: ['--update-feed=http://127.0.0.1:8123/essai'] });
+  local.state.respond = (url) => serverReply(url, 'introuvable', { status: 404 });
+  const api = loadPreload(local, local.window.webContents);
+  assert.equal((await api.services.call('updates', 'state')).value.page, 'http://127.0.0.1:8123/essai');
+  assert.equal((await api.services.call('updates', 'check')).value.status, 'up-to-date');
+  const session = local.state.partitions.get(UPDATE_PARTITION);
+  assert.deepEqual(session.requests.map((request) => request.url), ['http://127.0.0.1:8123/essai/evolve-update.json']);
+  // À l'essai, la session n'admet que la machine elle-même : aucune requête ne part vers le réseau, pas même vers GitHub.
+  for (const [url, expected] of [['http://127.0.0.1:8123/essai/Evolve-Setup-9.9.9.exe', false], [MANIFEST_URL, true], ['http://192.168.1.20:8123/x', true]]) {
+    let cancel = null;
+    session.requestFilter({ url }, (answer) => (cancel = answer.cancel));
+    assert.equal(cancel, expected, url);
+  }
+
+  // Toute autre adresse : aucun moteur — ni requête vers cette adresse, ni repli vers la page réelle.
+  for (const address of ['https://exemple.invalid/versions', 'http://192.168.1.20:8123', 'http://127.0.0.1.exemple.invalid']) {
+    const warnings = [];
+    const warn = console.warn;
+    console.warn = (message) => warnings.push(message);
+    let refused;
+    try {
+      refused = await launch({ variant: 'installed', argv: [`--update-feed=${address}`] });
+    } finally {
+      console.warn = warn;
+    }
+    const other = loadPreload(refused, refused.window.webContents);
+    assert.equal((await other.services.call('updates', 'state')).value.supported, false, address);
+    assert.equal((await other.services.call('updates', 'check')).code, 'unsupported');
+    assert.equal(refused.state.partitions.size, 0);
+    assert.ok(warnings.some((message) => /Adresse d'essai des mises à jour refusée/.test(message)), address);
+  }
+});
+
+test('mises à jour : au lancement, les installateurs devenus inutiles sont retirés du dossier temporaire', async () => {
+  // Hors version installée, le dossier n'est pas touché : il n'appartient qu'à elle.
+  const other = mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
+  mkdirSync(path.join(other, 'Evolve-mise-a-jour'));
+  writeFileSync(path.join(other, 'Evolve-mise-a-jour', 'Evolve-Setup-9.8.0.exe'), 'x');
+  await launch({ tempDir: other });
+  assert.deepEqual(readdirSync(path.join(other, 'Evolve-mise-a-jour')), ['Evolve-Setup-9.8.0.exe']);
+
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'evolve-main-'));
+  const dir = path.join(tempDir, 'Evolve-mise-a-jour');
+  mkdirSync(dir);
+  // La version en cours du faux Electron est 9.8.7 : son installateur ne sert plus ; celui de 9.9.0 attend encore.
+  for (const name of ['Evolve-Setup-9.8.7.exe', 'Evolve-Setup-9.8.0.exe', 'Evolve-Setup-9.9.0.exe', 'reste.tmp']) writeFileSync(path.join(dir, name), 'x');
+  await launch({ variant: 'installed', tempDir });
+  assert.deepEqual(readdirSync(dir), ['Evolve-Setup-9.9.0.exe']);
+});
+
+test(
+  'mises à jour : de la recherche à l’installation — téléchargement vérifié, confirmation exigée, puis Evolve se ferme',
+  { skip: process.platform === 'win32' ? 'lancement d’un faux installateur écrit en script : sous Windows, la compilation automatique lance le véritable installateur' : false },
+  async () => {
+    const fake = await launch({ variant: 'installed' });
+    const { state, window } = fake;
+    // Le « fichier publié » est un script qui note les arguments reçus : il sera réellement lancé.
+    const out = path.join(fake.tempDir, 'arguments-recus.txt');
+    const setup = Buffer.concat([Buffer.from(`#!/bin/sh\nprintf '%s\\n' "$@" > '${out}'\n# `), Buffer.alloc(1024 * 1024, 'x')]);
+    const manifest = publishedUpdate('9.9.0', setup);
+    const requests = [];
+    state.respond = (url) => {
+      requests.push(url);
+      return url.endsWith('.json') ? serverReply(url, JSON.stringify(manifest)) : serverReply(url, setup);
+    };
+    const api = loadPreload(fake, window.webContents);
+
+    assert.equal((await api.services.call('updates', 'check')).value.status, 'available');
+    // Rien n'est prêt : l'installation est refusée.
+    assert.equal((await api.services.call('updates', 'install', { confirmed: true })).code, 'nothing-to-install');
+
+    assert.equal((await api.services.call('updates', 'download')).value.status, 'downloading');
+    for (let turn = 0; turn < 200 && (await api.services.call('updates', 'state')).value.status === 'downloading'; turn += 1) await settle();
+    assert.equal((await api.services.call('updates', 'state')).value.status, 'ready');
+    // L'installateur vient de l'adresse déduite du numéro de version, et se trouve dans le dossier temporaire.
+    assert.deepEqual(requests, [MANIFEST_URL, 'https://github.com/leoblanchart92-hub/Evolve/releases/download/v9.9.0/Evolve-Setup-9.9.0.exe']);
+    const file = path.join(fake.tempDir, 'Evolve-mise-a-jour', 'Evolve-Setup-9.9.0.exe');
+    assert.ok(readFileSync(file).equals(setup));
+    assert.ok(updateStatuses(window).includes('downloading') && updateStatuses(window).at(-1) === 'ready');
+
+    // Sans confirmation : refus, Evolve reste ouvert.
+    assert.equal((await api.services.call('updates', 'install')).code, 'confirmation-required');
+    assert.equal((await api.services.call('updates', 'install', { confirmed: false })).code, 'confirmation-required');
+    assert.equal(state.quitCalls, 0);
+    assert.equal(existsSync(out), false);
+
+    // Confirmé : l'installateur est lancé avec les arguments d'une mise à jour, puis Evolve se ferme.
+    chmodSync(file, 0o755);
+    assert.deepEqual(await api.services.call('updates', 'install', { confirmed: true }), { ok: true, value: true });
+    assert.equal(state.quitCalls, 1);
+    for (let attempt = 0; attempt < 100 && !existsSync(out); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(readFileSync(out, 'utf8'), '--updated\n/S\n--force-run\n');
+    assert.equal(updateStatuses(window).at(-1), 'installing');
+  },
+);
+
+test('mises à jour : rouvert par l’installateur (--updated), Evolve le signale à l’interface', async () => {
+  const fake = await launch({ variant: 'installed', argv: ['--updated'] });
+  const api = loadPreload(fake, fake.window.webContents);
+  assert.equal((await api.services.call('updates', 'state')).value.updated, true);
+  const plain = await launch({ variant: 'installed' });
+  assert.equal((await loadPreload(plain, plain.window.webContents).services.call('updates', 'state')).value.updated, false);
 });
 
 // ---------------------------------------------------------------------------------

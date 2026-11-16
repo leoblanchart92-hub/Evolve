@@ -134,6 +134,13 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     sessionListeners: new Map(),
     /** Filtre des requêtes installé par session.webRequest.onBeforeRequest(). */
     requestFilter: undefined,
+    /**
+     * Sessions distinctes de celle de l'interface (session.fromPartition) : nom → { options, permissionHandler,
+     * requests }. `requests` : requêtes émises par `fetch`, dans l'ordre.
+     */
+    partitions: new Map(),
+    /** Réponse des requêtes émises par une session distincte : `(adresse, options) => réponse`. */
+    respond: null,
     /** Boîtes d'erreur affichées : [titre, message]. */
     errorBoxes: [],
     /** Objets exposés à la page par le script de préchargement. */
@@ -376,6 +383,56 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
             state.requestFilterUrls = args.length > 1 ? args[0] : null;
           },
         },
+      },
+      /**
+       * Session distincte de celle de l'interface. Seules les fonctions dont Evolve se sert existent : le refus des
+       * autorisations, le filtre des requêtes, l'écoute des téléchargements, et la requête réseau — dont la réponse
+       * est fournie par le test (`state.respond`).
+       *
+       * Comme le moteur d'Electron : le filtre est consulté avant chaque requête, puis pour chaque redirection (une
+       * réponse `{ redirect: adresse }` du test) ; une adresse refusée fait échouer la requête ; et la réponse
+       * n'indique pas d'où elle vient (`url` vide).
+       */
+      fromPartition(name, options) {
+        if (state.partitions.has(name)) return state.partitions.get(name).session;
+        const record = { options, permissionHandler: undefined, requestFilter: undefined, listeners: new Map(), requests: [], session: null };
+        const admitted = (url) =>
+          new Promise((resolve) => {
+            if (typeof record.requestFilter !== 'function') resolve(true);
+            else record.requestFilter({ url }, (answer) => resolve(answer?.cancel !== true));
+          });
+        record.session = {
+          setPermissionRequestHandler(handler) {
+            record.permissionHandler = handler;
+          },
+          on(event, listener) {
+            if (record.listeners.has(event)) throw new Error(`faux electron : événement de session déjà écouté « ${event} »`);
+            record.listeners.set(event, listener);
+          },
+          webRequest: {
+            onBeforeRequest(...args) {
+              if (record.requestFilter) throw new Error('faux electron : filtre des requêtes déjà installé');
+              record.requestFilter = args.at(-1);
+            },
+          },
+          async fetch(url, init) {
+            if (typeof state.respond !== 'function') throw new Error('faux electron : aucune réponse prévue pour cette requête');
+            let target = String(url);
+            for (let hop = 0; hop < 10; hop += 1) {
+              record.requests.push({ url: target, init });
+              if (!(await admitted(target))) throw new Error('net::ERR_BLOCKED_BY_CLIENT');
+              const reply = await state.respond(target, init);
+              if (typeof reply?.redirect !== 'string') {
+                // Electron construit sa réponse sans adresse.
+                return Object.assign(reply, { url: '' });
+              }
+              target = reply.redirect;
+            }
+            throw new Error('net::ERR_TOO_MANY_REDIRECTS');
+          },
+        };
+        state.partitions.set(name, record);
+        return record.session;
       },
     },
     /**

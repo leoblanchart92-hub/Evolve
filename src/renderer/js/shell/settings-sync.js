@@ -26,6 +26,7 @@ export const PERSISTED = Object.freeze({
   brightness: 'quick.brightness',
   volume: 'quick.volume',
   muted: 'quick.muted',
+  updatesAutomatic: 'updates.automatic',
   // Emplacement de la fenêtre de l'explorateur (voir window-placement.js).
   explorerWindowX: 'explorerWindow.x',
   explorerWindowY: 'explorerWindow.y',

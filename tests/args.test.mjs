@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { parseArgs, SELF_TEST_FLAG, STATUS_FILE_FLAG, SETTINGS_DIR_FLAG, SELF_TEST_SCENARIO_FLAG } = require('../src/main/args.js');
+const { parseArgs, SELF_TEST_FLAG, STATUS_FILE_FLAG, SETTINGS_DIR_FLAG, SELF_TEST_SCENARIO_FLAG, UPDATED_FLAG, UPDATE_FEED_FLAG } = require('../src/main/args.js');
 
 const EXE = 'C:\\Temp\\Evolve.exe';
 
@@ -17,6 +17,8 @@ const DEFAULTS = Object.freeze({
   selfTestScenario: null,
   statusFile: null,
   settingsDir: null,
+  updated: false,
+  updateFeed: null,
 });
 
 test('sans option : plein écran, pas d’auto-test', () => {
@@ -101,4 +103,21 @@ test('--self-test-scenario=NOM : scénario de l’auto-test, sans le déclencher
   // Seul, il ne lance pas d'auto-test.
   assert.deepEqual(parseArgs([EXE, '--self-test-scenario=settings-read']), { ...DEFAULTS, selfTestScenario: 'settings-read' });
   assert.equal(parseArgs([EXE, '--self-test', '--self-test-scenario=']).selfTestScenario, null);
+});
+
+test('--updated : Evolve vient d’être rouvert par l’installateur, après une mise à jour', () => {
+  assert.equal(UPDATED_FLAG, '--updated');
+  assert.deepEqual(parseArgs([EXE, '--updated']), { ...DEFAULTS, updated: true });
+  // Le mot exact seulement.
+  assert.equal(parseArgs([EXE, '--updated=non']).updated, false);
+  assert.equal(parseArgs([EXE, '--updatedness']).updated, false);
+});
+
+test('--update-feed=ADRESSE : adresse d’essai de la mise à jour, transmise telle quelle (elle est contrôlée ailleurs)', () => {
+  assert.equal(UPDATE_FEED_FLAG, '--update-feed');
+  assert.equal(parseArgs([EXE, '--update-feed=http://127.0.0.1:8123/essai']).updateFeed, 'http://127.0.0.1:8123/essai');
+  assert.equal(parseArgs([EXE, '--update-feed=']).updateFeed, null);
+  assert.equal(parseArgs([EXE, '--update-feed']).updateFeed, null);
+  // Sans effet sur les autres options.
+  assert.deepEqual(parseArgs([EXE, '--update-feed=http://127.0.0.1:1', '--self-test=out']), { ...DEFAULTS, selfTest: true, selfTestDir: 'out', updateFeed: 'http://127.0.0.1:1' });
 });

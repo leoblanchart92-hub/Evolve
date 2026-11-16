@@ -45,7 +45,25 @@ test('la couche de services ne dépend ni d’Electron, ni de l’interface, ni 
 
 test('la couche de services se charge avec Node seul', async () => {
   const services = createServices();
-  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'file-operations']);
+  assert.deepEqual(Object.keys(services.describe()), ['settings', 'files', 'updates', 'file-operations']);
+  // Sans hôte pour fournir un moteur, aucune mise à jour n'est possible : rien n'est recherché.
+  assert.deepEqual(services.describe().updates, {
+    state: 'unavailable',
+    variant: 'development',
+    supported: false,
+    current: null,
+    status: 'idle',
+    latest: null,
+    available: null,
+    ready: false,
+    automatic: true,
+    checkedAt: null,
+    error: null,
+    page: null,
+    methods: ['state', 'check', 'download', 'cancel', 'install'],
+    events: ['changed'],
+  });
+  assert.deepEqual(await services.hub.call('updates', 'check'), { ok: false, code: 'unsupported', message: "Les mises à jour ne concernent que la version installée d'Evolve." });
   // Le service de fichiers ne sait que consulter : deux méthodes, aucun événement.
   assert.deepEqual(services.describe().files, { state: 'available', access: 'read-only', places: null, drives: null, methods: ['places', 'list'], events: [] });
   // Les opérations sur les fichiers ne sont pas un service : six fonctions distinctes. Sans hôte pour fournir la
@@ -103,7 +121,7 @@ test('opérations sur les fichiers : hors du point d’accès, une fonction par 
     assert.deepEqual(services.describe()['file-operations'].open, true);
     assert.deepEqual(services.describe()['file-operations'].noReplaceMove, true);
     // Le point d'accès aux services ne les connaît pas, sous aucun nom.
-    assert.deepEqual(Object.keys(services.hub.describe()), ['settings', 'files']);
+    assert.deepEqual(Object.keys(services.hub.describe()), ['settings', 'files', 'updates']);
     for (const method of ['createFolder', 'rename', 'copy', 'move', 'trash', 'open', 'cancel']) {
       assert.equal((await services.hub.call('files', method, [documents, 'x'])).code, 'unknown-method', method);
       assert.equal((await services.hub.call('file-operations', method, [documents, 'x'])).code, 'unknown-service', method);

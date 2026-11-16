@@ -25,7 +25,11 @@
  *     par l'application associée, et le déplacement sans remplacement, que
  *     Windows refuse de lui-même si le nom d'arrivée est déjà pris (voir
  *     atomic-move.js). La fenêtre n'accède jamais au système de fichiers :
- *     elle demande chaque opération par un canal qui lui est propre.
+ *     elle demande chaque opération par un canal qui lui est propre ;
+ *   - seule la version installée (Evolve-Setup) se met à jour : elle
+ *     interroge la page où Evolve est publié, et ne télécharge ni n'installe
+ *     rien sans demande (voir services/updates.js et update-engine.js).
+ *     L'exécutable portable, lui, ne se connecte jamais au réseau.
  *
  * Options de la ligne de commande : voir args.js.
  */
@@ -37,8 +41,11 @@ const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session, shell } = re
 const { parseArgs } = require('./args');
 const { loadAtomicMove } = require('./atomic-move');
 const { personalFolders } = require('./personal-folders');
+const { createUpdateEngine } = require('./update-engine');
+const { detectVariant } = require('./variant');
 const { createServices } = require('../services');
 const { settingsDir, settingsFile } = require('../services/platform');
+const { compareVersions, localFeed, productionFeed } = require('../services/updates');
 
 const options = parseArgs(process.argv);
 
@@ -51,6 +58,8 @@ const NETWORK_URL = /^(?:https?|wss?|ftp):/i;
 const devToolsAllowed = options.devtools || !app.isPackaged;
 /** Origine des demandes venues de la fenêtre (voir registerIpc). */
 const WINDOW_ORIGIN = 'window';
+/** Délai entre l'affichage de l'interface et la recherche d'une mise à jour faite au lancement. */
+const UPDATE_CHECK_DELAY_MS = 8000;
 
 /** @type {BrowserWindow|null} */
 let mainWindow = null;
@@ -187,6 +196,53 @@ try {
   console.warn(`${moveNoReplaceFailure.message} — renommer et déplacer sont désactivés.`);
 }
 
+/**
+ * Requêtes réseau du moteur des mises à jour — les seules que l'application
+ * émette. Elles passent par une session à part, distincte de celle de
+ * l'interface (où toute requête vers le réseau reste refusée), créée à la
+ * première requête. Rien n'y est conservé d'un lancement à l'autre, et toute
+ * adresse que la voie de publication n'admet pas y est refusée, à chaque
+ * étape d'une requête, redirections comprises : le moteur n'indique pas
+ * l'adresse d'où vient une réponse, c'est donc ici que la règle s'applique.
+ *
+ * @param {{ admits: (address: string) => boolean }} feed  voie de publication (voir services/updates.js)
+ * @returns {(url: string, init: object) => Promise<Response>}
+ */
+function createUpdateRequest(feed) {
+  let updateSession = null;
+  return (url, init) => {
+    if (!updateSession) {
+      updateSession = session.fromPartition('evolve-mises-a-jour', { cache: false });
+      updateSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+      updateSession.webRequest.onBeforeRequest((details, callback) => {
+        callback({ cancel: feed.admits(details.url) !== true });
+      });
+      updateSession.on('will-download', (event) => event.preventDefault());
+    }
+    return updateSession.fetch(url, init);
+  };
+}
+
+/** Moteur des mises à jour, ou `null` : seule la version installée en a un. */
+let updateEngine = null;
+
+/**
+ * Ce que l'hôte fournit au service des mises à jour. Seule la version
+ * installée reçoit un moteur ; les autres ne peuvent rien rechercher.
+ */
+function updateOptions() {
+  const variant = detectVariant({ packaged: app.isPackaged });
+  if (variant !== 'installed') return { variant };
+  // Vérification automatique de la mise à jour : un serveur de cette machine tient lieu de page de publication.
+  const feed = options.updateFeed ? localFeed(options.updateFeed) : productionFeed();
+  if (!feed) {
+    console.warn("Adresse d'essai des mises à jour refusée : seule une adresse de cette machine (127.0.0.1) est admise.");
+    return { variant };
+  }
+  updateEngine = createUpdateEngine({ feed, request: createUpdateRequest(feed), tempDir: app.getPath('temp'), log: (message) => console.warn(message) });
+  return { variant, engine: updateEngine, page: feed.page, updated: options.updated, quit: () => app.quit() };
+}
+
 if (options.selfTest) {
   process.on('uncaughtException', abortSelfTest);
   process.on('unhandledRejection', abortSelfTest);
@@ -227,6 +283,8 @@ if (!hasLock) {
     // Opérations sur les fichiers : la Corbeille, l'ouverture et le déplacement sans remplacement
     // sont confiés à Windows.
     operations: { trash: sendToRecycleBin, openPath: openWithAssociatedApp, moveNoReplace },
+    // Mises à jour : version installée seulement.
+    updates: updateOptions(),
     log: (message) => console.warn(message),
   });
   // Événements des services : transmis à la fenêtre, sauf ceux qui découlent
@@ -419,6 +477,22 @@ async function start() {
   registerIpc();
   const win = createWindow();
 
+  // Version installée : les installateurs devenus inutiles sont retirés du dossier temporaire, puis — hors
+  // auto-test, et si le réglage le demande — une version plus récente est recherchée, une fois l'interface affichée.
+  if (updateEngine) {
+    try {
+      updateEngine.cleanup({ current: app.getVersion(), newer: (version, current) => compareVersions(version, current) > 0 });
+    } catch (error) {
+      console.warn(`Mises à jour : ménage impossible (${error?.message ?? error}).`);
+    }
+    if (!options.selfTest) {
+      win.webContents.once('did-finish-load', () => {
+        const timer = setTimeout(() => services.updates.checkAtLaunch(), UPDATE_CHECK_DELAY_MS);
+        win.once('closed', () => clearTimeout(timer));
+      });
+    }
+  }
+
   if (options.selfTest) {
     // Sans déplacement sans remplacement, l'auto-test n'a pas lieu : l'échec et sa cause sont consignés.
     if (moveNoReplaceFailure) return abortSelfTest(moveNoReplaceFailure);
@@ -430,6 +504,8 @@ async function start() {
       describeServices: () => services.describe(),
       // La fonction même que les opérations emploient : l'auto-test l'éprouve sur le disque.
       moveNoReplace,
+      // Dossier où le moteur télécharge une mise à jour : l'auto-test y constate ce qui a été reçu.
+      updateDir: updateEngine ? updateEngine.dir : null,
     });
     exitNow(exitCode === 0 ? 0 : 1);
   } else if (options.statusFile) {
@@ -457,9 +533,12 @@ app.on('window-all-closed', () => {
   if (!options.selfTest) app.quit();
 });
 
-// Fermeture normale : un réglage modifié à l'instant est enregistré avant l'arrêt.
+// Fermeture normale : un réglage modifié à l'instant est enregistré avant l'arrêt ; un téléchargement en
+// cours est interrompu.
 app.on('will-quit', () => {
-  if (services) services.flushSync();
+  if (!services) return;
+  services.updates.dispose();
+  services.flushSync();
 });
 
 // Aucune fenêtre secondaire pour tout contenu créé par la suite.
