@@ -6,7 +6,7 @@
 
 export const PRODUCT = Object.freeze({
   name: 'Evolve',
-  version: '0.5.0',
+  version: '0.6.0',
   stage: "Aperçu de l'interface",
   userName: 'Utilisateur',
 });

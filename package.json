@@ -1,7 +1,7 @@
 {
   "name": "evolve",
   "productName": "Evolve",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Evolve — environnement de bureau futuriste pour Windows 10/11 (aperçu de l'interface graphique).",
   "private": true,
   "author": "leoblanchart92-hub",
@@ -21,13 +21,14 @@
     "test": "node --test --test-reporter=spec",
     "icons": "node scripts/build-icons.mjs",
     "build:native": "node-gyp rebuild --directory=native",
-    "build:win": "electron-builder --win portable --x64 --publish never",
+    "build:win": "electron-builder --win nsis portable --x64 --publish never",
     "check:dev": "node scripts/check-exe.mjs electron -- .",
     "check:exe": "node scripts/check-exe.mjs",
     "check:launch": "node scripts/check-launch.mjs",
     "check:settings": "node scripts/check-settings.mjs",
     "check:documents": "node scripts/check-documents.mjs",
     "check:manifest": "node scripts/check-manifest.mjs",
+    "check:setup": "node scripts/check-setup.mjs",
     "check:native": "node scripts/check-native.mjs"
   },
   "devDependencies": {
@@ -63,6 +64,12 @@
     "win": {
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "portable",
           "arch": [
             "x64"
@@ -71,6 +78,24 @@
       ],
       "icon": "packaging/icon.ico",
       "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "artifactName": "Evolve-Setup-${version}.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "packElevateHelper": false,
+      "allowToChangeInstallationDirectory": false,
+      "createStartMenuShortcut": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Evolve",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": false,
+      "installerLanguages": [
+        "fr_FR"
+      ],
+      "include": "packaging/installer.nsh"
     },
     "portable": {
       "artifactName": "Evolve-${version}-portable.exe",

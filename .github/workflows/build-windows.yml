@@ -1,4 +1,4 @@
-# Evolve — Fabrication de l'exécutable Windows portable.
+# Evolve — Fabrication de l'installateur et de l'exécutable portable pour Windows.
 #
 # À chaque envoi de code, une machine Windows de GitHub :
 #   1. compile le module natif qui renomme ou déplace sans jamais rien
@@ -10,22 +10,28 @@
 #      l'explorateur y mène de vraies opérations sur ses propres fichiers
 #      d'essai : créer, renommer, copier, déplacer, envoyer à la Corbeille
 #      de Windows, ouvrir ;
-#   4. fabrique le fichier .exe portable ;
-#   5. vérifie ce fichier : aucun droit administrateur demandé, module natif
-#      embarqué identique à celui qui a été éprouvé, puis démarrage réel et
-#      nouveau passage de l'auto-test ;
-#   6. lance ce fichier normalement, comme un double-clic : fenêtre en plein
-#      écran, écran comparé à l'image dessinée par l'application, fermeture
-#      normale, fichiers temporaires, rien d'écrit dans le profil ;
-#   7. lance ce fichier deux fois de suite : des réglages modifiés au premier
+#   4. fabrique l'installateur (Evolve-Setup-….exe) et le fichier .exe
+#      portable ;
+#   5. vérifie ces fichiers : aucun droit administrateur demandé, module natif
+#      embarqué identique à celui qui a été éprouvé, puis démarrage réel du
+#      .exe portable et nouveau passage de l'auto-test ;
+#   6. lance le .exe portable normalement, comme un double-clic : fenêtre en
+#      plein écran, écran comparé à l'image dessinée par l'application,
+#      fermeture normale, fichiers temporaires, rien d'écrit dans le profil ;
+#   7. le lance deux fois de suite : des réglages modifiés au premier
 #      lancement doivent être sur le disque, puis retrouvés au second ;
 #   8. met de côté le dossier Documents de la machine le temps d'un
 #      lancement : il doit être annoncé comme introuvable, jamais recréé ;
-#   9. publie le .exe, téléchargeable depuis la page de l'exécution
-#      (rubrique « Artifacts »), ainsi que les rapports et les captures
-#      d'écran des vérifications.
+#   9. installe réellement Evolve avec l'installateur, sans droits
+#      d'administrateur : inscription pour l'utilisateur seul, raccourcis,
+#      rien au démarrage de Windows ; le programme installé passe l'auto-test
+#      à son tour ; la désinstallation ne laisse ni dossier, ni raccourci,
+#      ni inscription, et conserve les réglages ;
+#  10. publie l'installateur et le .exe portable, téléchargeables depuis la
+#      page de l'exécution (rubrique « Artifacts »), ainsi que les rapports
+#      et les captures d'écran des vérifications.
 #
-# Le .exe n'est publié que si toutes les vérifications ont réussi.
+# Rien n'est publié si une seule vérification a échoué.
 #
 # Les étapes passent par scripts/ci-run.sh : en cas d'échec, la fin de leur
 # sortie est affichée en tête de la page de l'exécution. Le bilan des tests y
@@ -53,7 +59,7 @@ concurrency:
 
 jobs:
   build:
-    name: Tester et fabriquer le .exe portable
+    name: Tester et fabriquer l'installateur et le .exe portable
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -116,10 +122,10 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --require-input --out=self-test-output/application -- .
 
-      - name: Fabriquer l'exécutable portable
+      - name: Fabriquer l'installateur et l'exécutable portable
         run: bash scripts/ci-run.sh fabrication-executable npm run build:win
 
-      - name: Vérifier que le .exe ne demande aucun droit administrateur
+      - name: Vérifier que ni l'installateur ni le .exe ne demandent de droit administrateur
         run: bash scripts/ci-run.sh droits-administrateur npm run check:manifest
 
       # Le module embarqué dans l'exécutable doit être, octet pour octet, celui
@@ -158,6 +164,15 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/ci-run.sh documents-absent node scripts/check-documents.mjs --out=self-test-output/documents-absent
 
+      # L'installateur est réellement exécuté sur cette machine, où Evolve
+      # n'est pas installé : installation pour l'utilisateur seul, sans droits
+      # d'administrateur, puis auto-test complet du programme installé, puis
+      # désinstallation par la commande inscrite auprès de Windows. Le script
+      # relève lui-même ce que Windows en retient, avant et après.
+      - name: Installation, auto-test du programme installé, désinstallation
+        timeout-minutes: 15
+        run: bash scripts/ci-run.sh installation node scripts/check-setup.mjs --out=self-test-output/installation
+
       - name: Publier les rapports et les captures d'écran des vérifications
         if: always()
         uses: actions/upload-artifact@v7
@@ -169,25 +184,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Résumé de l'exécutable
+      - name: Résumé des fichiers produits
         run: |
-          exe="$(ls dist/Evolve-*-portable.exe)"
-          size="$(stat -c %s "$exe")"
-          sha="$(sha256sum "$exe" | cut -d ' ' -f 1)"
           {
-            echo "### 📦 Exécutable portable"
+            echo "### 📦 Fichiers à télécharger"
             echo ""
             echo "| Fichier | Taille | Empreinte SHA-256 |"
             echo "| --- | --- | --- |"
-            echo "| \`$(basename "$exe")\` | $((size / 1024 / 1024)) Mo | \`$sha\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for exe in dist/Evolve-Setup-*.exe dist/Evolve-*-portable.exe; do
+            size="$(stat -c %s "$exe")"
+            sha="$(sha256sum "$exe" | cut -d ' ' -f 1)"
+            echo "| \`$(basename "$exe")\` | $((size / 1024 / 1024)) Mo | \`$sha\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=Fichier produit::$(basename "$exe") — $((size / 1024 / 1024)) Mo ($size octets) — SHA-256 $sha"
+          done
+          {
             echo ""
             echo "Téléchargement : rubrique **Artifacts**, en bas de cette page."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Exécutable portable::$(basename "$exe") — $((size / 1024 / 1024)) Mo — SHA-256 $sha"
 
-      # Publié tel quel (sans archive .zip) : le fichier téléchargé est
-      # directement l'exécutable.
-      - name: Publier l'exécutable
+      # Publiés tels quels (sans archive .zip) : chaque fichier téléchargé est
+      # directement l'installateur ou l'exécutable.
+      - name: Publier l'installateur
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/Evolve-Setup-*.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publier l'exécutable portable
         uses: actions/upload-artifact@v7
         with:
           path: dist/Evolve-*-portable.exe

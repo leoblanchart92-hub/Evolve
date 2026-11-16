@@ -643,7 +643,9 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
 test('configuration de la compilation Windows', () => {
   const { build } = pkg;
   assert.equal(build.productName, 'Evolve');
-  assert.deepEqual(build.win.target, [{ target: 'portable', arch: ['x64'] }]);
+  // Deux fichiers sont fabriqués : l'installateur, et l'exécutable portable.
+  assert.deepEqual(build.win.target, [{ target: 'nsis', arch: ['x64'] }, { target: 'portable', arch: ['x64'] }]);
+  assert.equal(pkg.scripts['build:win'], 'electron-builder --win nsis portable --x64 --publish never');
   // Aucun droit administrateur : ni pour l'application, ni pour son lanceur.
   assert.equal(build.win.requestedExecutionLevel, 'asInvoker');
   assert.equal(build.portable.requestExecutionLevel, 'user');
@@ -660,6 +662,63 @@ test('configuration de la compilation Windows', () => {
   assert.equal(build.portable.useZip, true);
   assert.ok(existsSync(fromRoot(build.win.icon)));
   assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
+});
+
+test('installateur : pour l’utilisateur seul, sans droits d’administrateur, sans copie de lui-même', async () => {
+  const { nsis } = pkg.build;
+  assert.equal(nsis.artifactName, 'Evolve-Setup-${version}.exe');
+  // Jamais pour toute la machine, jamais d'élévation de droits, aucun outil d'élévation embarqué.
+  assert.equal(nsis.perMachine, false);
+  assert.equal(nsis.allowElevation, false);
+  assert.equal(nsis.packElevateHelper, false);
+  // Un installateur à pages : la première dit ce qu'il va faire, avant qu'il ne fasse rien. Le dossier n'est pas
+  // proposé au choix : c'est celui du profil, le seul qui n'exige aucun droit.
+  assert.equal(nsis.oneClick, false);
+  assert.equal(nsis.allowToChangeInstallationDirectory, false);
+  assert.equal(nsis.createStartMenuShortcut, true);
+  assert.equal(nsis.createDesktopShortcut, true);
+  assert.equal(nsis.shortcutName, 'Evolve');
+  // Désinstaller ne supprime pas les réglages de l'utilisateur.
+  assert.equal(nsis.deleteAppDataOnUninstall, false);
+  // Pas de paquet « différentiel » : Evolve ne s'en sert pas (voir packaging/installer.nsh).
+  assert.equal(nsis.differentialPackage, false);
+  assert.deepEqual(nsis.installerLanguages, ['fr_FR']);
+  assert.deepEqual(Object.keys(nsis).sort(), [
+    'allowElevation',
+    'allowToChangeInstallationDirectory',
+    'artifactName',
+    'createDesktopShortcut',
+    'createStartMenuShortcut',
+    'deleteAppDataOnUninstall',
+    'differentialPackage',
+    'include',
+    'installerLanguages',
+    'oneClick',
+    'packElevateHelper',
+    'perMachine',
+    'runAfterFinish',
+    'shortcutName',
+  ]);
+
+  // Compléments de l'installateur : l'installation est forcée pour l'utilisateur en cours.
+  assert.equal(nsis.include, 'packaging/installer.nsh');
+  const include = readText(nsis.include)
+    .split('\n')
+    .filter((line) => !line.trim().startsWith(';'))
+    .join('\n');
+  assert.match(include, /!macro customInstallMode\s+StrCpy \$isForceCurrentInstall "1"\s+!macroend/);
+  assert.doesNotMatch(include, /isForceMachineInstall|UAC_|RequestExecutionLevel|SetShellVarContext|HKLM|HKEY_LOCAL_MACHINE|allusers/i);
+  // La copie que l'installateur garderait de lui-même est retirée — elle seule, et son dossier s'il est vide.
+  const { INSTALLER_COPY_DIR } = await import('../scripts/setup-tools.mjs');
+  assert.equal(INSTALLER_COPY_DIR, `${pkg.name}-updater`, 'nom donné par electron-builder : nom du paquet, suivi de « -updater »');
+  assert.match(include, new RegExp(`!define EVOLVE_INSTALLER_COPY_DIR "${INSTALLER_COPY_DIR}"`));
+  assert.match(include, /!define EVOLVE_INSTALLER_COPY "\$\{EVOLVE_INSTALLER_COPY_DIR\}\\installer\.exe"/);
+  assert.match(include, /Delete "\$LOCALAPPDATA\\\$\{EVOLVE_INSTALLER_COPY\}"\s+RMDir "\$LOCALAPPDATA\\\$\{EVOLVE_INSTALLER_COPY_DIR\}"/);
+  // Si electron-builder changeait cet emplacement, la fabrication échouerait au lieu de laisser la copie.
+  assert.match(include, /!if "\$\{APP_INSTALLER_STORE_FILE\}" != "\$\{EVOLVE_INSTALLER_COPY\}"\s+!error /);
+  // Rien d'autre n'est supprimé, et jamais un dossier avec son contenu.
+  assert.equal([...include.matchAll(/^\s*(?:Delete|RMDir)\b/gim)].length, 2);
+  assert.doesNotMatch(include, /RMDir\s+\/r|\bExec|nsExec|WriteReg|DeleteReg/i);
 });
 
 test("l'icône de l'exécutable est un fichier ICO complet (16 à 256 pixels)", () => {
@@ -755,6 +814,9 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
     'check-launch.mjs --out=self-test-output/lancement',
     'check-settings.mjs --out=self-test-output/reglages',
     'check-documents.mjs --out=self-test-output/documents-absent',
+    // L'installateur est réellement exécuté : installation, auto-test du programme installé, désinstallation.
+    'check-setup.mjs --out=self-test-output/installation',
+    'path: dist/Evolve-Setup-*.exe',
     'path: dist/Evolve-*-portable.exe',
   ].map((needle) => {
     const index = workflowCode.indexOf(needle);
@@ -770,7 +832,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const lenient = steps.filter((step) => step.includes('continue-on-error: true'));
   assert.equal(lenient.length, 1);
   assert.match(lenient[0], /^Régler l'écran/);
-  assert.ok(!/check-exe|check-launch|check-settings|check-documents|check-native|build:win|build:native|check:manifest|npm test/.test(lenient[0]));
+  assert.ok(!/check-exe|check-launch|check-settings|check-documents|check-setup|check-native|build:win|build:native|check:manifest|npm test/.test(lenient[0]));
 
   // Les deux auto-tests complets exigent les gestes réels (souris et clavier injectés) : sans eux, les contrôles du
   // bureau qui en dépendent ne seraient pas menés, et la compilation réussirait sans les avoir faits. L'option est
@@ -793,13 +855,25 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   assert.ok(!/--folder|electron|continue-on-error|\bif:/.test(documentsStep), documentsStep);
   assert.match(documentsStep, /timeout-minutes: \d+/);
 
-  // La publication du .exe n'a pas de condition : elle n'a lieu que si tout a réussi.
-  const publish = steps.find((step) => step.includes('path: dist/Evolve-*-portable.exe'));
-  assert.ok(!/^\s+if:/m.test(publish), 'publication sans condition particulière');
-  assert.match(publish, /archive: false/, 'fichier .exe téléchargé tel quel');
-  assert.match(publish, /if-no-files-found: error/);
-  // Le nom du fichier produit correspond à celui que la compilation publie.
+  // Le programme installé passe l'auto-test complet à son tour, gestes réels exigés : la vérification de
+  // l'installateur le lance elle-même, sur le fichier que l'installation a posé.
+  const setupStep = steps.find((step) => step.includes('check-setup.mjs'));
+  assert.match(setupStep, /^Installation, auto-test du programme installé, désinstallation\n/);
+  assert.ok(!/--skip-self-test|continue-on-error|\bif:/.test(setupStep), setupStep);
+  assert.match(setupStep, /timeout-minutes: \d+/);
+  const setupScript = stripComments(readText('scripts/check-setup.mjs'));
+  assert.match(setupScript, /'check-exe\.mjs'\), path\.join\(installDir, APP_EXE\), '--require-input'/);
+
+  // La publication des deux fichiers n'a pas de condition : elle n'a lieu que si tout a réussi.
+  for (const file of ['dist/Evolve-Setup-*.exe', 'dist/Evolve-*-portable.exe']) {
+    const publish = steps.find((step) => step.includes(`path: ${file}`));
+    assert.ok(!/^\s+if:/m.test(publish), 'publication sans condition particulière');
+    assert.match(publish, /archive: false/, 'fichier .exe téléchargé tel quel');
+    assert.match(publish, /if-no-files-found: error/);
+  }
+  // Le nom des fichiers produits correspond à celui que la compilation publie.
   assert.match(pkg.build.portable.artifactName, /^Evolve-\$\{version\}-portable\.exe$/);
+  assert.match(pkg.build.nsis.artifactName, /^Evolve-Setup-\$\{version\}\.exe$/);
 });
 
 test('les fichiers de script gardent des fins de ligne Unix (exécutés par bash sous Windows)', () => {

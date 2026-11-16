@@ -11,8 +11,9 @@
  * Utilisation :
  *   node scripts/check-manifest.mjs [FICHIER.exe …]
  *
- * Par défaut : l'exécutable portable et l'application qu'il contient
- * (dist/Evolve-<version>-portable.exe et dist/win-unpacked/Evolve.exe).
+ * Par défaut : l'installateur, l'exécutable portable et l'application qu'ils
+ * contiennent (dist/Evolve-Setup-<version>.exe, dist/Evolve-<version>-portable.exe
+ * et dist/win-unpacked/Evolve.exe).
  */
 
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
@@ -60,7 +61,7 @@ function main(argv) {
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const files = argv.length
     ? argv.map((file) => path.resolve(file))
-    : [path.join(root, 'dist', `Evolve-${pkg.version}-portable.exe`), path.join(root, 'dist', 'win-unpacked', 'Evolve.exe')];
+    : [path.join(root, 'dist', `Evolve-Setup-${pkg.version}.exe`), path.join(root, 'dist', `Evolve-${pkg.version}-portable.exe`), path.join(root, 'dist', 'win-unpacked', 'Evolve.exe')];
 
   let failed = false;
   const rows = [];
