@@ -65,7 +65,7 @@
           "target": "nsis",
           "arch": [
             "x64"
-          }
+          ]
         }
       ],
       "icon": "packaging/icon.ico",
