@@ -26,6 +26,7 @@ const path = require('node:path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
 
 const { parseArgs } = require('./args');
+const { checkForUpdate } = require('./update');
 const { personalFolders } = require('./personal-folders');
 const { createServices } = require('../services');
 const { settingsDir, settingsFile } = require('../services/platform');
@@ -311,6 +312,12 @@ function registerIpc() {
   });
 
   ipcMain.handle('evolve:is-fullscreen', (event) => (fromMainWindow(event) ? mainWindow.isFullScreen() : false));
+
+  ipcMain.handle('evolve:update-check', async (event) => {
+    if (!fromMainWindow(event)) return { ok: false, message: 'Appel refusé.' };
+    try { return await checkForUpdate(app.getVersion()); }
+    catch (error) { return { ok: false, message: error?.message || 'Vérification impossible.' }; }
+  });
 
   // Services d'Evolve : la page désigne une méthode par son nom ; le point
   // d'accès contrôle la demande et répond toujours sous la forme { ok, … }.
