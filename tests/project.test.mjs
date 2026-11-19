@@ -464,7 +464,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
 
   // Méthodes appelées par l'interface sur `window.evolve`.
   const used = new Set([...platform.matchAll(/\bhost\.([A-Za-z]+)/g)].map((match) => match[1]));
-  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen']);
+  assert.deepEqual([...used].sort(), ['isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen', 'updates']);
   for (const name of used) assert.match(preload, new RegExp(`\\b${name}:`), `preload.js n'expose pas ${name}`);
   assert.match(preload, /exposeInMainWorld\('evolve'/);
   assert.match(platform, /globalThis\.evolve/);
@@ -493,6 +493,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
     'evolve:service-call',
     'evolve:service-event',
     'evolve:toggle-fullscreen',
+    'evolve:update-check',
   ]);
   // Aucun service n'ouvre son propre canal : tout passe par le point d'accès.
   for (const file of desktopFiles) {
