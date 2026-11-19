@@ -483,7 +483,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
     if (file.endsWith(path.join('apps', 'browser.js'))) {
       const browserCode = stripComments(readFileSync(file, 'utf8'));
       assert.match(browserCode, /globalThis\.evolve\?\.openExternal/);
-      assert.doesNotMatch(browserCode, /globalThis\.evolve\.(?!\?\.openExternal)/);
+      assert.doesNotMatch(browserCode, /globalThis\.evolve(?!\?\.openExternal)/);
       continue;
     }
     assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /(?:globalThis|window|self)\.evolve\b/, relative(file));
