@@ -44,7 +44,7 @@ export function mountBrowser(win) {
   const submit = (input) => {
     const url = destination(input.value);
     if (!url) { input.focus(); return; }
-    if (globalThis.evolve?.openExternal) globalThis.evolve.openExternal(url);
+    if (globalThis.evolve?.openExternal) globalThis.evolve?.openExternal?.(url);
   };
   address.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(address); });
   go.addEventListener('click', () => submit(address));
