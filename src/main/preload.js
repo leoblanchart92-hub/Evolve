@@ -16,7 +16,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('evolve', {
   isDesktopApp: true,
 
-  updates: { check: async () => { try { return await ipcRenderer.invoke('evolve:update-check'); } catch { return { ok:false, message:'Vérification impossible.' }; } } },\n\n  /** Ouvre un lien HTTP(S) dans le navigateur externe, après validation IPC. */\n  openExternal: async (url) => { try { return await ipcRenderer.invoke('evolve:open-external', String(url)); } catch { return false; } },
+  updates: { check: async () => { try { return await ipcRenderer.invoke('evolve:update-check'); } catch { return { ok:false, message:'Vérification impossible.' }; } } },
+
+  /** Ouvre un lien HTTP(S) dans le navigateur externe, après validation IPC. */
+  openExternal: async (url) => { try { return await ipcRenderer.invoke('evolve:open-external', String(url)); } catch { return false; } },
 
   /** Ferme l'application. */
   quit: () => ipcRenderer.send('evolve:quit'),
