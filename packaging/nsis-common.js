@@ -47,7 +47,7 @@ function nsisConfig({ perMachine, artifactName }) {
       createDesktopShortcut: true,
       createStartMenuShortcut: true,
       shortcutName: 'Evolve',
-      runAfterFinish: true,
+      runAfterFinish: false,
       /** Les réglages de l'utilisateur survivent à une désinstallation. */
       deleteAppDataOnUninstall: false,
       uninstallDisplayName: 'Evolve ${version}',
