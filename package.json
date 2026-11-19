@@ -20,7 +20,7 @@
     "preview": "node scripts/preview-server.mjs",
     "test": "node --test --test-reporter=spec",
     "icons": "node scripts/build-icons.mjs",
-    "build:win": "electron-builder --win portable --x64 --publish never",
+    "build:win": "electron-builder --win portable nsis --x64 --publish never",
     "check:dev": "node scripts/check-exe.mjs electron -- .",
     "check:exe": "node scripts/check-exe.mjs",
     "check:launch": "node scripts/check-launch.mjs",
@@ -60,6 +60,12 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          }
         }
       ],
       "icon": "packaging/icon.ico",
@@ -70,6 +76,16 @@
       "requestExecutionLevel": "user",
       "unpackDirName": "Evolve-portable",
       "useZip": true
+    },
+    "nsis": {
+      "artifactName": "Evolve-${version}-Setup.exe",
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Evolve"
     },
     "publish": null
   }
