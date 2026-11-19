@@ -5,9 +5,9 @@ import { ui, volumeGlyph } from '../shell/ui-state.js';
 
 const SECTIONS = [
   ['general','Général','gear-six'],
-  ['personalization','Personnalisation','paint-brush'],
+  ['personalization','Personnalisation','sparkle'],
   ['desktop','Bureau','desktop'],
-  ['quick','Paramètres rapides','sliders-horizontal'],
+  ['quick','Paramètres rapides','gear-six'],
   ['about','À propos','info'],
 ];
 function toggle(id,label,description='') {
