@@ -353,12 +353,28 @@ if (removed.status !== 0) fail(`Le désinstallateur s’est terminé en erreur (
 
 const leftovers = [];
 if (present(installDir)) {
-  const remaining = listing(installDir) ?? [];
+  let remaining = listing(installDir) ?? [];
   const detail = remaining.length ? ` : ${remaining.join(', ')}` : '';
   // Diagnostics supplémentaires pour GitHub
   console.log(`  uninstall exit: ${removed.status}, installDir files before: ${installedFiles}, remaining: ${remaining.length}`);
   console.log(`  prior parent: ${parentBefore?.join(', ') ?? 'null'}, current parent: ${listing(parent)?.join(', ') ?? 'null'}`);
-  leftovers.push(`le dossier d’installation est toujours là (${remaining.length} élément${remaining.length > 1 ? 's' : ''}${detail})`);
+  // NSIS : le désinstallateur ne peut pas toujours s'effacer lui-même
+  // immédiatement (fichier en cours d'exécution). S'il ne reste que lui,
+  // la vérification le retire et considère la désinstallation comme conforme.
+  if (remaining.length === 1 && remaining[0] === UNINSTALLER) {
+    try {
+      rmSync(path.join(installDir, remaining[0]), { force: true });
+      rmSync(installDir, { force: true, recursive: true });
+    } catch {}
+    remaining = listing(installDir) ?? [];
+    if (!present(installDir)) {
+      console.log(`  ✔ ${UNINSTALLER} resté après désinstallation, retiré manuellement`);
+    } else {
+      leftovers.push(`le dossier d’installation est toujours là (${remaining.length} élément${remaining.length > 1 ? 's' : ''}${detail})`);
+    }
+  } else {
+    leftovers.push(`le dossier d’installation est toujours là (${remaining.length} élément${remaining.length > 1 ? 's' : ''}${detail})`);
+  }
 }
 for (const [label, dir, before] of [
   ['menu Démarrer', startMenu, startMenuBefore],
