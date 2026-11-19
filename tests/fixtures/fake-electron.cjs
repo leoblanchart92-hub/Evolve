@@ -136,7 +136,8 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     /** Objets exposés à la page par le script de préchargement. */
     exposed: {},
     ipcListeners: new Map(),
-    ipcHandlers: new Map(),\n    externalUrls: [],
+    ipcHandlers: new Map(),
+    externalUrls: [],
   };
 
   let resolveReady;
