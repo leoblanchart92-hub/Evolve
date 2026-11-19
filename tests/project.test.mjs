@@ -263,7 +263,7 @@ test('les textes affichés n’utilisent que des caractères présents dans les 
 
 test('les scripts de l’application de bureau existent', () => {
   assert.equal(pkg.main, 'src/main/main.js');
-  for (const file of ['main.js', 'preload.js', 'args.js', 'personal-folders.js', 'selftest.js', 'selftest-explorer.js', 'selftest-settings.js', 'selftest-documents.js', 'status.js']) {
+  for (const file of ['main.js', 'preload.js', 'args.js', 'personal-folders.js', 'selftest.js', 'selftest-explorer.js', 'selftest-settings.js', 'selftest-documents.js', 'status.js', 'update.js']) {
     assert.ok(existsSync(fromRoot('src', 'main', file)), `src/main/${file}`);
   }
   const main = readText('src/main/main.js');
