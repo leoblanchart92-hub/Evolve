@@ -313,7 +313,14 @@ function registerIpc() {
 
   ipcMain.handle('evolve:is-fullscreen', (event) => (fromMainWindow(event) ? mainWindow.isFullScreen() : false));
 
-  ipcMain.handle('evolve:open-external', async (event, value) => {\n    if (!fromMainWindow(event) || typeof value !== 'string' || value.length > 2048) return false;\n    let target;\n    try { target = new URL(value); } catch { return false; }\n    if (!['https:', 'http:'].includes(target.protocol) || target.username || target.password) return false;\n    try { await shell.openExternal(target.href); return true; } catch { return false; }\n  });\n\n  ipcMain.handle('evolve:update-check', async (event) => {
+  ipcMain.handle('evolve:open-external', async (event, value) => {
+    if (!fromMainWindow(event) || typeof value !== 'string' || value.length > 2048) return false;
+    let target;
+    try { target = new URL(value); } catch { return false; }
+    if (!['https:', 'http:'].includes(target.protocol) || target.username || target.password) return false;
+    try { await shell.openExternal(target.href); return true; } catch { return false; }
+  });
+\n  ipcMain.handle('evolve:update-check', async (event) => {
     if (!fromMainWindow(event)) return { ok: false, message: 'Appel refusé.' };
     try { return await checkForUpdate(app.getVersion()); }
     catch (error) { return { ok: false, message: error?.message || 'Vérification impossible.' }; }
