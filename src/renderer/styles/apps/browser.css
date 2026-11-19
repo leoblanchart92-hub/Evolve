@@ -15,7 +15,7 @@
 .ev-browser__logo{width:72px;height:72px;border-radius:23px;display:grid;place-items:center;background:linear-gradient(135deg,#c7a4ff,#6f37db);font-size:36px;font-weight:800;box-shadow:0 12px 38px #8246df42}
 .ev-browser__hero h1{margin:18px 0 5px;font-size:28px;letter-spacing:-.6px}
 .ev-browser__hero p{margin:0;color:#aaa0b9}
-.ev-browser__search{display:none}
+.ev-browser__search{display:flex;width:min(560px,100%);gap:8px;margin-top:22px}.ev-browser__search input{flex:1;min-width:0;padding:12px 15px;border:1px solid #3d3351;border-radius:24px;background:#30283b;color:#fff;outline:none}.ev-browser__search input:focus{border-color:#ad7cff;box-shadow:0 0 0 2px #ad7cff28}
 .ev-browser__shortcuts{width:min(620px,calc(100% - 32px));margin:0 auto 18px}
 .ev-browser__shortcuts h2{font-size:14px;color:#c7b9d8;font-weight:600;margin:0 0 12px}
 .ev-browser__shortcutgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
