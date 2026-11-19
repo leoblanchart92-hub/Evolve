@@ -690,7 +690,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const publish = steps.find((step) => step.startsWith('Publier les fichiers publiés'));
   assert.ok(publish, 'étape de publication introuvable');
   assert.ok(!/^\s+if:/m.test(publish), 'publication sans condition particulière');
-  assert.match(publish, /archive: false/, 'fichiers téléchargés tels quels');
+  assert.ok(!/archive: false/.test(publish), 'archive:false incompatible avec plusieurs fichiers');
   assert.match(publish, /if-no-files-found: error/);
   // Les quatre fichiers publiés, et leurs empreintes.
   for (const file of [
