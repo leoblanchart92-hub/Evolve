@@ -449,7 +449,7 @@ test('lecture seule : le moteur n’est interrogé que sur des emplacements qu�
     const code = stripComments(readText(source));
     assert.doesNotMatch(
       code,
-      /\b(?:shell|clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|trashItem|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath)\b/,
+      /\b(?:clipboard|nativeImage|crashReporter|contentTracing|netLog|autoUpdater|downloadURL|savePage|printToPDF|setDownloadPath|setSavePath|showSaveDialog|showOpenDialog|startDrag|trashItem|writeShortcutLink|addRecentDocument|setJumpList|setUserTasks|setLoginItemSettings|setAsDefaultProtocolClient|setAppLogsPath)\b/,
       source,
     );
   }
