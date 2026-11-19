@@ -320,7 +320,8 @@ function registerIpc() {
     if (!['https:', 'http:'].includes(target.protocol) || target.username || target.password) return false;
     try { await shell.openExternal(target.href); return true; } catch { return false; }
   });
-\n  ipcMain.handle('evolve:update-check', async (event) => {
+
+  ipcMain.handle('evolve:update-check', async (event) => {
     if (!fromMainWindow(event)) return { ok: false, message: 'Appel refusé.' };
     try { return await checkForUpdate(app.getVersion()); }
     catch (error) { return { ok: false, message: error?.message || 'Vérification impossible.' }; }
