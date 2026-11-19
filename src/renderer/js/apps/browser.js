@@ -7,9 +7,9 @@ import { icon } from '../core/icons.js';
 
 const shortcuts = [
   { label: 'Google', url: 'https://www.google.com', glyph: 'magnifying-glass' },
-  { label: 'YouTube', url: 'https://www.youtube.com', glyph: 'play' },
-  { label: 'GitHub', url: 'https://github.com', glyph: 'code' },
-  { label: 'Wikipedia', url: 'https://fr.wikipedia.org', glyph: 'book-open' },
+  { label: 'YouTube', url: 'https://www.youtube.com', glyph: 'film-slate' },
+  { label: 'GitHub', url: 'https://github.com', glyph: 'terminal-window' },
+  { label: 'Wikipedia', url: 'https://fr.wikipedia.org', glyph: 'file-text' },
 ];
 
 function destination(value) {
@@ -33,7 +33,7 @@ export function mountBrowser(win) {
   );
   const address = h('input', { class: 'ev-browser__address', type: 'text', placeholder: 'Rechercher sur Google ou saisir une adresse', autocomplete: 'off', spellcheck: 'false' });
   const go = h('button', { class: 'ev-browser__go', type: 'button', title: 'Rechercher' }, icon('magnifying-glass'));
-  nav.append(address, go, h('button', { class: 'ev-browser__bookmark', type: 'button', title: 'Favori (bientôt)' }, icon('star')));
+  nav.append(address, go, h('button', { class: 'ev-browser__bookmark', type: 'button', title: 'Favori (bientôt)' }, icon('sparkle')));
   const hero = h('div', { class: 'ev-browser__hero' },
     h('div', { class: 'ev-browser__logo' }, h('span', { text: 'E' })),
     h('h1', { text: 'Evolve Browser' }),
