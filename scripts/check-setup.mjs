@@ -341,7 +341,10 @@ if (keep) {
 console.log('\n── 5. Désinstallation silencieuse ──');
 // Attente pour que les handles se libèrent
 spawnSync(process.execPath, ['-e', 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500)'], { stdio: 'ignore' });
-const removed = spawnSync(uninstallExe, DEFAULT_ARGS, { cwd: root, stdio: 'pipe', timeout: timeoutMs, windowsHide: false });
+// NSIS : le désinstallateur silencieux a besoin du dossier d'installation via _?=
+const uninstallArgs = [...DEFAULT_ARGS, `_?=${installDir}`];
+console.log(`  commande : ${uninstallExe} ${uninstallArgs.join(' ')}`);
+const removed = spawnSync(uninstallExe, uninstallArgs, { cwd: root, stdio: 'pipe', timeout: timeoutMs, windowsHide: false });
 if (removed.stdout) console.log(`  uninstall stdout: ${removed.stdout.toString().slice(0, 1000)}`);
 if (removed.stderr) console.log(`  uninstall stderr: ${removed.stderr.toString().slice(0, 1000)}`);
 if (removed.error && removed.error.code !== 'ETIMEDOUT') fail(`Le désinstallateur n’a pas pu être lancé (${removed.error.message}).`);
