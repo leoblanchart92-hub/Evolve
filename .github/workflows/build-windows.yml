@@ -177,8 +177,6 @@ jobs:
             echo "::notice title=Fichier publié::$(basename "$file") — $((size / 1024 / 1024)) Mo"
           done
 
-      # Publiés tels quels (sans archive .zip) : les fichiers téléchargés sont
-      # directement les exécutables, l'image et les empreintes.
       - name: Publier les fichiers publiés
         uses: actions/upload-artifact@v7
         with:
@@ -189,6 +187,5 @@ jobs:
             dist/Evolve-*-setup-tous-utilisateurs.exe
             dist/Evolve-*.iso
             dist/SHA256SUMS.txt
-          archive: false
           if-no-files-found: error
           retention-days: 90
