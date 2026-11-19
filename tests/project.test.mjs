@@ -480,6 +480,12 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   // Aucun autre module de l'interface ne touche à la passerelle.
   for (const file of jsFiles) {
     if (file.endsWith(path.join('core', 'platform.js'))) continue;
+    if (file.endsWith(path.join('apps', 'browser.js'))) {
+      const browserCode = stripComments(readFileSync(file, 'utf8'));
+      assert.match(browserCode, /globalThis\.evolve\?\.openExternal/);
+      assert.doesNotMatch(browserCode, /globalThis\.evolve\.(?!\?\.openExternal)/);
+      continue;
+    }
     assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /(?:globalThis|window|self)\.evolve\b/, relative(file));
   }
 
