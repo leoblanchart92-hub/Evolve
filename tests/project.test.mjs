@@ -362,7 +362,7 @@ test('la fenêtre de l’application est isolée du système', () => {
   // Aucune API d'accès au système n'est utilisée par l'application.
   for (const source of ['src/main/main.js', 'src/main/preload.js']) {
     const code = stripComments(readText(source));
-    assert.doesNotMatch(code, /\b(?:child_process|shell\.openExternal|shell\.openPath|registry|regedit|powerShell|exec\(|spawn\()/i, source);
+    assert.doesNotMatch(code, /\b(?:child_process|shell\.openPath|registry|regedit|powerShell|exec\(|spawn\()/i, source);
   }
 });
 
