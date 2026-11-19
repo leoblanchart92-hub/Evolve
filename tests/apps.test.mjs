@@ -15,7 +15,7 @@ test('chaque application est complètement décrite', () => {
   for (const app of APPS) {
     assert.match(app.id, /^[a-z][a-z0-9-]*$/);
     assert.ok(app.name.length > 0);
-    assert.ok(['explorer', 'placeholder'].includes(app.kind), `type inconnu pour ${app.id}`);
+    assert.ok(['explorer', 'placeholder', 'browser'].includes(app.kind), `type inconnu pour ${app.id}`);
     assert.ok(typeof app.glyph === 'string' && app.glyph.length > 0);
     assert.equal(app.colors.length, 2);
     for (const color of app.colors) assert.match(color, HEX_COLOR);
