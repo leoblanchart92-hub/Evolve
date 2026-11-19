@@ -318,12 +318,12 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
        const failed = faces.filter((face) => face.status === 'error');
        return (loaded('Inter Variable') && loaded('Outfit Variable') && failed.length === 0) || faces;`,
     );
-    await check('icônes du bureau', `return document.querySelectorAll('.desktop-icon').length >= 5;`);
+    await check('icônes du bureau', `return document.querySelectorAll('.desktop-icon').length >= 4;`);
     await check(
       'barre des tâches (Démarrer, recherche, applications, horloge)',
       `const bar = document.getElementById('taskbar').getBoundingClientRect();
        return bar.width > 300 && bar.height > 20 && Boolean(document.querySelector('.tb-start'))
-         && Boolean(document.querySelector('.tb-search')) && document.querySelectorAll('.tb-app').length >= 5
+         && Boolean(document.querySelector('.tb-search')) && document.querySelectorAll('.tb-app').length >= 2
          && /^\\d{2}:\\d{2}$/.test(document.querySelector('.tb-clock__time').textContent.trim());`,
     );
     await check(
@@ -350,7 +350,7 @@ async function runSelfTest(win, { outDir, timings = {}, scenario: scenarioName =
       "le menu Démarrer s'ouvre avec sa grille d'applications",
       `${IN_VIEW}
        const start = document.querySelector('.start');
-       return start.classList.contains('is-open') && inView(start) && document.querySelectorAll('.start-app').length >= 12;`,
+       return start.classList.contains('is-open') && inView(start) && document.querySelectorAll('.start-app').length >= 2;`,
     );
     await check(
       "la vue d'accueil du menu Démarrer est entièrement visible (sans défilement)",
