@@ -48,7 +48,7 @@ export const APPS = Object.freeze([
   {
     id: 'settings',
     name: 'Paramètres',
-    kind: 'placeholder',
+    kind: 'settings',
     glyph: 'gear-six',
     colors: ['#b4b4dc', '#51409c'],
     keywords: ['réglages', 'configuration', 'options', 'personnalisation'],
