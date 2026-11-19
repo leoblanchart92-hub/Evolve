@@ -20,7 +20,7 @@
     "preview": "node scripts/preview-server.mjs",
     "test": "node --test --test-reporter=spec",
     "icons": "node scripts/build-icons.mjs",
-    "build:win": "npm run build:win:portable && npm run build:win:user && npm run build:win:machine",
+    "build:win": "npm run build:win:machine && npm run build:win:user && npm run build:win:portable",
     "build:win:portable": "electron-builder --win portable --x64 --publish never",
     "build:win:user": "electron-builder --win nsis --x64 --publish never --config packaging/nsis-user.builder.js",
     "build:win:machine": "electron-builder --win nsis --x64 --publish never --config packaging/nsis-machine.builder.js",

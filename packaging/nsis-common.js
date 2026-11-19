@@ -30,9 +30,10 @@ function nsisConfig({ perMachine, artifactName }) {
     win: {
       ...build.win,
       target: [{ target: 'nsis', arch: ['x64'] }],
-      // Aucun droit demandé par l'installation pour l'utilisateur ; pour tous
-      // les utilisateurs, electron-builder demande l'élévation (Program Files).
-      requestedExecutionLevel: perMachine ? 'requireAdministrator' : 'asInvoker',
+      // L'application elle-même ne demande jamais l'élévation : seul
+      // l'installateur pour tous les utilisateurs l'obtient via NSIS
+      // (perMachine). Laisser l'app en asInvoker évite une demande à chaque lancement.
+      requestedExecutionLevel: 'asInvoker',
     },
     nsis: {
       /** Nom du fichier produit. */
