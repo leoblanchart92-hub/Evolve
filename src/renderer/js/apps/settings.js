@@ -2,12 +2,14 @@ import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
 import { PRODUCT } from '../config.js';
 import { ui, volumeGlyph } from '../shell/ui-state.js';
+import { checkUpdates } from '../core/platform.js';
 
 const SECTIONS = [
   ['general','Général','gear-six'],
   ['personalization','Personnalisation','sparkle'],
   ['desktop','Bureau','desktop'],
   ['quick','Paramètres rapides','gear-six'],
+  ['updates','Mise à jour Evolve','arrow-clockwise'],
   ['about','À propos','info'],
 ];
 function toggle(id,label,description='') {
@@ -31,6 +33,7 @@ function buildPage(id){
  if(id==='personalization')return [heading('Personnalisation','Adapte l’apparence et l’ambiance du bureau.'),card('Éclairage',toggle('nightLight','Éclairage nocturne','Applique une teinte chaude à l’interface.'),slider('brightness','Luminosité de l’interface',20,'sun'))];
  if(id==='desktop')return [heading('Bureau','Choisis les éléments visibles sur le bureau.'),card('Visibilité',toggle('widgetsVisible','Afficher les widgets','Horloge et widgets de démonstration.'),toggle('desktopIconsVisible','Afficher les icônes du bureau','Masquer ou afficher les raccourcis.'))];
  if(id==='quick')return [heading('Paramètres rapides','Contrôle les états simulés de l’interface.'),card('Connectivité (simulation)',toggle('wifi','Wi-Fi','Ne pilote pas la connexion réseau Windows.'),toggle('bluetooth','Bluetooth','Ne modifie pas Bluetooth Windows.'),toggle('airplane','Mode avion','Indicateur uniquement dans Evolve.')),card('Son',toggle('muted','Couper le son (indicateur)','Ne pilote pas le volume Windows.'),slider('volume','Volume affiché',0,volumeGlyph(ui.get('volume'),ui.get('muted'))))];
+ if(id==='updates')return [heading('Mise à jour Evolve','Vérifie les versions publiées sur GitHub.'),card('Mises à jour',h('p',{class:'settings-about__note',text:'Version installée : '+PRODUCT.version}),h('button',{class:'settings-update-button',type:'button',text:'Rechercher des mises à jour',dataset:{updateCheck:'true'}}),h('p',{class:'settings-update-status',dataset:{updateStatus:'true',text:'Appuie sur le bouton pour vérifier.'}}))];
  if(id==='about')return [heading('À propos d’Evolve','Informations sur cette version.'),card('Evolve',h('div',{class:'settings-about'},h('span',{class:'settings-about__logo'},icon('planet','fill')),h('div',{},h('strong',{text:PRODUCT.name}),h('p',{text:'Version '+PRODUCT.version+' · '+PRODUCT.stage}))),h('p',{class:'settings-about__note',text:'Evolve est un aperçu d’environnement de bureau. Il ne remplace pas Windows et ne modifie pas ses paramètres système.'}))];
  return [];
 }
@@ -40,5 +43,7 @@ export function mountSettings(win){
  const root=h('div',{class:'settings-app'},nav,content);win.body.append(root);
  function render(id){content.replaceChildren(...buildPage(id));nav.querySelectorAll('[data-page]').forEach(b=>{const active=b.dataset.page===id;b.classList.toggle('is-current',active);b.setAttribute('aria-current',active?'page':'false');});}
  SECTIONS.forEach(([id,label,glyph])=>{const b=h('button',{class:'settings-nav',type:'button',dataset:{page:id}},icon(glyph,'fill'),h('span',{text:label}));b.addEventListener('click',()=>render(id));nav.append(b);});
- render('general');return {destroy(){root.remove();}};
+ render('general');
+ content.addEventListener('click',async event=>{const button=event.target.closest('[data-update-check]');if(!button)return;const status=content.querySelector('[data-update-status]');if(!status)return;button.disabled=true;status.textContent='Recherche en cours…';try{const result=await checkUpdates();if(!result.updateAvailable)status.textContent='Evolve est à jour (version '+result.currentVersion+').';else status.textContent='Nouvelle version : '+result.latestVersion+'\\n'+(result.setupName?'Installateur : '+result.setupName+'\\n':'')+(result.releaseUrl?'Release : '+result.releaseUrl:'Release disponible, lien indisponible.')+'\\n'+(result.notes||'');}catch(error){status.textContent=error?.message||'Vérification impossible. Vérifie ta connexion.';}finally{button.disabled=false;}});
+ return {destroy(){root.remove();}};
 }
