@@ -44,7 +44,7 @@ export function mountBrowser(win) {
   const submit = (input) => {
     const url = destination(input.value);
     if (!url) { input.focus(); return; }
-    window.open(url, '_blank', 'noopener,noreferrer');
+    if (globalThis.evolve?.openExternal) globalThis.evolve.openExternal(url);
   };
   address.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(address); });
   go.addEventListener('click', () => submit(address));
@@ -57,7 +57,7 @@ export function mountBrowser(win) {
         h('span', { class: 'ev-browser__shortcuticon' }, icon(item.glyph)),
         h('span', { text: item.label }),
       );
-      button.addEventListener('click', () => window.open(item.url, '_blank', 'noopener,noreferrer'));
+      button.addEventListener('click', () => globalThis.evolve?.openExternal?.(item.url));
       return button;
     })),
   );
