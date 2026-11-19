@@ -504,7 +504,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
 test('configuration de la compilation Windows', () => {
   const { build } = pkg;
   assert.equal(build.productName, 'Evolve');
-  assert.deepEqual(build.win.target, [{ target: 'portable', arch: ['x64'] }]);
+  assert.deepEqual(build.win.target, [{ target: 'portable', arch: ['x64'] }, { target: 'nsis', arch: ['x64'] }]);
   // Aucun droit administrateur : ni pour l'application, ni pour son lanceur.
   assert.equal(build.win.requestedExecutionLevel, 'asInvoker');
   assert.equal(build.portable.requestExecutionLevel, 'user');
@@ -635,7 +635,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   // Le dossier Documents absent est éprouvé sur l'exécutable produit, avec le véritable dossier du compte
   // (aucun dossier d'essai) : la preuve porte sur le fichier distribué, tel que Windows le fait fonctionner.
   const documentsStep = steps.find((step) => step.includes('check-documents.mjs'));
-  assert.match(documentsStep, /^Dossier Documents absent jamais recréé par l'exécutable portable\n/);
+  assert.match(documentsStep, /^Dossier Documents absent jamais recréé\n/);
   assert.ok(!/--folder|electron|continue-on-error|\bif:/.test(documentsStep), documentsStep);
   assert.match(documentsStep, /timeout-minutes: \d+/);
 
