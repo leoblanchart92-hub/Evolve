@@ -63,6 +63,9 @@ jobs:
       - name: Installer les dépendances
         run: bash scripts/ci-run.sh installation npm ci --no-audit --no-fund
 
+      - name: Regénérer la planche d'icônes
+        run: bash scripts/ci-run.sh regeneration-icones npm run icons
+
       - name: Tests automatiques
         run: bash scripts/ci-run.sh tests-automatiques npm test
 
