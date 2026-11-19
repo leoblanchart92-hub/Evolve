@@ -24,7 +24,7 @@ export const APPS = Object.freeze([
   {
     id: 'browser',
     name: 'Navigateur',
-    kind: 'placeholder',
+    kind: 'browser',
     glyph: 'compass',
     colors: ['#8fd8ff', '#6557f5'],
     keywords: ['web', 'internet', 'site'],
@@ -140,14 +140,6 @@ export const APPS = Object.freeze([
     glyph: 'map-trifold',
     colors: ['#7df2c6', '#3b7ff5'],
     keywords: ['plan', 'itinéraire', 'navigation'],
-  },
-  {
-    id: 'games',
-    name: 'Jeux',
-    kind: 'placeholder',
-    glyph: 'game-controller',
-    colors: ['#ff86a4', '#8a3ffc'],
-    keywords: ['jouer', 'gaming'],
   },
   {
     id: 'monitor',
