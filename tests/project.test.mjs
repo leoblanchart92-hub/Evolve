@@ -509,6 +509,10 @@ test('configuration de la compilation Windows', () => {
   assert.equal(build.win.requestedExecutionLevel, 'asInvoker');
   assert.equal(build.portable.requestExecutionLevel, 'user');
   assert.equal(build.portable.artifactName, 'Evolve-${version}-portable.exe');
+  assert.equal(build.nsis.artifactName, 'Evolve-${version}-Setup.exe');
+  assert.equal(build.nsis.oneClick, true);
+  assert.equal(build.nsis.perMachine, false);
+  assert.equal(build.nsis.allowElevation, false);
   assert.equal(build.publish, null, 'aucune publication automatique');
   assert.deepEqual(build.files, ['package.json', 'THIRD-PARTY-NOTICES.md', 'src/main/**/*', 'src/services/**/*', 'src/renderer/**/*', 'assets/**/*']);
   for (const pattern of build.files) assert.ok(existsSync(fromRoot(pattern.replace(/\/\*\*\/\*$/, ''))), `fichier ou dossier absent : ${pattern}`);
@@ -646,6 +650,8 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   assert.match(publish, /if-no-files-found: error/);
   // Le nom du fichier produit correspond à celui que la compilation publie.
   assert.match(pkg.build.portable.artifactName, /^Evolve-\$\{version\}-portable\.exe$/);
+  assert.match(workflowCode, /path: dist\/Evolve-\*-Setup\.exe/);
+  assert.match(workflowCode, /name: Evolve-Setup/);
 });
 
 test('les fichiers de script gardent des fins de ligne Unix (exécutés par bash sous Windows)', () => {
