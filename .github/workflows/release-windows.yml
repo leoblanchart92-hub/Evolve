@@ -1,0 +1,34 @@
+name: Publier une release Windows
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Installer les dépendances
+        run: npm ci --no-audit --no-fund
+      - name: Générer les icônes
+        run: npm run icons
+      - name: Tests
+        run: npm test
+      - name: Construire les exécutables Windows
+        run: npm run build:win
+      - name: Publier la release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/Evolve-*-Setup.exe dist/Evolve-*-portable.exe --generate-notes --title "${GITHUB_REF_NAME}"
