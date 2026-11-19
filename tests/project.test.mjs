@@ -217,7 +217,8 @@ test("l'interface ne fait aucun accès réseau", () => {
     const code = stripComments(readFileSync(file, 'utf8')).replace(namespaces, '');
     // Le navigateur personnalisé utilise uniquement des destinations fixes pour window.open.
     // Les URL statiques sont autorisées dans ce module, mais les API réseau restent interdites.
-    if (!file.endsWith(path.join('apps', 'browser.js'))) {
+    const isBrowserModule = relative(file).replaceAll('\\\\', '/').endsWith('src/renderer/js/apps/browser.js');
+    if (!isBrowserModule) {
       assert.doesNotMatch(code, /\b(?:https?|wss?|ftp):\/\//i, `${relative(file)} : adresse distante`);
     }
     assert.doesNotMatch(code, /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts)\b/, `${relative(file)} : API réseau`);
