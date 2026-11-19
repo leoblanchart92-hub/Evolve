@@ -33,6 +33,8 @@ if (host) {
 
 export const isFullscreen = () => fullscreen;
 
+export async function checkUpdates(){if(!host?.updates?.check)throw new Error('Disponible uniquement dans l’application Windows.');const result=await host.updates.check();if(!result?.ok)throw new Error(result?.message||'Vérification impossible.');return result;}
+
 /** Bascule entre plein écran et mode fenêtré. Renvoie faux si c'est impossible. */
 export async function toggleFullscreen() {
   try {
