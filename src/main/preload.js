@@ -16,6 +16,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('evolve', {
   isDesktopApp: true,
 
+  updates: { check: async () => { try { return await ipcRenderer.invoke('evolve:update-check'); } catch { return { ok:false, message:'Vérification impossible.' }; } } },
+
   /** Ferme l'application. */
   quit: () => ipcRenderer.send('evolve:quit'),
 
