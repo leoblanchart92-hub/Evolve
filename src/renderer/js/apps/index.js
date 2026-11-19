@@ -4,10 +4,12 @@
  */
 
 import { mountExplorer } from './explorer.js';
+import { mountBrowser } from './browser.js';
 import { mountPlaceholder } from './placeholder.js';
 
 const MOUNTERS = Object.freeze({
   explorer: mountExplorer,
+  browser: mountBrowser,
   placeholder: mountPlaceholder,
 });
 
