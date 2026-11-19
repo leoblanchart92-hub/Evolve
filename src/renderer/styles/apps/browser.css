@@ -1,0 +1,26 @@
+/* Evolve Browser — UI prototype inspired by Opera GX, original styling. */
+.ev-browser{height:100%;min-height:0;display:flex;flex-direction:column;background:#100e19;color:#eee9f8;overflow:auto;font-family:inherit}
+.ev-browser__tabs{display:flex;align-items:center;gap:8px;padding:9px 12px;background:#171421;border-bottom:1px solid #30283e}
+.ev-browser__tab{display:flex;align-items:center;gap:8px;padding:9px 14px;border-radius:10px;background:#282334;color:#fff;font-size:12px}
+.ev-browser__tab.active{box-shadow:inset 0 -2px #a56bff}
+.ev-browser__add{border:0;background:transparent;color:#c9b9ef;font-size:22px;cursor:pointer}
+.ev-browser__nav{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#1d1928}
+.ev-browser__navbtn,.ev-browser__go,.ev-browser__bookmark{display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:9px;background:#2b2537;color:#bdb2d1}
+.ev-browser__navbtn:disabled{opacity:.45}
+.ev-browser__address{flex:1;min-width:0;padding:10px 14px;border:1px solid #3d3351;border-radius:20px;background:#30283b;color:#fff;outline:none}
+.ev-browser__address:focus{border-color:#ad7cff;box-shadow:0 0 0 2px #ad7cff28}
+.ev-browser__go{background:#8b5cf6;color:white;cursor:pointer}
+.ev-browser__bookmark{cursor:pointer}
+.ev-browser__hero{padding:34px 22px 24px;display:flex;align-items:center;flex-direction:column;text-align:center}
+.ev-browser__logo{width:72px;height:72px;border-radius:23px;display:grid;place-items:center;background:linear-gradient(135deg,#c7a4ff,#6f37db);font-size:36px;font-weight:800;box-shadow:0 12px 38px #8246df42}
+.ev-browser__hero h1{margin:18px 0 5px;font-size:28px;letter-spacing:-.6px}
+.ev-browser__hero p{margin:0;color:#aaa0b9}
+.ev-browser__search{display:none}
+.ev-browser__shortcuts{width:min(620px,calc(100% - 32px));margin:0 auto 18px}
+.ev-browser__shortcuts h2{font-size:14px;color:#c7b9d8;font-weight:600;margin:0 0 12px}
+.ev-browser__shortcutgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.ev-browser__shortcut{display:flex;flex-direction:column;align-items:center;gap:9px;padding:15px 8px;border:1px solid #30283e;border-radius:14px;background:#1c1826;color:#eee;cursor:pointer;transition:transform .16s,border-color .16s}
+.ev-browser__shortcut:hover{transform:translateY(-2px);border-color:#8c62ca}
+.ev-browser__shortcuticon{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;background:#38284f;color:#c9a6ff;font-size:18px}
+.ev-browser__shortcut span:last-child{font-size:12px}
+.ev-browser__note{margin:16px auto 24px;padding:0 18px;max-width:550px;text-align:center;color:#82788f;font-size:11px;line-height:1.5}
