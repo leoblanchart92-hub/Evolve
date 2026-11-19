@@ -495,6 +495,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   assert.deepEqual([...channels(preload)].sort(), [
     'evolve:fullscreen-changed',
     'evolve:is-fullscreen',
+    'evolve:open-external',
     'evolve:quit',
     'evolve:service-call',
     'evolve:service-event',
