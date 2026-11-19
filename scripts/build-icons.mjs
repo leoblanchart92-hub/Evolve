@@ -39,7 +39,7 @@ const NAMES = [
   // Applications
   'gear-six', 'compass', 'terminal-window', 'storefront', 'envelope-simple', 'calendar-dots', 'image',
   'film-slate', 'note-pencil', 'calculator', 'cloud-sun', 'clock', 'camera', 'map-trifold',
-  'game-controller', 'pulse', 'app-window',
+  'pulse', 'app-window',
   // Types de fichiers
   'file', 'file-text', 'file-doc', 'file-xls', 'file-ppt', 'file-pdf', 'file-image', 'file-audio',
   'file-video', 'file-zip', 'file-code',
