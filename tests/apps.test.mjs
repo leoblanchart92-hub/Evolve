@@ -15,7 +15,7 @@ test('chaque application est complètement décrite', () => {
   for (const app of APPS) {
     assert.match(app.id, /^[a-z][a-z0-9-]*$/);
     assert.ok(app.name.length > 0);
-    assert.ok(['explorer', 'placeholder', 'browser'].includes(app.kind), `type inconnu pour ${app.id}`);
+    assert.ok(['explorer', 'placeholder', 'browser', 'settings'].includes(app.kind), `type inconnu pour ${app.id}`);
     assert.ok(typeof app.glyph === 'string' && app.glyph.length > 0);
     assert.equal(app.colors.length, 2);
     for (const color of app.colors) assert.match(color, HEX_COLOR);
@@ -25,8 +25,8 @@ test('chaque application est complètement décrite', () => {
   assert.equal(getApp('inconnue'), undefined);
 });
 
-test("seul l'explorateur de fichiers possède une interface complète", () => {
-  assert.deepEqual(APPS.filter((app) => app.kind === 'explorer').map((app) => app.id), ['explorer']);
+test('les applications fonctionnelles ont un mounter dédié', () => {
+  assert.deepEqual(APPS.filter((app) => ['explorer', 'settings'].includes(app.kind)).map((app) => app.id), ['explorer', 'settings']);
 });
 
 test('les applications épinglées existent et ne sont pas en double', () => {
