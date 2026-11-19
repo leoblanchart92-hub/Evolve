@@ -315,6 +315,8 @@ if (selfTest.status !== 0) {
   );
 }
 console.log('  ✔ l’application installée démarre et contrôle son interface sans erreur');
+// Laisse le système libérer les fichiers (antivirus, handles)
+spawnSync(process.execPath, ['-e', 'setTimeout(()=>{}, 2000)'], { stdio: 'ignore' });
 
 // --- 5. Désinstallation ------------------------------------------------------------
 // Les raccourcis et les réglages sont comparés à leur état d'avant la
@@ -337,7 +339,11 @@ if (keep) {
 }
 
 console.log('\n── 5. Désinstallation silencieuse ──');
-const removed = spawnSync(uninstallExe, DEFAULT_ARGS, { cwd: root, stdio: 'ignore', timeout: timeoutMs, windowsHide: false });
+// Attente pour que les handles se libèrent
+spawnSync(process.execPath, ['-e', 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500)'], { stdio: 'ignore' });
+const removed = spawnSync(uninstallExe, DEFAULT_ARGS, { cwd: root, stdio: 'pipe', timeout: timeoutMs, windowsHide: false });
+if (removed.stdout) console.log(`  uninstall stdout: ${removed.stdout.toString().slice(0, 1000)}`);
+if (removed.stderr) console.log(`  uninstall stderr: ${removed.stderr.toString().slice(0, 1000)}`);
 if (removed.error && removed.error.code !== 'ETIMEDOUT') fail(`Le désinstallateur n’a pas pu être lancé (${removed.error.message}).`);
 if (removed.error) fail(`Le désinstallateur ne s’est pas terminé en ${Math.round(timeoutMs / 1000)} s : il a été arrêté.`, { verdict: false });
 if (removed.status !== 0) fail(`Le désinstallateur s’est terminé en erreur (code ${removed.status}).`);
@@ -345,7 +351,10 @@ if (removed.status !== 0) fail(`Le désinstallateur s’est terminé en erreur (
 const leftovers = [];
 if (present(installDir)) {
   const remaining = listing(installDir) ?? [];
-  const detail = remaining.length ? ` : ${remaining.slice(0, 10).join(', ')}` : '';
+  const detail = remaining.length ? ` : ${remaining.join(', ')}` : '';
+  // Diagnostics supplémentaires pour GitHub
+  console.log(`  uninstall exit: ${removed.status}, installDir files before: ${installedFiles}, remaining: ${remaining.length}`);
+  console.log(`  prior parent: ${parentBefore?.join(', ') ?? 'null'}, current parent: ${listing(parent)?.join(', ') ?? 'null'}`);
   leftovers.push(`le dossier d’installation est toujours là (${remaining.length} élément${remaining.length > 1 ? 's' : ''}${detail})`);
 }
 for (const [label, dir, before] of [
