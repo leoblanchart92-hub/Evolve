@@ -1,31 +1,17 @@
-# Evolve — Fabrication de l'exécutable Windows portable.
+# Evolve — Fabrication des exécutables Windows (portable et Setup).
 #
 # À chaque envoi de code, une machine Windows de GitHub :
 #   1. lance les tests automatiques ;
 #   2. démarre l'application et vérifie que l'interface répond (auto-test) ;
-#   3. fabrique le fichier .exe portable ;
-#   4. vérifie ce fichier : aucun droit administrateur demandé, puis démarrage
-#      réel et nouveau passage de l'auto-test ;
-#   5. lance ce fichier normalement, comme un double-clic : fenêtre en plein
-#      écran, écran comparé à l'image dessinée par l'application, fermeture
-#      normale, fichiers temporaires, rien d'écrit dans le profil ;
-#   6. lance ce fichier deux fois de suite : des réglages modifiés au premier
-#      lancement doivent être sur le disque, puis retrouvés au second ;
-#   7. publie le .exe, téléchargeable depuis la page de l'exécution
-#      (rubrique « Artifacts »), ainsi que les rapports et les captures
-#      d'écran des vérifications.
-#
-# Le .exe n'est publié que si toutes les vérifications ont réussi.
-#
-# Les étapes passent par scripts/ci-run.sh : en cas d'échec, la fin de leur
-# sortie est affichée en tête de la page de l'exécution.
+#   3. fabrique le .exe portable et l'installateur Windows Setup ;
+#   4. vérifie l'exécutable portable (droits, démarrage, persistance des réglages) ;
+#   5. publie les deux fichiers en Artifacts si toutes les vérifications passent.
 
-name: Exécutable Windows
+name: Exécutables Windows
 
 on:
   push:
     branches: ['**']
-    # Une modification de la seule documentation ne nécessite pas de recompiler.
     paths:
       - '**'
       - '!README.md'
@@ -41,7 +27,7 @@ concurrency:
 
 jobs:
   build:
-    name: Tester et fabriquer le .exe portable
+    name: Tester et fabriquer les exécutables Windows
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -69,9 +55,6 @@ jobs:
       - name: Tests automatiques
         run: bash scripts/ci-run.sh tests-automatiques npm test
 
-      # Les machines de GitHub affichent par défaut en 1024 × 768 ; une
-      # définition courante donne des captures d'écran plus représentatives.
-      # L'auto-test fonctionne dans les deux cas : cette étape est facultative.
       - name: Régler l'écran de la machine en 1920 × 1080
         continue-on-error: true
         shell: powershell
@@ -83,44 +66,33 @@ jobs:
             Write-Host "Reglage impossible, definition par defaut conservee : $($_.Exception.Message)"
           }
 
-      - name: Auto-test de l'application (avant fabrication du .exe)
+      - name: Auto-test de l'application (avant fabrication)
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --out=self-test-output/application -- .
 
-      - name: Fabriquer l'exécutable portable
-        run: bash scripts/ci-run.sh fabrication-executable npm run build:win
+      - name: Fabriquer le portable et Setup
+        run: bash scripts/ci-run.sh fabrication-executables npm run build:win
 
-      - name: Vérifier que le .exe ne demande aucun droit administrateur
+      - name: Vérifier que le portable ne demande aucun droit administrateur
         run: bash scripts/ci-run.sh droits-administrateur npm run check:manifest
 
-      - name: Auto-test de l'exécutable portable
+      - name: Auto-test du portable
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-executable node scripts/check-exe.mjs --out=self-test-output/executable
 
-      # L'auto-test ouvre une fenêtre ordinaire ; ici, l'exécutable est lancé
-      # sans aucune option d'essai, exactement comme par un double-clic.
-      - name: Lancement normal de l'exécutable portable (plein écran)
+      - name: Lancement normal du portable (plein écran)
         timeout-minutes: 8
         run: bash scripts/ci-run.sh lancement-normal node scripts/check-launch.mjs --out=self-test-output/lancement
 
-      # Deux lancements successifs sur le véritable dossier de l'utilisateur
-      # (%APPDATA%\Evolve, absent de cette machine) : le premier modifie des
-      # réglages depuis l'interface, le script lit le fichier laissé sur le
-      # disque, le second doit les afficher. Le fichier est ensuite retiré.
-      - name: Réglages conservés après un redémarrage de l'exécutable portable
+      - name: Réglages conservés après redémarrage du portable
         timeout-minutes: 12
         run: bash scripts/ci-run.sh reglages-redemarrage node scripts/check-settings.mjs --out=self-test-output/reglages --settings-dir="$APPDATA/Evolve"
 
-      # L'explorateur est en lecture seule : il ne doit rien créer. Le dossier
-      # Documents du compte de cette machine est mis de côté (renommé) le
-      # temps d'un lancement : l'exécutable doit l'annoncer comme introuvable,
-      # et le script constate lui-même, sur le disque, que le dossier est
-      # toujours absent — avant de le remettre en place.
-      - name: Dossier Documents absent jamais recréé par l'exécutable portable
+      - name: Dossier Documents absent jamais recréé
         timeout-minutes: 8
         run: bash scripts/ci-run.sh documents-absent node scripts/check-documents.mjs --out=self-test-output/documents-absent
 
-      - name: Publier les rapports et les captures d'écran des vérifications
+      - name: Publier les rapports de vérification
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -131,28 +103,39 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Résumé de l'exécutable
+      - name: Résumé des exécutables
         run: |
-          exe="$(ls dist/Evolve-*-portable.exe)"
-          size="$(stat -c %s "$exe")"
-          sha="$(sha256sum "$exe" | cut -d ' ' -f 1)"
+          portable="$(ls dist/Evolve-*-portable.exe)"
+          setup="$(ls dist/Evolve-*-Setup.exe)"
+          psize="$(stat -c %s "$portable")"
+          ssize="$(stat -c %s "$setup")"
+          psha="$(sha256sum "$portable" | cut -d ' ' -f 1)"
+          ssha="$(sha256sum "$setup" | cut -d ' ' -f 1)"
           {
-            echo "### 📦 Exécutable portable"
+            echo "### 📦 Evolve Windows"
             echo ""
-            echo "| Fichier | Taille | Empreinte SHA-256 |"
+            echo "| Fichier | Taille | SHA-256 |"
             echo "| --- | --- | --- |"
-            echo "| \`$(basename "$exe")\` | $((size / 1024 / 1024)) Mo | \`$sha\` |"
+            echo "| `$(basename "$portable")` | $((psize / 1024 / 1024)) Mo | `$psha` |"
+            echo "| `$(basename "$setup")` | $((ssize / 1024 / 1024)) Mo | `$ssha` |"
             echo ""
-            echo "Téléchargement : rubrique **Artifacts**, en bas de cette page."
+            echo "Les deux téléchargements sont disponibles dans **Artifacts** ci-dessous."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Exécutable portable::$(basename "$exe") — $((size / 1024 / 1024)) Mo — SHA-256 $sha"
 
-      # Publié tel quel (sans archive .zip) : le fichier téléchargé est
-      # directement l'exécutable.
-      - name: Publier l'exécutable
+      - name: Publier le .exe portable
         uses: actions/upload-artifact@v7
         with:
+          name: Evolve-portable
           path: dist/Evolve-*-portable.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publier l'installateur Setup
+        uses: actions/upload-artifact@v7
+        with:
+          name: Evolve-Setup
+          path: dist/Evolve-*-Setup.exe
           archive: false
           if-no-files-found: error
           retention-days: 90
