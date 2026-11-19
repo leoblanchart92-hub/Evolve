@@ -395,9 +395,14 @@ installedByUs = false;
 console.log(`  ✔ plus rien dans ${installDir}`);
 console.log('  ✔ raccourcis retirés du menu Démarrer et du bureau');
 if (present(path.join(parent, path.basename(installDir)))) fail(`Le dossier d’installation subsiste : ${installDir}`);
-const parentChanges = difference(parentBefore, listing(parent));
+// Le dossier parent (Programs) n'existe pas toujours avant l'installation
+// sur une machine neuve : une liste vide après désinstallation est alors conforme.
+const parentAfter = listing(parent);
+const parentChanges = parentBefore === null
+  ? (parentAfter && parentAfter.length ? [`apparu : ${parentAfter.join(', ')}`] : [])
+  : difference(parentBefore, parentAfter);
 if (parentChanges.length) fail(`Le dossier ${parent} n’est pas revenu à son état initial :\n  ${parentChanges.join('\n  ')}`);
-console.log(`  ✔ ${parent} est revenu à son état initial (${parentBefore.length} élément${parentBefore.length > 1 ? 's' : ''})`);
+console.log(`  ✔ ${parent} est revenu à son état initial (${parentBefore?.length ?? 0} élément${(parentBefore?.length ?? 0) > 1 ? 's' : ''})`);
 
 // Les réglages de l'utilisateur survivent à une désinstallation : c'est promis
 // par l'application (voir README). Ce contrôle ne porte que si le dossier
