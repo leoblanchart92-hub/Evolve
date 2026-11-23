@@ -1,8 +1,7 @@
-name: Publier une release Windows
+# Release manuelle de secours. Les releases normales sont créées par build-windows.yml.
+name: Publier une release Windows (manuel)
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -14,8 +13,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -26,9 +23,11 @@ jobs:
         run: npm run icons
       - name: Tests
         run: npm test
-      - name: Construire les exécutables Windows
+      - name: Construire les exécutables
         run: npm run build:win
-      - name: Publier la release GitHub
+      - name: Publier la release (secours manuel)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/Evolve-*-Setup.exe dist/Evolve-*-portable.exe --generate-notes --title "${GITHUB_REF_NAME}"
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          gh release create "v$version" dist/Evolve-*-Setup.exe dist/Evolve-*-portable.exe --generate-notes --title "Evolve $version"
