@@ -1,4 +1,32 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { versionCompare } from '../src/main/update.js';
-test('version comparison semver basic',()=>{assert.equal(versionCompare('0.3.2','0.3.1'),1);assert.equal(versionCompare('v1.0.0','0.9.9'),1);assert.equal(versionCompare('0.3.1','0.3.1'),0);assert.equal(versionCompare('0.3.0','0.3.1'),-1);});
+
+const require = createRequire(import.meta.url);
+const { checkAsset } = require('../src/main/update.js');
+
+test('détecte l’installateur Setup publié parmi les assets de la release', () => {
+  const setup = {
+    name: 'Evolve-0.3.96-Setup.exe',
+    browser_download_url: 'https://github.com/leoblanchart92-hub/Evolve/releases/download/v0.3.96/Evolve-0.3.96-Setup.exe',
+  };
+  const release = {
+    tag_name: 'v0.3.96',
+    assets: [
+      { name: 'Evolve-0.3.96-portable.exe', browser_download_url: 'https://github.com/leoblanchart92-hub/Evolve/releases/download/v0.3.96/Evolve-0.3.96-portable.exe' },
+      setup,
+    ],
+  };
+
+  assert.equal(checkAsset(release), setup);
+});
+
+test('ignore les assets qui ne sont pas l’installateur officiel Evolve', () => {
+  assert.equal(checkAsset({ tag_name: 'v0.3.96', assets: [
+    null,
+    { name: 'Evolve-0.3.96-portable.exe', browser_download_url: 'https://github.com/leoblanchart92-hub/Evolve/releases/download/v0.3.96/Evolve-0.3.96-portable.exe' },
+    { name: 'Evolve-0.3.96-Setup.exe', browser_download_url: 'https://example.com/Evolve-0.3.96-Setup.exe' },
+    { name: 'other-Setup.exe', browser_download_url: 'https://github.com/leoblanchart92-hub/Evolve/releases/download/v0.3.96/other-Setup.exe' },
+  ] }), undefined);
+  assert.equal(checkAsset({ tag_name: 'v0.3.96', assets: 'invalid' }), undefined);
+});
