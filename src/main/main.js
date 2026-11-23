@@ -23,7 +23,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, Menu, dialog, ipcMain, screen, session } = require('electron');
 
 const { parseArgs } = require('./args');
 const { checkForUpdate, installUpdate } = require('./update');
@@ -52,6 +52,7 @@ let mainWindow = null;
  */
 let services = null;
 let browserSession = null;
+let browserView = null;
 
 /**
  * Chemin d'un fichier ou d'un dossier demandé sur la ligne de commande.
@@ -262,6 +263,8 @@ function createWindow() {
 
   win.on('closed', () => {
     clearTimeout(revealTimer);
+    if (browserView && !browserView.webContents.isDestroyed()) browserView.webContents.close();
+    browserView = null;
     mainWindow = null;
   });
 
@@ -339,39 +342,34 @@ function registerIpc() {
 
   ipcMain.handle('evolve:is-fullscreen', (event) => (fromMainWindow(event) ? mainWindow.isFullScreen() : false));
 
-  ipcMain.handle('evolve:open-web', (event, value) => {
+  ipcMain.handle('evolve:browser-navigate', async (event, value) => {
     const target = fromMainWindow(event) ? webAddress(value) : null;
     if (!target) return false;
-    const browser = new BrowserWindow({
-      title: 'Navigateur — Evolve',
-      width: 1100,
-      height: 760,
-      minWidth: 640,
-      minHeight: 480,
-      autoHideMenuBar: true,
-      backgroundColor: '#ffffff',
-      parent: mainWindow,
-      show: false,
-      webPreferences: {
-        partition: 'evolve-browser',
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        webSecurity: true,
-      },
-    });
-    browser.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    const guardNavigation = (navigationEvent, url) => {
-      if (!webAddress(url)) navigationEvent.preventDefault();
-    };
-    browser.webContents.on('will-navigate', guardNavigation);
-    browser.webContents.on('will-redirect', guardNavigation);
     getBrowserSession();
-    browser.once('ready-to-show', () => browser.show());
-    browser.loadURL(target).catch(() => {
-      if (!browser.isDestroyed()) browser.show();
-    });
+    if (!browserView) {
+      browserView = new WebContentsView({ webPreferences: {
+        partition: 'evolve-browser', contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
+      } });
+      mainWindow.contentView.addChildView(browserView);
+      browserView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      const guardNavigation = (navigationEvent, url) => { if (!webAddress(url)) navigationEvent.preventDefault(); };
+      browserView.webContents.on('will-navigate', guardNavigation);
+      browserView.webContents.on('will-redirect', guardNavigation);
+      browserView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    }
+    try { await browserView.webContents.loadURL(target); } catch { return false; }
     return true;
+  });
+
+  ipcMain.on('evolve:browser-bounds', (event, rect) => {
+    if (!fromMainWindow(event) || !browserView || !rect || typeof rect !== 'object') return;
+    const { width, height } = mainWindow.getContentBounds();
+    const values = ['x', 'y', 'width', 'height'].map((key) => Number(rect[key]));
+    if (!values.every(Number.isFinite)) return;
+    const [x, y, w, h] = values;
+    const left = Math.max(0, Math.min(width, x));
+    const top = Math.max(0, Math.min(height, y));
+    browserView.setBounds({ x: left, y: top, width: Math.max(0, Math.min(width - left, w)), height: Math.max(0, Math.min(height - top, h)) });
   });
 
   ipcMain.handle('evolve:update-check', async (event) => {

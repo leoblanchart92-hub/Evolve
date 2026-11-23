@@ -18,9 +18,11 @@ contextBridge.exposeInMainWorld('evolve', {
 
   updates: { check: async () => { try { return await ipcRenderer.invoke('evolve:update-check'); } catch { return { ok:false, message:'Vérification impossible.' }; } }, install: async (url,name) => { try { return await ipcRenderer.invoke('evolve:update-install',String(url),String(name)); } catch { return { ok:false, message:'Téléchargement impossible.' }; } } },
 
-  /** Ouvre un lien HTTP(S) dans la fenêtre de navigation isolée d’Evolve. */
-  /** Ouvre une page web dans une fenêtre de navigation isolée appartenant à Evolve. */
-  openWebPage: async (url) => { try { return await ipcRenderer.invoke('evolve:open-web', String(url)); } catch { return false; } },
+  /** Affiche une page web dans la zone du navigateur Evolve. */
+  browser: {
+    navigate: async (url) => { try { return await ipcRenderer.invoke('evolve:browser-navigate', String(url)); } catch { return false; } },
+    setBounds: (rect) => ipcRenderer.send('evolve:browser-bounds', rect),
+  },
 
   /** Ferme l'application. */
   quit: () => ipcRenderer.send('evolve:quit'),

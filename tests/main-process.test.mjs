@@ -347,7 +347,7 @@ test('passerelle : seules les entrées prévues sont exposées à la page', asyn
   const fake = await launch();
   const api = loadPreload(fake, fake.window.webContents);
   assert.deepEqual(Object.keys(fake.state.exposed), ['evolve']);
-  assert.deepEqual(Object.keys(api).sort(), ['isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'openWebPage', 'quit', 'services', 'toggleFullscreen', 'updates']);
+  assert.deepEqual(Object.keys(api).sort(), ['browser', 'isDesktopApp', 'isFullscreen', 'onFullscreenChange', 'quit', 'services', 'toggleFullscreen', 'updates']);
   assert.equal(api.isDesktopApp, true);
   // Les services ne sont joignables que par leur nom : appeler une méthode, écouter un événement.
   assert.deepEqual(Object.keys(api.services).sort(), ['call', 'on']);
@@ -378,30 +378,31 @@ test('passerelle : plein écran et fermeture', async () => {
   assert.equal(state.quitCalls, 1);
 });
 
-test('navigation web : les recherches restent dans une fenêtre Evolve isolée', async () => {
+test('navigation web : les recherches restent intégrées à la fenêtre Evolve', async () => {
   const fake = await launch();
   const { window, state } = fake;
   const api = loadPreload(fake, window.webContents);
   const stranger = fake.rendererFor({ rendererListeners: new Map() });
 
-  assert.equal(await stranger.invoke('evolve:open-web', 'https://www.google.com/search?q=test'), false);
-  assert.equal(await api.openWebPage('javascript:alert(1)'), false);
-  assert.equal(await api.openWebPage('https://user:password@example.com'), false);
-  assert.equal(state.windows.length, 1, 'aucune fenêtre n’est créée pour une adresse refusée');
+  assert.equal(await stranger.invoke('evolve:browser-navigate', 'https://www.google.com/search?q=test'), false);
+  assert.equal(await api.browser.navigate('javascript:alert(1)'), false);
+  assert.equal(await api.browser.navigate('https://user:password@example.com'), false);
+  assert.equal(state.windows.length, 1, 'aucune fenêtre native secondaire n’est créée');
 
-  assert.equal(await api.openWebPage('https://www.google.com/search?q=Evolve'), true);
-  assert.equal(state.windows.length, 2, 'la page s’ouvre dans une fenêtre appartenant à Evolve');
-  const browser = state.windows[1];
-  assert.equal(browser.options.parent, window);
-  assert.equal(browser.options.title, 'Navigateur — Evolve');
+  assert.equal(await api.browser.navigate('https://www.google.com/search?q=Evolve'), true);
+  assert.equal(state.windows.length, 1, 'la recherche reste dans la fenêtre actuelle');
+  assert.equal(state.browserViews.length, 1);
+  const browser = state.browserViews[0];
   assert.equal(browser.options.webPreferences.partition, 'evolve-browser');
   assert.equal(browser.options.webPreferences.nodeIntegration, false);
   assert.equal(browser.options.webPreferences.contextIsolation, true);
   assert.equal(browser.options.webPreferences.sandbox, true);
-  assert.equal(browser.loadedUrl, 'https://www.google.com/search?q=Evolve');
+  assert.equal(browser.webContents.loadedUrl, 'https://www.google.com/search?q=Evolve');
   assert.deepEqual(browser.webContents.openHandler({}), { action: 'deny' });
-  browser.emit('ready-to-show');
-  assert.equal(browser.visible, true);
+  api.browser.setBounds({ x: 40, y: 50, width: 400, height: 300 });
+  assert.deepEqual(browser.bounds, { x: 40, y: 50, width: 400, height: 300 });
+  api.browser.setBounds({ x: 9000, y: 9000, width: 300, height: 300 });
+  assert.deepEqual(browser.bounds, { x: 1600, y: 900, width: 0, height: 0 });
 
   const browserSession = state.browserSessions[0];
   assert.equal(browserSession.partition, 'evolve-browser');
@@ -435,8 +436,8 @@ test('passerelle : les messages d’une autre page sont ignorés', async () => {
   const api = loadPreload(fake, window.webContents);
   assert.deepEqual(await api.services.call('settings', 'get', 'quick.volume'), { ok: true, value: 64 });
 
-  assert.deepEqual([...state.ipcListeners.keys()], ['evolve:quit']);
-  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:open-web', 'evolve:service-call', 'evolve:toggle-fullscreen', 'evolve:update-check', 'evolve:update-install']);
+  assert.deepEqual([...state.ipcListeners.keys()].sort(), ['evolve:browser-bounds', 'evolve:quit']);
+  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:browser-navigate', 'evolve:is-fullscreen', 'evolve:service-call', 'evolve:toggle-fullscreen', 'evolve:update-check', 'evolve:update-install']);
 });
 
 // ---------------------------------------------------------------------------------

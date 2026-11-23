@@ -139,6 +139,7 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     ipcHandlers: new Map(),
     externalUrls: [],
     browserSessions: [],
+    browserViews: [],
   };
 
   let resolveReady;
@@ -186,10 +187,15 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     zoomLimits = null;
     /** Abonnements de la page (ipcRenderer.on). */
     rendererListeners = new Map();
+    destroyed = false;
 
     setWindowOpenHandler(handler) {
       this.openHandler = handler;
     }
+
+    isDestroyed() { return this.destroyed; }
+    close() { this.destroyed = true; }
+    loadURL(url) { this.loadedUrl = url; return Promise.resolve(); }
 
     setVisualZoomLevelLimits(minimum, maximum) {
       this.zoomLimits = [minimum, maximum];
@@ -227,6 +233,7 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
       this.focusCalls = 0;
       this.loadedFile = null;
       this.loadedUrl = null;
+      this.contentView = { children: [], addChildView(view) { this.children.push(view); } };
       state.windows.push(this);
       app.emit('web-contents-created', {}, this.webContents);
     }
@@ -338,6 +345,15 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
   const electron = {
     app,
     BrowserWindow,
+    WebContentsView: class FakeWebContentsView {
+      constructor(options) {
+        this.options = options;
+        this.webContents = new FakeWebContents();
+        this.bounds = null;
+        state.browserViews.push(this);
+      }
+      setBounds(bounds) { this.bounds = bounds; }
+    },
     ipcMain,
     Menu: {
       setApplicationMenu(menu) {
