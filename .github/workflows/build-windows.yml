@@ -33,11 +33,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Installer les dépendances
+        run: bash scripts/ci-run.sh installation npm ci --no-audit --no-fund
       - name: Définir la version de cette compilation
         run: |
           node -e "const fs=require('fs');const p=require('./package.json');const base=p.version.split('.');p.version=base[0]+'.'+base[1]+'.'+process.env.GITHUB_RUN_NUMBER;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('Version:',p.version)"
-      - name: Installer les dépendances
-        run: bash scripts/ci-run.sh installation npm ci --no-audit --no-fund
       - name: Regénérer la planche d'icônes
         run: bash scripts/ci-run.sh regeneration-icones npm run icons
       - name: Tests automatiques
