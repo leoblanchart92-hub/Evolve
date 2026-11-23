@@ -26,7 +26,7 @@ const path = require('node:path');
 const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session, shell } = require('electron');
 
 const { parseArgs } = require('./args');
-const { checkForUpdate } = require('./update');
+const { checkForUpdate, installUpdate } = require('./update');
 const { personalFolders } = require('./personal-folders');
 const { createServices } = require('../services');
 const { settingsDir, settingsFile } = require('../services/platform');
@@ -325,6 +325,12 @@ function registerIpc() {
     if (!fromMainWindow(event)) return { ok: false, message: 'Appel refusé.' };
     try { return await checkForUpdate(app.getVersion()); }
     catch (error) { return { ok: false, message: error?.message || 'Vérification impossible.' }; }
+  });
+
+  ipcMain.handle('evolve:update-install', async (event, url, name) => {
+    if (!fromMainWindow(event) || typeof url !== 'string' || typeof name !== 'string') return { ok:false, message:'Appel refusé.' };
+    try { const result = await installUpdate(url, name); if (result.ok) app.quit(); return result; }
+    catch (error) { return { ok:false, message:error?.message || 'Installation impossible.' }; }
   });
 
   // Services d'Evolve : la page désigne une méthode par son nom ; le point
