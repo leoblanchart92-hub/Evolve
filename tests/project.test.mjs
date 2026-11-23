@@ -405,6 +405,8 @@ test('lecture seule : chaque écriture sur le disque est inventoriée — aucune
     'src/main/selftest-explorer.js': ['mkdirSync', 'mkdtempSync', 'rmdirSync', 'utimesSync', 'writeFileSync'],
     // Compte rendu de démarrage (option --status-file), pour la vérification du lancement.
     'src/main/status.js': ['mkdirSync', 'renameSync', 'writeFileSync'],
+    // Mise à jour : téléchargement de l'installateur officiel dans le dossier temporaire, suppression en cas d'échec.
+    'src/main/update.js': ['createWriteStream', 'rmSync'],
     // Fichier des réglages (%APPDATA%\Evolve\settings.json), écrit seulement après un réglage modifié.
     'src/services/json-file.js': ['fsyncSync', 'mkdirSync', 'openSync', 'renameSync', 'rmSync', 'writeFileSync'],
   };
@@ -501,6 +503,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
     'evolve:service-event',
     'evolve:toggle-fullscreen',
     'evolve:update-check',
+    'evolve:update-install',
   ]);
   // Aucun service n'ouvre son propre canal : tout passe par le point d'accès.
   for (const file of desktopFiles) {
@@ -592,7 +595,7 @@ const workflowCode = workflow
 
 test('compilation automatique : machine Windows, droits minimaux, aucun secret', () => {
   assert.match(workflowCode, /^\s+runs-on: windows-latest$/m);
-  assert.match(workflowCode, /^permissions:\n {2}contents: read$/m, 'lecture seule du dépôt');
+  assert.match(workflowCode, /^permissions:\n {2}contents: write$/m, 'publication des releases avec le jeton limité du workflow');
   assert.ok(!/\bsecrets\./.test(workflowCode), 'aucun secret utilisé');
   assert.ok(!/pull_request_target/.test(workflowCode));
   assert.match(workflowCode, /persist-credentials: false/);
@@ -623,7 +626,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
     'check-launch.mjs --out=self-test-output/lancement',
     'check-settings.mjs --out=self-test-output/reglages',
     'check-documents.mjs --out=self-test-output/documents-absent',
-    'path: dist/Evolve-*-portable.exe',
+    'dist/Evolve-*-portable.exe',
   ].map((needle) => {
     const index = workflowCode.indexOf(needle);
     assert.ok(index >= 0, `étape absente : ${needle}`);
@@ -637,7 +640,7 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   const steps = workflowCode.split(/\n {6}- name: /).slice(1);
   const lenient = steps.filter((step) => step.includes('continue-on-error: true'));
   assert.equal(lenient.length, 1);
-  assert.match(lenient[0], /^Régler l'écran/);
+  assert.match(lenient[0], /^Régler la résolution/);
   assert.ok(!/check-exe|check-launch|check-settings|check-documents|build:win|check:manifest|npm test/.test(lenient[0]));
 
   // Les réglages sont éprouvés là où ils seront réellement rangés : %APPDATA%\Evolve.
@@ -647,19 +650,18 @@ test('compilation automatique : le .exe n’est publié qu’après toutes les v
   // Le dossier Documents absent est éprouvé sur l'exécutable produit, avec le véritable dossier du compte
   // (aucun dossier d'essai) : la preuve porte sur le fichier distribué, tel que Windows le fait fonctionner.
   const documentsStep = steps.find((step) => step.includes('check-documents.mjs'));
-  assert.match(documentsStep, /^Dossier Documents absent jamais recréé\n/);
+  assert.match(documentsStep, /^Vérifier les dossiers personnels\n/);
   assert.ok(!/--folder|electron|continue-on-error|\bif:/.test(documentsStep), documentsStep);
   assert.match(documentsStep, /timeout-minutes: \d+/);
 
   // La publication du .exe n'a pas de condition : elle n'a lieu que si tout a réussi.
-  const publish = steps.find((step) => step.includes('path: dist/Evolve-*-portable.exe'));
+  const publish = steps.find((step) => step.includes('Créer la release et publier les exécutables'));
   assert.ok(!/^\s+if:/m.test(publish), 'publication sans condition particulière');
-  assert.match(publish, /archive: false/, 'fichier .exe téléchargé tel quel');
-  assert.match(publish, /if-no-files-found: error/);
+  assert.match(publish, /gh release (?:create|upload)/, 'création ou mise à jour de la release GitHub');
+  assert.match(publish, /dist\/Evolve-\*-portable\.exe/);
   // Le nom du fichier produit correspond à celui que la compilation publie.
   assert.match(pkg.build.portable.artifactName, /^Evolve-\$\{version\}-portable\.exe$/);
-  assert.match(workflowCode, /path: dist\/Evolve-\*-Setup\.exe/);
-  assert.match(workflowCode, /name: Evolve-Setup/);
+  assert.match(publish, /dist\/Evolve-\*-Setup\.exe/);
 });
 
 test('les fichiers de script gardent des fins de ligne Unix (exécutés par bash sous Windows)', () => {

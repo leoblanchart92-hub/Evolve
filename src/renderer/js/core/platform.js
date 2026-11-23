@@ -35,6 +35,14 @@ export const isFullscreen = () => fullscreen;
 
 export async function checkUpdates(){if(!host || !host.updates?.check)throw new Error('Disponible uniquement dans l’application Windows.');const result=await host.updates.check();if(!result?.ok)throw new Error(result?.message||'Vérification impossible.');return result;}
 
+/** Télécharge et lance l'installateur officiel d'une mise à jour. */
+export async function installUpdate(url, name) {
+  if (!host || !host.updates?.install) throw new Error('Disponible uniquement dans l’application Windows.');
+  const result = await host.updates.install(url, name);
+  if (!result?.ok) throw new Error(result?.message || 'Installation impossible.');
+  return result;
+}
+
 /** Bascule entre plein écran et mode fenêtré. Renvoie faux si c'est impossible. */
 export async function toggleFullscreen() {
   try {

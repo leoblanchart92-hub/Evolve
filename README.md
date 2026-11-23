@@ -2,7 +2,7 @@
 
 **Evolve** est un environnement de bureau au style néon violet : bureau, barre des tâches, menu Démarrer, fenêtres, explorateur de fichiers.
 
-Cette version 0.3.1 reste un **aperçu de l'interface graphique**, avec une première fonction réelle : son **explorateur de fichiers affiche désormais les vrais dossiers de votre ordinateur, en lecture seule** — il ne crée, ne modifie, ne déplace, ne supprime et n'ouvre aucun fichier. Evolve prend la forme d'un simple fichier `.exe` portable pour Windows : il s'ouvre comme une application ordinaire, sans installation, et ne modifie aucun réglage de Windows. Ce qu'il écrit sur le PC se limite à un petit fichier de réglages et à des fichiers temporaires, [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
+Cette version reste un **aperçu de l'interface graphique**, avec un **explorateur de fichiers en lecture seule** et la vérification des mises à jour publiées sur GitHub. Evolve est disponible en `.exe` portable et en installateur Windows par utilisateur. Il ne modifie aucun réglage de Windows. L'explorateur ne crée, ne modifie, ne déplace, ne supprime et n'ouvre aucun fichier ; les autres écritures sont limitées aux réglages, aux mises à jour demandées et aux fichiers temporaires [détaillés plus bas](#ce-quevolve-fait--et-ne-fait-pas--sur-votre-pc).
 
 ![Le bureau d'Evolve : fond d'écran, icônes, widgets et barre des tâches](docs/captures/bureau.jpg)
 
@@ -27,19 +27,18 @@ Cette version 0.3.1 reste un **aperçu de l'interface graphique**, avec une prem
 
 ## Télécharger et lancer Evolve
 
-L'exécutable est fabriqué automatiquement par GitHub à chaque modification du code.
+Les exécutables sont fabriqués et publiés automatiquement sur GitHub après réussite de tous les contrôles.
 
-1. Connectez-vous à GitHub, puis ouvrez la page **[Actions → Exécutable Windows](https://github.com/leoblanchart92-hub/Evolve/actions/workflows/build-windows.yml)**.
-2. Cliquez sur l'exécution la plus récente marquée d'une coche verte.
-3. En bas de la page, dans la rubrique **Artifacts**, cliquez sur **`Evolve-0.3.1-portable.exe`** : le fichier (environ 140 Mo) se télécharge tel quel, sans archive à décompresser.
-4. Double-cliquez sur le fichier téléchargé. Evolve s'ouvre en plein écran.
+1. Ouvrez la page des [dernières releases Evolve](https://github.com/leoblanchart92-hub/Evolve/releases/latest).
+2. Dans **Assets**, téléchargez `Evolve-<version>-portable.exe` pour utiliser la version portable, ou `Evolve-<version>-Setup.exe` pour l'installer dans votre profil Windows.
+3. Lancez le fichier téléchargé. La version portable s'ouvre en plein écran ; l'installateur configure Evolve pour votre compte, sans droits administrateur.
 
 À savoir :
 
 - **Avertissement de Windows.** Le fichier n'est pas signé numériquement (une signature est payante). Le navigateur peut donc signaler un fichier « rarement téléchargé », et Windows afficher « Windows a protégé votre ordinateur » : cliquez sur *Informations complémentaires*, puis sur *Exécuter quand même*.
 - **Démarrage.** Au lancement, le fichier se décompresse dans le dossier temporaire avant d'afficher quoi que ce soit : comptez quelques secondes sans rien à l'écran. Il est inutile de le lancer une seconde fois.
 - **Quitter.** Menu Démarrer → bouton d'alimentation (en bas à droite du menu) → *Quitter Evolve*, ou `Alt` + `F4`.
-- **Durée de disponibilité.** GitHub conserve chaque exécutable 90 jours. Passé ce délai, il suffit d'une nouvelle compilation pour en obtenir un autre.
+- **Mises à jour.** Paramètres → *Mise à jour Evolve* vérifie les releases GitHub à votre demande et peut télécharger puis lancer l'installateur officiel.
 
 Configuration requise : Windows 10 ou 11, 64 bits.
 
@@ -47,13 +46,13 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 
 | Engagement | En pratique |
 | --- | --- |
-| **Aucune installation** | Rien n'est ajouté au menu Démarrer de Windows, au bureau, à la liste des programmes ni au démarrage de l'ordinateur. Pour « désinstaller » Evolve, supprimez le fichier `.exe` et, si vous avez modifié des réglages, le dossier `%APPDATA%\Evolve`. |
+| **Version portable ou installation par utilisateur** | La version portable n'ajoute rien à Windows. L'installateur fourni dans les releases s'installe uniquement pour votre compte, sans droits administrateur. Pour retirer la version portable, supprimez son fichier ; pour désinstaller la version installée, utilisez les applications Windows. |
 | **Aucun droit administrateur** | Evolve s'exécute avec les droits de l'utilisateur et ne déclenche jamais la demande d'élévation de Windows. Ce point est contrôlé à chaque compilation. |
 | **Vos fichiers : consultés, jamais modifiés** | L'explorateur affiche le contenu des dossiers que vous ouvrez — noms, types, tailles, dates — sans jamais lire le contenu d'un fichier. Il ne crée, ne modifie, ne déplace, ne supprime et n'ouvre rien : ces opérations n'existent pas dans le programme. Un dossier personnel absent — Documents compris — est annoncé comme introuvable, jamais recréé. Ce que vous consultez n'est ni enregistré ni transmis (voir [L'explorateur de fichiers](#lexplorateur-de-fichiers)). Ces points sont contrôlés à chaque compilation. |
 | **Aucun réglage de Windows modifié** | Les paramètres rapides (Wi-Fi, Bluetooth, volume, luminosité…) sont purement visuels : ils n'agissent que sur l'interface d'Evolve, qui retient leur position sans rien changer à Windows. |
 | **Un seul dossier dans votre profil** | Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié : tant que vous ne changez rien, Evolve n'écrit rien dans votre profil. Ces deux points sont contrôlés à chaque compilation. |
 | **Aucune mesure réelle du matériel** | Les widgets processeur, mémoire et carte graphique affichent des valeurs simulées, signalées par la mention « DÉMO ». |
-| **Aucune connexion réseau** | L'interface est entièrement locale ; toute requête vers Internet y est bloquée. |
+| **Réseau limité aux mises à jour** | L'interface ne peut pas accéder au réseau. La vérification des mises à jour interroge GitHub uniquement quand vous la demandez ; le téléchargement est limité à l'installateur Evolve publié sur GitHub. |
 
 **Fichiers temporaires.** En dehors du fichier de réglages décrit ci-dessous, Evolve n'utilise que le dossier temporaire de Windows (`%TEMP%`) :
 

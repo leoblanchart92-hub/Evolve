@@ -393,11 +393,12 @@ test('passerelle : les messages d’une autre page sont ignorés', async () => {
   const refused = { ok: false, code: 'forbidden', message: 'Appel refusé.' };
   assert.deepEqual(await stranger.invoke('evolve:service-call', 'settings', 'getAll', []), refused);
   assert.deepEqual(await stranger.invoke('evolve:service-call', 'settings', 'set', ['quick.volume', 5]), refused);
+  assert.deepEqual(await stranger.invoke('evolve:update-install', 'https://github.com/leoblanchart92-hub/Evolve/releases/download/v1/Evolve-Setup.exe', 'Evolve-Setup.exe'), { ok: false, message: 'Appel refusé.' });
   const api = loadPreload(fake, window.webContents);
   assert.deepEqual(await api.services.call('settings', 'get', 'quick.volume'), { ok: true, value: 64 });
 
   assert.deepEqual([...state.ipcListeners.keys()], ['evolve:quit']);
-  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:open-external', 'evolve:service-call', 'evolve:toggle-fullscreen', 'evolve:update-check']);
+  assert.deepEqual([...state.ipcHandlers.keys()].sort(), ['evolve:is-fullscreen', 'evolve:open-external', 'evolve:service-call', 'evolve:toggle-fullscreen', 'evolve:update-check', 'evolve:update-install']);
 });
 
 // ---------------------------------------------------------------------------------
