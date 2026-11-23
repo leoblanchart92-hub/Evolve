@@ -1,12 +1,4 @@
-# Evolve — Fabrication des exécutables Windows (portable et Setup).
-#
-# À chaque envoi de code, une machine Windows de GitHub :
-#   1. lance les tests automatiques ;
-#   2. démarre l'application et vérifie que l'interface répond (auto-test) ;
-#   3. fabrique le .exe portable et l'installateur Windows Setup ;
-#   4. vérifie l'exécutable portable (droits, démarrage, persistance des réglages) ;
-#   5. publie les deux fichiers en Artifacts si toutes les vérifications passent.
-
+# Build Windows + publication d'une release automatique à chaque push.
 name: Exécutables Windows
 
 on:
@@ -19,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,72 +19,54 @@ concurrency:
 
 jobs:
   build:
-    name: Tester et fabriquer les exécutables Windows
+    name: Tester, construire et publier Evolve
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
       run:
         shell: bash
-
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
       - name: Installer Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-
+      - name: Définir la version de cette compilation
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');const base=p.version.split('.');p.version=base[0]+'.'+base[1]+'.'+process.env.GITHUB_RUN_NUMBER;fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');console.log('Version:',p.version)"
       - name: Installer les dépendances
         run: bash scripts/ci-run.sh installation npm ci --no-audit --no-fund
-
       - name: Regénérer la planche d'icônes
         run: bash scripts/ci-run.sh regeneration-icones npm run icons
-
       - name: Tests automatiques
         run: bash scripts/ci-run.sh tests-automatiques npm test
-
-      - name: Régler l'écran de la machine en 1920 × 1080
+      - name: Régler la résolution
         continue-on-error: true
         shell: powershell
         run: |
-          try {
-            Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop
-            Write-Host "Ecran regle en 1920 x 1080."
-          } catch {
-            Write-Host "Reglage impossible, definition par defaut conservee : $($_.Exception.Message)"
-          }
-
-      - name: Auto-test de l'application (avant fabrication)
+          try { Set-DisplayResolution -Width 1920 -Height 1080 -Force -ErrorAction Stop } catch { Write-Host "Résolution par défaut conservée." }
+      - name: Auto-test de l'application
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-application node scripts/check-exe.mjs electron --out=self-test-output/application -- .
-
-      - name: Fabriquer le portable et Setup
+      - name: Construire Portable et Setup
         run: bash scripts/ci-run.sh fabrication-executables npm run build:win
-
-      - name: Vérifier que le portable ne demande aucun droit administrateur
+      - name: Vérifier le manifeste
         run: bash scripts/ci-run.sh droits-administrateur npm run check:manifest
-
       - name: Auto-test du portable
         timeout-minutes: 8
         run: bash scripts/ci-run.sh auto-test-executable node scripts/check-exe.mjs --out=self-test-output/executable
-
-      - name: Lancement normal du portable (plein écran)
+      - name: Vérifier le lancement normal
         timeout-minutes: 8
         run: bash scripts/ci-run.sh lancement-normal node scripts/check-launch.mjs --out=self-test-output/lancement
-
-      - name: Réglages conservés après redémarrage du portable
+      - name: Vérifier la persistance des réglages
         timeout-minutes: 12
         run: bash scripts/ci-run.sh reglages-redemarrage node scripts/check-settings.mjs --out=self-test-output/reglages --settings-dir="$APPDATA/Evolve"
-
-      - name: Dossier Documents absent jamais recréé
+      - name: Vérifier les dossiers personnels
         timeout-minutes: 8
         run: bash scripts/ci-run.sh documents-absent node scripts/check-documents.mjs --out=self-test-output/documents-absent
-
-      - name: Publier les rapports de vérification
+      - name: Publier les rapports
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -102,40 +76,18 @@ jobs:
             ci-logs/
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Résumé des exécutables
+      - name: Créer la release et publier les exécutables
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="v$version"
           portable="$(ls dist/Evolve-*-portable.exe)"
           setup="$(ls dist/Evolve-*-Setup.exe)"
-          psize="$(stat -c %s "$portable")"
-          ssize="$(stat -c %s "$setup")"
-          psha="$(sha256sum "$portable" | cut -d ' ' -f 1)"
-          ssha="$(sha256sum "$setup" | cut -d ' ' -f 1)"
-          {
-            echo "### 📦 Evolve Windows"
-            echo ""
-            echo "| Fichier | Taille | SHA-256 |"
-            echo "| --- | --- | --- |"
-            echo "| `$(basename "$portable")` | $((psize / 1024 / 1024)) Mo | `$psha` |"
-            echo "| `$(basename "$setup")` | $((ssize / 1024 / 1024)) Mo | `$ssha` |"
-            echo ""
-            echo "Les deux téléchargements sont disponibles dans **Artifacts** ci-dessous."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Publier le .exe portable
-        uses: actions/upload-artifact@v7
-        with:
-          name: Evolve-portable
-          path: dist/Evolve-*-portable.exe
-          archive: false
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Publier l'installateur Setup
-        uses: actions/upload-artifact@v7
-        with:
-          name: Evolve-Setup
-          path: dist/Evolve-*-Setup.exe
-          archive: false
-          if-no-files-found: error
-          retention-days: 90
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$setup" "$portable" --clobber
+          else
+            gh release create "$tag" "$setup" "$portable" --title "Evolve $version" --generate-notes
+          fi
+          echo "### Release Evolve $version" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/leoblanchart92-hub/Evolve/releases/tag/$tag" >> "$GITHUB_STEP_SUMMARY"
