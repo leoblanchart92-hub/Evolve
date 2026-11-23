@@ -5,6 +5,7 @@
  * réseau avant que l'exécutable ne soit produit.
  */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -16,6 +17,13 @@ const htmlNoComments = html.replace(/<!--[\s\S]*?-->/g, '');
 const jsFiles = listFiles(path.join(RENDERER, 'js'), ['.js']);
 const cssFiles = listFiles(path.join(RENDERER, 'styles'), ['.css']);
 const pkg = JSON.parse(readText('package.json'));
+
+test('chaque module JavaScript de l’interface est syntaxiquement valide', () => {
+  for (const file of jsFiles) {
+    const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
+    assert.equal(result.status, 0, `${relative(file)} : ${result.stderr || result.error?.message || 'syntaxe invalide'}`);
+  }
+});
 
 /** Résout une référence relative (href, src, url()) depuis un fichier. */
 const resolveFrom = (file, reference) => path.resolve(path.dirname(file), reference.split(/[?#]/)[0]);
