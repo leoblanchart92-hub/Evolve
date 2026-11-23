@@ -1,6 +1,6 @@
 /**
  * Evolve Browser — interface de navigation personnalisée.
- * Version initiale : recherche Google et ouverture des pages dans le navigateur externe.
+ * Recherche Google et navigation dans une fenêtre Evolve isolée.
  */
 import { h } from '../core/dom.js';
 import { icon } from '../core/icons.js';
@@ -44,7 +44,7 @@ export function mountBrowser(win) {
   const submit = (input) => {
     const url = destination(input.value);
     if (!url) { input.focus(); return; }
-    if (globalThis.evolve?.openExternal) globalThis.evolve?.openExternal?.(url);
+    globalThis.evolve?.openWebPage?.(url);
   };
   address.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(address); });
   go.addEventListener('click', () => submit(address));
@@ -57,11 +57,11 @@ export function mountBrowser(win) {
         h('span', { class: 'ev-browser__shortcuticon' }, icon(item.glyph)),
         h('span', { text: item.label }),
       );
-      button.addEventListener('click', () => globalThis.evolve?.openExternal?.(item.url));
+      button.addEventListener('click', () => globalThis.evolve?.openWebPage?.(item.url));
       return button;
     })),
   );
-  const note = h('p', { class: 'ev-browser__note', text: 'La recherche et les sites s’ouvrent dans le navigateur web de votre ordinateur pour cette première version.' });
+  const note = h('p', { class: 'ev-browser__note', text: 'Les recherches et les sites s’ouvrent dans une fenêtre sécurisée d’Evolve.' });
   root.append(tabs, nav, hero, shortcutsEl, note);
   win.body.append(root);
   address.focus();

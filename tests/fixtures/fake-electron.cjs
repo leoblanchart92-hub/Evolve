@@ -138,6 +138,7 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     ipcListeners: new Map(),
     ipcHandlers: new Map(),
     externalUrls: [],
+    browserSessions: [],
   };
 
   let resolveReady;
@@ -225,6 +226,7 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
       this.showCalls = 0;
       this.focusCalls = 0;
       this.loadedFile = null;
+      this.loadedUrl = null;
       state.windows.push(this);
       app.emit('web-contents-created', {}, this.webContents);
     }
@@ -232,6 +234,11 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
     loadFile(file) {
       this.loadedFile = file;
       return loadError ? Promise.reject(loadError) : Promise.resolve();
+    }
+
+    loadURL(url) {
+      this.loadedUrl = url;
+      return Promise.resolve();
     }
 
     show() {
@@ -346,6 +353,27 @@ function createFakeElectron({ tempDir, platform = process.platform, packaged = t
       getPrimaryDisplay: () => ({ workAreaSize: { ...workArea } }),
     },
     session: {
+      fromPartition(partition) {
+        const browserSession = {
+          partition,
+          permissionHandler: null,
+          listeners: new Map(),
+          requestFilter: null,
+          setPermissionRequestHandler(handler) {
+            this.permissionHandler = handler;
+          },
+          on(name, listener) {
+            this.listeners.set(name, listener);
+          },
+          webRequest: {
+            onBeforeRequest(listener) {
+              browserSession.requestFilter = listener;
+            },
+          },
+        };
+        state.browserSessions.push(browserSession);
+        return browserSession;
+      },
       defaultSession: {
         setPermissionRequestHandler(handler) {
           state.permissionHandler = handler;

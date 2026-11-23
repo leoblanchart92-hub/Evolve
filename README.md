@@ -52,7 +52,8 @@ Configuration requise : Windows 10 ou 11, 64 bits.
 | **Aucun réglage de Windows modifié** | Les paramètres rapides (Wi-Fi, Bluetooth, volume, luminosité…) sont purement visuels : ils n'agissent que sur l'interface d'Evolve, qui retient leur position sans rien changer à Windows. |
 | **Un seul dossier dans votre profil** | Evolve n'y range que vos réglages : le fichier `%APPDATA%\Evolve\settings.json` (voir [Vos réglages](#vos-réglages)). Il n'est créé qu'au premier réglage modifié : tant que vous ne changez rien, Evolve n'écrit rien dans votre profil. Ces deux points sont contrôlés à chaque compilation. |
 | **Aucune mesure réelle du matériel** | Les widgets processeur, mémoire et carte graphique affichent des valeurs simulées, signalées par la mention « DÉMO ». |
-| **Réseau limité aux mises à jour** | L'interface ne peut pas accéder au réseau. La vérification des mises à jour interroge GitHub uniquement quand vous la demandez ; le téléchargement est limité à l'installateur Evolve publié sur GitHub. |
+| **Navigation web dans Evolve** | Les recherches Google et les sites s'ouvrent dans une fenêtre sécurisée appartenant à Evolve ; le navigateur habituel de Windows n'est pas lancé. Les pages web n'ont pas accès aux fichiers locaux, les fenêtres surgissantes et les téléchargements sont bloqués. Les sites que vous demandez sont bien contactés sur Internet. |
+| **Mises à jour** | La vérification interroge GitHub uniquement quand vous la demandez. Le téléchargement est limité à l'installateur Evolve publié sur GitHub. |
 
 **Fichiers temporaires.** En dehors du fichier de réglages décrit ci-dessous, Evolve n'utilise que le dossier temporaire de Windows (`%TEMP%`) :
 
@@ -164,7 +165,7 @@ Le fichier `.exe` n'est publié que si toutes ces étapes réussissent. Les rapp
 ## Limites connues
 
 - Cet aperçu est une application qui *ressemble* à un environnement de bureau : il ne remplace pas le bureau de Windows et ne lance pas de vrais programmes.
-- Seul l'explorateur de fichiers est fonctionnel, et **en lecture seule** : il n'ouvre aucun fichier et n'effectue aucune opération (nouveau, copier, renommer, supprimer…).
+- L'explorateur de fichiers est **en lecture seule** : il n'ouvre aucun fichier et n'effectue aucune opération (nouveau, copier, renommer, supprimer…). Le navigateur ouvre les recherches et les sites dans une fenêtre Evolve isolée ; les autres applications (Paramètres, Terminal…) restent des aperçus.
 - L'explorateur diffère encore de celui de Windows :
   - les dossiers portent leur nom réel sur le disque (« Users », « Program Files ») et non leur nom traduit (« Utilisateurs », « Programmes ») ; seuls les six dossiers personnels sont présentés sous leur nom français ;
   - les éléments masqués sont reconnus à leur nom et à leur emplacement, l'attribut « caché » de Windows n'étant pas lisible ici : un fichier que vous avez masqué vous-même reste affiché ;

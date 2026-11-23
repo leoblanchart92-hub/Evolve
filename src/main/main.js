@@ -23,7 +23,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, screen, session } = require('electron');
 
 const { parseArgs } = require('./args');
 const { checkForUpdate, installUpdate } = require('./update');
@@ -51,6 +51,7 @@ let mainWindow = null;
  * @type {ReturnType<typeof createServices>|null}
  */
 let services = null;
+let browserSession = null;
 
 /**
  * Chemin d'un fichier ou d'un dossier demandé sur la ligne de commande.
@@ -299,6 +300,31 @@ function fromMainWindow(event) {
   return Boolean(mainWindow) && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
 }
 
+/** Session isolée pour les pages web ouvertes à la demande dans Evolve. */
+function getBrowserSession() {
+  if (browserSession) return browserSession;
+  browserSession = session.fromPartition('evolve-browser');
+  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  browserSession.webRequest.onBeforeRequest((details, callback) => {
+    let protocol = '';
+    try { protocol = new URL(details.url).protocol; } catch { /* URL invalide */ }
+    callback({ cancel: protocol !== 'https:' && protocol !== 'http:' });
+  });
+  browserSession.on('will-download', (event) => event.preventDefault());
+  return browserSession;
+}
+
+function webAddress(value) {
+  if (typeof value !== 'string' || value.length > 2048) return null;
+  try {
+    const target = new URL(value);
+    if (!['https:', 'http:'].includes(target.protocol) || target.username || target.password) return null;
+    return target.href;
+  } catch {
+    return null;
+  }
+}
+
 function registerIpc() {
   ipcMain.on('evolve:quit', (event) => {
     if (fromMainWindow(event)) app.quit();
@@ -313,12 +339,39 @@ function registerIpc() {
 
   ipcMain.handle('evolve:is-fullscreen', (event) => (fromMainWindow(event) ? mainWindow.isFullScreen() : false));
 
-  ipcMain.handle('evolve:open-external', async (event, value) => {
-    if (!fromMainWindow(event) || typeof value !== 'string' || value.length > 2048) return false;
-    let target;
-    try { target = new URL(value); } catch { return false; }
-    if (!['https:', 'http:'].includes(target.protocol) || target.username || target.password) return false;
-    try { await shell.openExternal(target.href); return true; } catch { return false; }
+  ipcMain.handle('evolve:open-web', (event, value) => {
+    const target = fromMainWindow(event) ? webAddress(value) : null;
+    if (!target) return false;
+    const browser = new BrowserWindow({
+      title: 'Navigateur — Evolve',
+      width: 1100,
+      height: 760,
+      minWidth: 640,
+      minHeight: 480,
+      autoHideMenuBar: true,
+      backgroundColor: '#ffffff',
+      parent: mainWindow,
+      show: false,
+      webPreferences: {
+        partition: 'evolve-browser',
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+      },
+    });
+    browser.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const guardNavigation = (navigationEvent, url) => {
+      if (!webAddress(url)) navigationEvent.preventDefault();
+    };
+    browser.webContents.on('will-navigate', guardNavigation);
+    browser.webContents.on('will-redirect', guardNavigation);
+    getBrowserSession();
+    browser.once('ready-to-show', () => browser.show());
+    browser.loadURL(target).catch(() => {
+      if (!browser.isDestroyed()) browser.show();
+    });
+    return true;
   });
 
   ipcMain.handle('evolve:update-check', async (event) => {

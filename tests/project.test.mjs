@@ -492,8 +492,8 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
     if (file.endsWith(path.join('core', 'platform.js'))) continue;
     if (file.endsWith(path.join('apps', 'browser.js'))) {
       const browserCode = stripComments(readFileSync(file, 'utf8'));
-      assert.match(browserCode, /globalThis\.evolve\?\.openExternal/);
-      assert.doesNotMatch(browserCode, /globalThis\.evolve(?!\?\.openExternal)/);
+      assert.match(browserCode, /globalThis\.evolve\?\.openWebPage/);
+      assert.doesNotMatch(browserCode, /globalThis\.evolve(?!\?\.openWebPage)/);
       continue;
     }
     assert.doesNotMatch(stripComments(readFileSync(file, 'utf8')), /(?:globalThis|window|self)\.evolve\b/, relative(file));
@@ -505,7 +505,7 @@ test('la passerelle expose exactement ce que l’interface utilise', () => {
   assert.deepEqual([...channels(preload)].sort(), [
     'evolve:fullscreen-changed',
     'evolve:is-fullscreen',
-    'evolve:open-external',
+    'evolve:open-web',
     'evolve:quit',
     'evolve:service-call',
     'evolve:service-event',
